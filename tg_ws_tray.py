@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import ctypes
 import json
 import logging
 import os
-import psutil
+import platform
+import subprocess
 import sys
 import threading
 import time
@@ -25,15 +25,33 @@ except ImportError:
 
 try:
     import customtkinter as ctk
+    from tkinter import messagebox, filedialog
 except ImportError:
     ctk = None  # type: ignore
+    messagebox = None  # type: ignore
+    filedialog = None  # type: ignore
+
+try:
+    import psutil
+except ImportError:
+    psutil = None  # type: ignore
 
 # Proxy engine
 import tg_ws_proxy
 
 
 APP_NAME = "TgWsProxy"
-APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / APP_NAME
+IS_WINDOWS = platform.system() == "Windows"
+IS_LINUX = platform.system() == "Linux"
+
+# Platform-specific paths
+if IS_WINDOWS:
+    APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / APP_NAME
+elif IS_LINUX:
+    APP_DIR = Path.home() / ".config" / APP_NAME.lower()
+else:
+    APP_DIR = Path.home() / f".{APP_NAME.lower()}"
+
 CONFIG_FILE = APP_DIR / "config.json"
 LOG_FILE = APP_DIR / "proxy.log"
 FIRST_RUN_MARKER = APP_DIR / ".first_run_done"
@@ -212,11 +230,104 @@ def restart_proxy():
 
 
 def _show_error(text: str, title: str = "TG WS Proxy — Ошибка"):
-    ctypes.windll.user32.MessageBoxW(0, text, title, 0x10)
+    """Показать диалог ошибки (кроссплатформенно)."""
+    if IS_WINDOWS:
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, text, title, 0x10)
+            return
+        except Exception:
+            pass
+    # Linux / fallback
+    if messagebox:
+        root = ctk.CTk() if ctk else None
+        if root:
+            root.withdraw()
+            messagebox.showerror(title, text, parent=root)
+            root.destroy()
+        else:
+            log.error("%s: %s", title, text)
+    else:
+        log.error("%s: %s", title, text)
 
 
 def _show_info(text: str, title: str = "TG WS Proxy"):
-    ctypes.windll.user32.MessageBoxW(0, text, title, 0x40)
+    """Показать информационный диалог (кроссплатформенно)."""
+    if IS_WINDOWS:
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, text, title, 0x40)
+            return
+        except Exception:
+            pass
+    # Linux / fallback
+    if messagebox:
+        root = ctk.CTk() if ctk else None
+        if root:
+            root.withdraw()
+            messagebox.showinfo(title, text, parent=root)
+            root.destroy()
+        else:
+            log.info("%s: %s", title, text)
+    else:
+        log.info("%s: %s", title, text)
+
+
+def _copy_to_clipboard(text: str):
+    """Copy text to clipboard (кроссплатформенно)."""
+    if IS_WINDOWS:
+        try:
+            import ctypes.wintypes
+            CF_UNICODETEXT = 13
+            kernel32 = ctypes.windll.kernel32
+            user32 = ctypes.windll.user32
+
+            user32.OpenClipboard(0)
+            user32.EmptyClipboard()
+
+            encoded = text.encode("utf-16-le") + b"\x00\x00"
+            h = kernel32.GlobalAlloc(0x0042, len(encoded))
+            p = kernel32.GlobalLock(h)
+            ctypes.memmove(p, encoded, len(encoded))
+            kernel32.GlobalUnlock(h)
+            user32.SetClipboardData(CF_UNICODETEXT, h)
+            user32.CloseClipboard()
+            return
+        except Exception as exc:
+            log.error("Windows clipboard failed: %s", exc)
+
+    # Linux: try xclip or xsel
+    if IS_LINUX:
+        for cmd in [["xclip", "-selection", "clipboard"],
+                    ["xsel", "--clipboard", "--input"]]:
+            try:
+                proc = subprocess.Popen(
+                    cmd, stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                proc.communicate(text.encode("utf-8"))
+                if proc.returncode == 0:
+                    log.debug("Copied via %s", cmd[0])
+                    return
+            except Exception:
+                continue
+        log.warning("xclip/xsel not available for clipboard")
+
+    # Fallback: try tkinter clipboard
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+        root.withdraw()
+        root.clipboard_clear()
+        root.clipboard_append(text)
+        root.update()
+        root.destroy()
+        log.debug("Copied via tkinter clipboard")
+        return
+    except Exception:
+        pass
+
+    log.error("Failed to copy to clipboard on this platform")
+
 
 
 def _on_open_in_telegram(icon=None, item=None):
@@ -393,10 +504,26 @@ def _edit_config_dialog():
     root.mainloop()
 
 
+def _open_file_platform_specific(path: Path):
+    """Открыть файл в стандартном приложении платформы."""
+    try:
+        if IS_WINDOWS:
+            os.startfile(str(path))
+        elif IS_LINUX:
+            # для xdg-open (freedesktop standard)
+            subprocess.Popen(["xdg-open", str(path)])
+        else:
+            # для macOS 
+            subprocess.Popen(["open", str(path)])
+    except Exception as exc:
+        log.error("Failed to open file: %s", exc)
+        _show_error(f"Не удалось открыть файл:\n{exc}")
+
+
 def _on_open_logs(icon=None, item=None):
     log.info("Opening log file: %s", LOG_FILE)
     if LOG_FILE.exists():
-        os.startfile(str(LOG_FILE))
+        _open_file_platform_specific(LOG_FILE)
     else:
         _show_info("Файл логов ещё не создан.", "TG WS Proxy")
 
@@ -589,9 +716,10 @@ def main():
         _show_info("Приложение уже запущено.", os.path.basename(sys.argv[0]))
         return
 
-    # Hide console window if running as frozen exe
-    if getattr(sys, "frozen", False):
+    # Hide console window if running as frozen exe on Windows
+    if getattr(sys, "frozen", False) and IS_WINDOWS:
         try:
+            import ctypes
             ctypes.windll.user32.ShowWindow(
                 ctypes.windll.kernel32.GetConsoleWindow(), 0)
         except Exception:

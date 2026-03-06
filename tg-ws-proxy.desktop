@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=TG WS Proxy
+Name[ru]=TG WS Proxy
+Comment=Telegram WebSocket Proxy for Desktop
+Comment[ru]=Telegram WebSocket Proxy для рабочего стола
+Exec=python3 %h/tg_ws_tray.py
+Icon=tg-ws-proxy
+Terminal=false
+Type=Application
+Categories=Network;Proxy;
+Keywords=telegram;proxy;socks;
+StartupNotify=false

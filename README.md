@@ -1,7 +1,7 @@
 # TG WS Proxy
 
-Локальный SOCKS5-прокси для Telegram Desktop, который перенаправляет трафик через WebSocket-соединения к указанным серверам, помогая частично ускорить работу Telegram.  
-  
+Локальный SOCKS5-прокси для Telegram Desktop, который перенаправляет трафик через WebSocket-соединения к указанным серверам, помогая частично ускорить работу Telegram.
+
 **Ожидаемый результат аналогичен прокидыванию hosts для Web Telegram**: ускорение загрузки и скачивания файлов, загрузки сообщений и части медиа.
 
 <img width="529" height="487" alt="image" src="https://github.com/user-attachments/assets/6a4cf683-0df8-43af-86c1-0e8f08682b62" />
@@ -20,7 +20,37 @@ Telegram Desktop → SOCKS5 (127.0.0.1:1080) → TG WS Proxy → WSS (kws*.web.t
 
 ## Установка
 
-### Из исходников
+### Fedora (GNOME)
+
+Для установки в Linux с GNOME выполните:
+
+### Ubuntu/Debian:
+
+```bash
+# Установите зависимости 
+sudo apt install libappindicator3-1 python3-tk xclip
+
+# Запустите скрипт установки
+./install.sh
+```
+### Fedora / RHEL:
+
+```bash
+# Установите зависимости 
+sudo dnf install python3-pip python3-tkinter libappindicator-gtk3
+
+# Запустите скрипт установки
+./install.sh
+```
+
+После установки приложение появится в меню приложений и будет доступно по команде `tg-ws-proxy`.
+
+**Для удаления:**
+```bash
+./uninstall.sh
+```
+
+### Из исходников (кроссплатформенно)
 
 ```bash
 pip install -r requirements.txt
@@ -28,7 +58,7 @@ pip install -r requirements.txt
 
 ## Использование
 
-### Tray-приложение (рекомендуется для Windows)
+### Tray-приложение (Linux/Windows)
 
 ```bash
 python tg_ws_tray.py
@@ -87,7 +117,11 @@ python tg_ws_proxy.py -v
 
 ## Конфигурация
 
-Tray-приложение хранит конфигурацию в `%APPDATA%/TgWsProxy/config.json`:
+Tray-приложение хранит конфигурацию в:
+- **Windows:** `%APPDATA%/TgWsProxy/config.json`
+- **Linux:** `~/.config/tgwsproxy/config.json`
+
+Пример конфигурации:
 
 ```json
 {
@@ -100,7 +134,9 @@ Tray-приложение хранит конфигурацию в `%APPDATA%/Tg
 }
 ```
 
-Логи записываются в `%APPDATA%/TgWsProxy/proxy.log`.
+Логи записываются в:
+- **Windows:** `%APPDATA%/TgWsProxy/proxy.log`
+- **Linux:** `~/.config/tgwsproxy/proxy.log`
 
 ## Сборка exe
 
@@ -109,6 +145,14 @@ Tray-приложение хранит конфигурацию в `%APPDATA%/Tg
 ```bash
 pip install pyinstaller
 pyinstaller tg_ws_proxy.spec
+```
+
+## Требования для Linux
+
+Для работы tray-приложения в GNOME требуется:
+
+```bash
+sudo dnf install libappindicator-gtk3 python3-tkinter xclip
 ```
 
 ## Дисклеймер
