@@ -965,8 +965,15 @@ async def _run(port: int, dc_opt: Dict[int, Optional[str]],
     if _auth_login is not None and _auth_password is not None:
         log.info("    SOCKS5 proxy -> %s:%d  (user/pass: %s / %s)",
                  host, port, _auth_login, "*" * len(_auth_password))
+        tg_url = (
+            f"tg://socks?server={host}&port={port}"
+            f"&user={_auth_login}&pass={_auth_password}"
+        )
     else:
         log.info("    SOCKS5 proxy -> %s:%d  (no user/pass)", host, port)
+        tg_url = f"tg://socks?server={host}&port={port}"
+    log.info("  Telegram URL:")
+    log.info("    %s", tg_url)
     log.info("=" * 60)
 
     async def log_stats():
