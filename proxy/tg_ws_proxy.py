@@ -666,9 +666,48 @@ async def _handle_client(reader, writer):
             writer.close()
             return
         nmethods = hdr[1]
-        await reader.readexactly(nmethods)
-        writer.write(b'\x05\x00')  # no-auth
-        await writer.drain()
+        methods = await reader.readexactly(nmethods)
+
+        auth_required = (_auth_login is not None and _auth_password is not None)
+
+        if auth_required:
+            # Require username/password (RFC 1929, method 0x02)
+            if 0x02 not in methods:
+                # no acceptable methods
+                writer.write(b'\x05\xff')
+                await writer.drain()
+                writer.close()
+                return
+            writer.write(b'\x05\x02')
+            await writer.drain()
+
+            # Sub-negotiation: version(1), ulen(1), uname, plen(1), passwd
+            ver = await asyncio.wait_for(reader.readexactly(1), timeout=10)
+            if ver[0] != 1:
+                writer.write(b'\x01\x01')
+                await writer.drain()
+                writer.close()
+                return
+            ulen = (await asyncio.wait_for(reader.readexactly(1), timeout=10))[0]
+            uname = (await asyncio.wait_for(
+                reader.readexactly(ulen), timeout=10)).decode("utf-8", errors="ignore")
+            plen = (await asyncio.wait_for(reader.readexactly(1), timeout=10))[0]
+            passwd = (await asyncio.wait_for(
+                reader.readexactly(plen), timeout=10)).decode("utf-8", errors="ignore")
+
+            if uname == _auth_login and passwd == _auth_password:
+                writer.write(b'\x01\x00')
+                await writer.drain()
+            else:
+                writer.write(b'\x01\x01')
+                await writer.drain()
+                log.debug("[%s] invalid SOCKS5 credentials", label)
+                writer.close()
+                return
+        else:
+            # No authentication
+            writer.write(b'\x05\x00')
+            await writer.drain()
 
         # -- SOCKS5 CONNECT request --
         req = await asyncio.wait_for(reader.readexactly(4), timeout=10)
@@ -895,13 +934,20 @@ async def _handle_client(reader, writer):
 _server_instance = None
 _server_stop_event = None
 
+_auth_login: Optional[str] = None
+_auth_password: Optional[str] = None
+
 
 async def _run(port: int, dc_opt: Dict[int, Optional[str]],
                stop_event: Optional[asyncio.Event] = None,
-               host: str = '127.0.0.1'):
-    global _dc_opt, _server_instance, _server_stop_event
+               host: str = '127.0.0.1',
+               login: Optional[str] = None,
+               password: Optional[str] = None):
+    global _dc_opt, _server_instance, _server_stop_event, _auth_login, _auth_password
     _dc_opt = dc_opt
     _server_stop_event = stop_event
+    _auth_login = login
+    _auth_password = password
 
     server = await asyncio.start_server(
         _handle_client, host, port)
@@ -916,7 +962,11 @@ async def _run(port: int, dc_opt: Dict[int, Optional[str]],
         log.info("    DC%d: %s", dc, ip)
     log.info("=" * 60)
     log.info("  Configure Telegram Desktop:")
-    log.info("    SOCKS5 proxy -> %s:%d  (no user/pass)", host, port)
+    if _auth_login is not None and _auth_password is not None:
+        log.info("    SOCKS5 proxy -> %s:%d  (user/pass: %s / %s)",
+                 host, port, _auth_login, "*" * len(_auth_password))
+    else:
+        log.info("    SOCKS5 proxy -> %s:%d  (no user/pass)", host, port)
     log.info("=" * 60)
 
     async def log_stats():
@@ -969,9 +1019,11 @@ def parse_dc_ip_list(dc_ip_list: List[str]) -> Dict[int, str]:
 
 def run_proxy(port: int, dc_opt: Dict[int, str],
               stop_event: Optional[asyncio.Event] = None,
-              host: str = '127.0.0.1'):
+              host: str = '127.0.0.1',
+              login: Optional[str] = None,
+              password: Optional[str] = None):
     """Run the proxy (blocking). Can be called from threads."""
-    asyncio.run(_run(port, dc_opt, stop_event, host))
+    asyncio.run(_run(port, dc_opt, stop_event, host, login, password))
 
 
 def main():
@@ -985,6 +1037,10 @@ def main():
                     default=['2:149.154.167.220', '4:149.154.167.220'],
                     help='Target IP for a DC, e.g. --dc-ip 1:149.154.175.205'
                          ' --dc-ip 2:149.154.167.220')
+    ap.add_argument('--login', type=str, default=None,
+                    help='SOCKS5 username for clients')
+    ap.add_argument('--password', type=str, default=None,
+                    help='SOCKS5 password for clients')
     ap.add_argument('-v', '--verbose', action='store_true',
                     help='Debug logging')
     args = ap.parse_args()
@@ -1002,7 +1058,10 @@ def main():
     )
 
     try:
-        asyncio.run(_run(args.port, dc_opt, host=args.host))
+        asyncio.run(_run(args.port, dc_opt,
+                         host=args.host,
+                         login=args.login,
+                         password=args.password))
     except KeyboardInterrupt:
         log.info("Shutting down. Final stats: %s", _stats.summary())
 
