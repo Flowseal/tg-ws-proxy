@@ -868,8 +868,8 @@ async def _handle_client(reader, writer):
         if ':' in dst:
             log.error(
                 "[%s] IPv6 address detected: %s:%d — "
-                "IPv6 doesn't supported "
-                "Disable IPv6 to continue using the proxy.",
+                "IPv6 addresses are not supported; "
+                "disable IPv6 to continue using the proxy.",
                 label, dst, port)
             writer.write(_socks5_reply(0x05))
             await writer.drain()
