@@ -18,8 +18,8 @@ DEFAULT_PORT = 1080
 log = logging.getLogger('tg-ws-proxy')
 
 _TCP_NODELAY = True
-_RECV_BUF = 131072
-_SEND_BUF = 131072
+_RECV_BUF = 65536
+_SEND_BUF = 65536
 _WS_POOL_SIZE = 4
 _WS_POOL_MAX_AGE = 120.0
 
@@ -614,7 +614,7 @@ async def _bridge_ws(reader, writer, ws: RawWebSocket, label,
         nonlocal up_bytes, up_packets
         try:
             while True:
-                chunk = await reader.read(131072)
+                chunk = await reader.read(65536)
                 if not chunk:
                     break
                 _stats.bytes_up += len(chunk)
