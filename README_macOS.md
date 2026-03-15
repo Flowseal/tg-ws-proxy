@@ -2,20 +2,6 @@
 
 macOS-версия [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy) с нативным menu bar приложением.
 
-## Как это работает
-
-```
-Telegram Desktop → SOCKS5 (127.0.0.1:1080) → TG WS Proxy → WSS (kws*.web.telegram.org) → Telegram DC
-```
-
-Полный функциональный паритет с Windows-версией:
-- Локальный SOCKS5-прокси
-- Автоматическое переключение WebSocket → TCP fallback
-- GUI-настройки
-- Просмотр логов
-- Одна копия через lock-файл
-- Первый запуск с инструкцией
-
 ## Установка
 
 ### Из исходников
@@ -25,8 +11,8 @@ Telegram Desktop → SOCKS5 (127.0.0.1:1080) → TG WS Proxy → WSS (kws*.web.t
 git clone https://github.com/Flowseal/tg-ws-proxy
 cd tg-ws-proxy
 
-# Скопируй файлы из этого порта в репозиторий:
-# macos.py, macos.spec, requirements_macos.txt
+# Перейди в папку с билдом macOS
+cd macos
 
 # Установи зависимости
 pip install -r requirements_macos.txt
@@ -92,13 +78,13 @@ pyinstaller macos.spec
 | `rumps` | macOS menu bar framework |
 | `cryptography` | MTProto obfuscation (из оригинала) |
 | `psutil` | Проверка запущенных копий |
-| `tkinter` | GUI окна (входит в стандартный Python) |
 
 ## Отличия от Windows-версии
 
 | | Windows | macOS |
 |---|---|---|
-| GUI-фреймворк | pystray + tkinter | rumps + tkinter |
+| GUI-фреймворк | pystray + tkinter | rumps |
 | Конфиг | `%APPDATA%\TgWsProxy\` | `~/Library/Application Support/TgWsProxy/` |
 | Иконка в трее | Системный трей | Menu bar (строка меню) |
 | Сборка | PyInstaller → .exe | PyInstaller → .app |
+| Автообновление | - | + |
