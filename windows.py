@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import psutil
+import socket as _socket
 import sys
 import threading
 import time
@@ -30,9 +31,94 @@ FIRST_RUN_MARKER = APP_DIR / ".first_run_done"
 DEFAULT_CONFIG = {
     "port": 1080,
     "host": "127.0.0.1",
+    "listen_all": False,
+    "advanced_host": False,
     "dc_ip": ["2:149.154.167.220", "4:149.154.167.220"],
     "verbose": False,
 }
+
+
+def _get_all_local_ips() -> list[str]:
+    result: list[str] = []
+    if sys.platform == "win32":
+        try:
+            import subprocess
+            out = subprocess.run(
+                ["ipconfig", "/all"],
+                capture_output=True, text=True, timeout=5, encoding="utf-8", errors="replace"
+            )
+            if out.returncode != 0:
+                raise RuntimeError("ipconfig failed")
+            for line in out.stdout.splitlines():
+                line = line.strip()
+                if "IPv4" in line and ":" in line:
+                    # "   IPv4 Address. . . . . . . . . . . : 192.168.3.1(Preferred)"
+                    part = line.split(":", 1)[-1].strip().split()[0].strip().split("(")[0].strip()
+                    if part and part not in result:
+                        try:
+                            _socket.inet_aton(part)
+                            if part != "0.0.0.0":
+                                result.append(part)
+                        except OSError:
+                            pass
+        except Exception:
+            pass
+    if not result:
+        try:
+            with _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM) as s:
+                s.settimeout(0.5)
+                s.connect(("8.8.8.8", 80))
+                result.append(s.getsockname()[0])
+        except Exception:
+            pass
+    return result
+
+
+def _get_lan_ip() -> str:
+    """Return LAN IP for display when listen_all is enabled. Prefers 192.168.* and avoids typical VPN ranges (10.8.*)."""
+    ips = _get_all_local_ips()
+    if not ips:
+        return "?"
+    # Priority: 192.168.* > other 10.* (except 10.8.* which is commonly VPN) > 10.8.* > others
+    def rank(ip: str) -> tuple[int, str]:
+        try:
+            parts = ip.split(".")
+            if len(parts) != 4:
+                return (99, ip)
+            a, b = int(parts[0]), int(parts[1])
+            if a == 192 and b == 168:
+                return (0, ip)
+            if a == 10:
+                if b == 8:
+                    return (3, ip)
+                return (1, ip)
+            return (2, ip)
+        except (ValueError, IndexError):
+            return (99, ip)
+    ips.sort(key=rank)
+    return ips[0]
+
+
+def _get_port(cfg: dict) -> int:
+    return cfg.get("port", DEFAULT_CONFIG["port"]) if cfg.get("advanced_host", False) else DEFAULT_CONFIG["port"]
+
+
+def get_local_connection_address(cfg: dict) -> tuple[str, int]:
+    return "127.0.0.1", _get_port(cfg)
+
+
+def is_network_available(cfg: dict) -> bool:
+    if cfg.get("advanced_host", False):
+        host = (cfg.get("host", DEFAULT_CONFIG["host"]) or "").strip()
+        return host == "0.0.0.0"
+    return bool(cfg.get("listen_all", False))
+
+
+def get_network_connection_address(cfg: dict) -> tuple[str, int]:
+    port = _get_port(cfg)
+    if not is_network_available(cfg):
+        return "—", port
+    return _get_lan_ip(), port
 
 
 _proxy_thread: Optional[threading.Thread] = None
@@ -224,9 +310,14 @@ def start_proxy():
         return
 
     cfg = _config
-    port = cfg.get("port", DEFAULT_CONFIG["port"])
-    host = cfg.get("host", DEFAULT_CONFIG["host"])
-    dc_ip_list = cfg.get("dc_ip", DEFAULT_CONFIG["dc_ip"])
+    if cfg.get("advanced_host", False):
+        host = cfg.get("host", DEFAULT_CONFIG["host"])
+        port = cfg.get("port", DEFAULT_CONFIG["port"])
+        dc_ip_list = cfg.get("dc_ip", DEFAULT_CONFIG["dc_ip"])
+    else:
+        host = "0.0.0.0" if cfg.get("listen_all", False) else "127.0.0.1"
+        port = DEFAULT_CONFIG["port"]
+        dc_ip_list = DEFAULT_CONFIG["dc_ip"]
     verbose = cfg.get("verbose", False)
 
     try:
@@ -260,6 +351,8 @@ def restart_proxy():
     stop_proxy()
     time.sleep(0.3)
     start_proxy()
+    if _tray_icon is not None:
+        _tray_icon.menu = _build_menu()
 
 
 def _show_error(text: str, title: str = "TG WS Proxy — Ошибка"):
@@ -271,8 +364,7 @@ def _show_info(text: str, title: str = "TG WS Proxy"):
 
 
 def _on_open_in_telegram(icon=None, item=None):
-    host = _config.get("host", DEFAULT_CONFIG["host"])
-    port = _config.get("port", DEFAULT_CONFIG["port"])
+    host, port = get_local_connection_address(_config)
     url = f"tg://socks?server={host}&port={port}"
     log.info("Opening %s", url)
     try:
@@ -322,9 +414,22 @@ def _edit_config_dialog():
     FIELD_BORDER = "#d6d9dc"
     TEXT_PRIMARY = "#000000"
     TEXT_SECONDARY = "#707579"
+    DISABLED_TEXT = "#9ca3af"
+    DISABLED_BG = "#e5e7eb"
     FONT_FAMILY = "Segoe UI"
 
-    w, h = 420, 480
+    def _set_widget_cursor(widget, cursor_name: str):
+        try:
+            widget.configure(cursor=cursor_name)
+        except Exception:
+            pass
+        try:
+            for child in widget.winfo_children():
+                _set_widget_cursor(child, cursor_name)
+        except Exception:
+            pass
+
+    w, h = 420, 760
     sw = root.winfo_screenwidth()
     sh = root.winfo_screenheight()
     root.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
@@ -333,38 +438,215 @@ def _edit_config_dialog():
     frame = ctk.CTkFrame(root, fg_color=BG, corner_radius=0)
     frame.pack(fill="both", expand=True, padx=24, pady=20)
 
-    # Host
-    ctk.CTkLabel(frame, text="IP-адрес прокси",
+    # Access mode (using only when advanced settings are disabled)
+    ctk.CTkLabel(frame, text="Режим доступа",
                  font=(FONT_FAMILY, 13), text_color=TEXT_PRIMARY,
-                 anchor="w").pack(anchor="w", pady=(0, 4))
+                 anchor="w").pack(anchor="w", pady=(0, 6))
+    listen_all_var = ctk.BooleanVar(value=cfg.get("listen_all", False))
+    network_mode_frame = ctk.CTkFrame(frame, fg_color="transparent")
+    network_mode_frame.pack(anchor="w", pady=(0, 4))
+    ctk.CTkRadioButton(
+        network_mode_frame, text="Только этот компьютер (127.0.0.1)",
+        variable=listen_all_var, value=False,
+        font=(FONT_FAMILY, 12), text_color=TEXT_PRIMARY,
+        fg_color=TG_BLUE, hover_color=TG_BLUE_HOVER,
+    ).pack(anchor="w")
+    ctk.CTkRadioButton(
+        network_mode_frame, text="Вся локальная сеть (доступ с других устройств)",
+        variable=listen_all_var, value=True,
+        font=(FONT_FAMILY, 12), text_color=TEXT_PRIMARY,
+        fg_color=TG_BLUE, hover_color=TG_BLUE_HOVER,
+    ).pack(anchor="w", pady=(4, 0))
+
     host_var = ctk.StringVar(value=cfg.get("host", "127.0.0.1"))
+    port_var = ctk.StringVar(value=str(cfg.get("port", 1080)))
+    advanced_host_var = ctk.BooleanVar(value=cfg.get("advanced_host", False))
+
+    def get_port_val() -> int:
+        if advanced_host_var.get():
+            try:
+                return int(port_var.get().strip()) if port_var.get().strip() else 1080
+            except ValueError:
+                return 1080
+        return DEFAULT_CONFIG["port"]
+
+    def is_network_available_here() -> bool:
+        if advanced_host_var.get():
+            return (host_var.get().strip() or "127.0.0.1") == "0.0.0.0"
+        return listen_all_var.get()
+
+    def update_connection_label():
+        p = get_port_val()
+        local_addr = f"127.0.0.1:{p}"
+        net_available = is_network_available_here()
+        if net_available:
+            if advanced_host_var.get():
+                net_addr = f"{_get_lan_ip()}:{p}"
+            else:
+                net_addr = f"{_get_lan_ip()}:{p}"
+            conn_label_network.configure(text=f"Локальная сеть: {net_addr}", text_color=TG_BLUE)
+            copy_btn_network.configure(state="normal", fg_color=TG_BLUE)
+        else:
+            conn_label_network.configure(text="Локальная сеть: недоступно", text_color=TEXT_SECONDARY)
+            copy_btn_network.configure(state="disabled", fg_color=DISABLED_BG)
+        conn_label_local.configure(text=f"Этот компьютер: {local_addr}")
+
+    def copy_local_address():
+        try:
+            pyperclip.copy(f"127.0.0.1:{get_port_val()}")
+        except Exception as exc:
+            log.warning("Copy failed: %s", exc)
+
+    def copy_network_address():
+        if not is_network_available_here():
+            return
+        p = get_port_val()
+        net_h = _get_lan_ip()
+        try:
+            pyperclip.copy(f"{net_h}:{p}")
+        except Exception as exc:
+            log.warning("Copy failed: %s", exc)
+
+    def toggle_advanced():
+        use_advanced = advanced_host_var.get()
+        host_entry.configure(
+            state="normal" if use_advanced else "disabled",
+            fg_color=FIELD_BG if use_advanced else DISABLED_BG,
+            text_color=TEXT_PRIMARY if use_advanced else DISABLED_TEXT,
+        )
+        port_entry.configure(
+            state="normal" if use_advanced else "disabled",
+            fg_color=FIELD_BG if use_advanced else DISABLED_BG,
+            text_color=TEXT_PRIMARY if use_advanced else DISABLED_TEXT,
+        )
+        dc_textbox.configure(
+            state="normal" if use_advanced else "disabled",
+            fg_color=FIELD_BG if use_advanced else DISABLED_BG,
+            text_color=TEXT_PRIMARY if use_advanced else DISABLED_TEXT,
+        )
+        host_label.configure(text_color=TEXT_PRIMARY if use_advanced else DISABLED_TEXT)
+        port_label.configure(text_color=TEXT_PRIMARY if use_advanced else DISABLED_TEXT)
+        dc_label.configure(text_color=TEXT_PRIMARY if use_advanced else DISABLED_TEXT)
+        cursor = "xterm" if use_advanced else "arrow"
+        _set_widget_cursor(host_entry, cursor)
+        _set_widget_cursor(port_entry, cursor)
+        _set_widget_cursor(dc_textbox, cursor)
+        update_connection_label()
+
+    conn_block = ctk.CTkFrame(frame, fg_color="transparent")
+    conn_block.pack(anchor="w", pady=(12, 12), fill="x")
+    conn_row1 = ctk.CTkFrame(conn_block, fg_color="transparent")
+    conn_row1.pack(anchor="w", fill="x", pady=(0, 2))
+    conn_label_local = ctk.CTkLabel(
+        conn_row1, text="", font=(FONT_FAMILY, 12, "bold"),
+        text_color=TG_BLUE, anchor="w",
+    )
+    conn_label_local.pack(side="left")
+    ctk.CTkButton(
+        conn_row1, text="Копировать", width=44, height=24,
+        font=(FONT_FAMILY, 11), corner_radius=6,
+        fg_color=TG_BLUE, hover_color=TG_BLUE_HOVER,
+        text_color="#ffffff",
+        command=copy_local_address,
+    ).pack(side="left", padx=(8, 0))
+    conn_row2 = ctk.CTkFrame(conn_block, fg_color="transparent")
+    conn_row2.pack(anchor="w", fill="x", pady=(2, 0))
+    conn_label_network = ctk.CTkLabel(
+        conn_row2, text="", font=(FONT_FAMILY, 12, "bold"),
+        text_color=TG_BLUE, anchor="w",
+    )
+    conn_label_network.pack(side="left")
+    copy_btn_network = ctk.CTkButton(
+        conn_row2, text="Копировать", width=44, height=24,
+        font=(FONT_FAMILY, 11), corner_radius=6,
+        fg_color=TG_BLUE, hover_color=TG_BLUE_HOVER,
+        text_color="#ffffff",
+        command=copy_network_address,
+    )
+    copy_btn_network.pack(side="left", padx=(8, 0))
+    update_connection_label()
+
+    ctk.CTkCheckBox(
+        frame, text="Расширенные настройки (IP, порт, маппинг DC)",
+        variable=advanced_host_var, font=(FONT_FAMILY, 13),
+        text_color=TEXT_PRIMARY,
+        fg_color=TG_BLUE, hover_color=TG_BLUE_HOVER,
+        corner_radius=6, border_width=2,
+        border_color=FIELD_BORDER,
+    ).pack(anchor="w", pady=(4, 10))
+    advanced_host_var.trace_add("write", lambda *a: toggle_advanced())
+
+    host_label = ctk.CTkLabel(
+        frame, text="IP-адрес прокси",
+        font=(FONT_FAMILY, 13), text_color=TEXT_PRIMARY,
+        anchor="w",
+    )
+    host_label.pack(anchor="w", pady=(0, 4))
     host_entry = ctk.CTkEntry(frame, textvariable=host_var, width=200, height=36,
                               font=(FONT_FAMILY, 13), corner_radius=10,
                               fg_color=FIELD_BG, border_color=FIELD_BORDER,
                               border_width=1, text_color=TEXT_PRIMARY)
     host_entry.pack(anchor="w", pady=(0, 12))
+    host_var.trace_add("write", lambda *a: update_connection_label())
+    listen_all_var.trace_add("write", lambda *a: update_connection_label())
 
-    # Port
-    ctk.CTkLabel(frame, text="Порт прокси",
-                 font=(FONT_FAMILY, 13), text_color=TEXT_PRIMARY,
-                 anchor="w").pack(anchor="w", pady=(0, 4))
-    port_var = ctk.StringVar(value=str(cfg.get("port", 1080)))
+    port_label = ctk.CTkLabel(
+        frame, text="Порт прокси",
+        font=(FONT_FAMILY, 13), text_color=TEXT_PRIMARY,
+        anchor="w",
+    )
+    port_label.pack(anchor="w", pady=(0, 4))
     port_entry = ctk.CTkEntry(frame, textvariable=port_var, width=120, height=36,
                               font=(FONT_FAMILY, 13), corner_radius=10,
                               fg_color=FIELD_BG, border_color=FIELD_BORDER,
                               border_width=1, text_color=TEXT_PRIMARY)
     port_entry.pack(anchor="w", pady=(0, 12))
+    port_var.trace_add("write", lambda *a: update_connection_label())
+
+    network_hint = ctk.CTkLabel(
+        frame,
+        text="В режиме «Вся локальная сеть» прокси слушает на всех интерфейсах. "
+             "На других устройствах в настройках прокси Telegram укажите адрес выше. "
+             "Убедитесь, что брандмауэр Windows разрешает входящие подключения на выбранный порт.",
+        font=(FONT_FAMILY, 11), text_color=TEXT_SECONDARY,
+        anchor="w", justify="left", wraplength=370,
+    )
+    network_hint.pack(anchor="w", pady=(0, 12))
 
     # DC-IP mappings
-    ctk.CTkLabel(frame, text="DC → IP маппинги (по одному на строку, формат DC:IP)",
-                 font=(FONT_FAMILY, 13), text_color=TEXT_PRIMARY,
-                 anchor="w").pack(anchor="w", pady=(0, 4))
+    dc_label = ctk.CTkLabel(
+        frame, text="DC → IP маппинги (по одному на строку, формат DC:IP)",
+        font=(FONT_FAMILY, 13), text_color=TEXT_PRIMARY,
+        anchor="w",
+    )
+    dc_label.pack(anchor="w", pady=(0, 4))
     dc_textbox = ctk.CTkTextbox(frame, width=370, height=120,
                                 font=("Consolas", 12), corner_radius=10,
                                 fg_color=FIELD_BG, border_color=FIELD_BORDER,
                                 border_width=1, text_color=TEXT_PRIMARY)
     dc_textbox.pack(anchor="w", pady=(0, 12))
     dc_textbox.insert("1.0", "\n".join(cfg.get("dc_ip", DEFAULT_CONFIG["dc_ip"])))
+
+    if not advanced_host_var.get():
+        host_entry.configure(
+            state="disabled", fg_color=DISABLED_BG, text_color=DISABLED_TEXT,
+        )
+        port_entry.configure(
+            state="disabled", fg_color=DISABLED_BG, text_color=DISABLED_TEXT,
+        )
+        dc_textbox.configure(
+            state="disabled", fg_color=DISABLED_BG, text_color=DISABLED_TEXT,
+        )
+        host_label.configure(text_color=DISABLED_TEXT)
+        port_label.configure(text_color=DISABLED_TEXT)
+        dc_label.configure(text_color=DISABLED_TEXT)
+        _set_widget_cursor(host_entry, "arrow")
+        _set_widget_cursor(port_entry, "arrow")
+        _set_widget_cursor(dc_textbox, "arrow")
+    else:
+        _set_widget_cursor(host_entry, "xterm")
+        _set_widget_cursor(port_entry, "xterm")
+        _set_widget_cursor(dc_textbox, "xterm")
 
     # Verbose
     verbose_var = ctk.BooleanVar(value=cfg.get("verbose", False))
@@ -381,34 +663,41 @@ def _edit_config_dialog():
                  anchor="w").pack(anchor="w", pady=(0, 16))
 
     def on_save():
-        import socket as _sock
-        host_val = host_var.get().strip()
-        try:
-            _sock.inet_aton(host_val)
-        except OSError:
-            _show_error("Некорректный IP-адрес.")
-            return
-
-        try:
-            port_val = int(port_var.get().strip())
-            if not (1 <= port_val <= 65535):
-                raise ValueError
-        except ValueError:
-            _show_error("Порт должен быть числом 1-65535")
-            return
-
-        lines = [l.strip() for l in dc_textbox.get("1.0", "end").strip().splitlines()
-                 if l.strip()]
-        try:
-            tg_ws_proxy.parse_dc_ip_list(lines)
-        except ValueError as e:
-            _show_error(str(e))
-            return
+        advanced_host_val = advanced_host_var.get()
+        listen_all_val = listen_all_var.get()
+        host_val = host_var.get().strip() or "127.0.0.1"
+        if advanced_host_val:
+            try:
+                _socket.inet_aton(host_val)
+            except OSError:
+                _show_error("Некорректный IP-адрес.")
+                return
+            try:
+                port_val = int(port_var.get().strip())
+                if not (1 <= port_val <= 65535):
+                    raise ValueError
+            except ValueError:
+                _show_error("Порт должен быть числом 1-65535")
+                return
+            lines = [l.strip() for l in dc_textbox.get("1.0", "end").strip().splitlines()
+                     if l.strip()]
+            try:
+                tg_ws_proxy.parse_dc_ip_list(lines)
+            except ValueError as e:
+                _show_error(str(e))
+                return
+            dc_ip_val = lines
+            port_val_final = port_val
+        else:
+            port_val_final = DEFAULT_CONFIG["port"]
+            dc_ip_val = DEFAULT_CONFIG["dc_ip"]
 
         new_cfg = {
             "host": host_val,
-            "port": port_val,
-            "dc_ip": lines,
+            "port": port_val_final,
+            "listen_all": listen_all_val,
+            "advanced_host": advanced_host_val,
+            "dc_ip": dc_ip_val,
             "verbose": verbose_var.get(),
         }
         save_config(new_cfg)
@@ -478,9 +767,10 @@ def _show_first_run():
     if FIRST_RUN_MARKER.exists():
         return
 
-    host = _config.get("host", DEFAULT_CONFIG["host"])
-    port = _config.get("port", DEFAULT_CONFIG["port"])
-    tg_url = f"tg://socks?server={host}&port={port}"
+    local_host, port = get_local_connection_address(_config)
+    net_available = is_network_available(_config)
+    net_host, _ = get_network_connection_address(_config)
+    tg_url = f"tg://socks?server={local_host}&port={port}"
 
     if ctk is None:
         FIRST_RUN_MARKER.touch()
@@ -503,7 +793,7 @@ def _show_first_run():
     root.resizable(False, False)
     root.attributes("-topmost", True)
 
-    w, h = 520, 440
+    w, h = 520, 520
     sw = root.winfo_screenwidth()
     sh = root.winfo_screenheight()
     root.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
@@ -524,6 +814,24 @@ def _show_first_run():
                  font=(FONT_FAMILY, 17, "bold"),
                  text_color=TEXT_PRIMARY).pack(side="left")
 
+    ctk.CTkLabel(frame, text=f"На этом устройстве:  {local_host}:{port}",
+                 font=(FONT_FAMILY, 15, "bold"), text_color=TG_BLUE,
+                 anchor="w").pack(anchor="w", pady=(0, 4))
+    if net_available:
+        net_text = f"В локальной сети (другие устройства):  {net_host}:{port}"
+        net_color = TG_BLUE
+    else:
+        net_text = "В локальной сети: недоступно"
+        net_color = TEXT_SECONDARY
+    ctk.CTkLabel(frame, text=net_text,
+                 font=(FONT_FAMILY, 14, "bold"), text_color=net_color,
+                 anchor="w").pack(anchor="w", pady=(0, 12))
+
+    if net_available:
+        ctk.CTkLabel(frame, text="С других устройств в настройках прокси Telegram укажите адрес «В локальной сети».",
+                     font=(FONT_FAMILY, 12), text_color=TEXT_SECONDARY,
+                     anchor="w", justify="left", wraplength=460).pack(anchor="w", pady=(0, 12))
+
     # Info sections
     sections = [
         ("Как подключить Telegram Desktop:", True),
@@ -532,7 +840,8 @@ def _show_first_run():
         (f"  Или ссылка: {tg_url}", False),
         ("\n  Вручную:", True),
         ("  Настройки → Продвинутые → Тип подключения → Прокси", False),
-        (f"  SOCKS5 → {host} : {port} (без логина/пароля)", False),
+        (f"  На этом устройстве: SOCKS5 → {local_host} : {port} (без логина/пароля)", False),
+        (f"  В сети: SOCKS5 → {net_host} : {port}" if net_available else "  В сети: недоступно", False),
     ]
 
     for text, bold in sections:
@@ -575,16 +884,46 @@ def _show_first_run():
     root.mainloop()
 
 
+def _on_copy_local_address():
+    host, port = get_local_connection_address(_config)
+    try:
+        pyperclip.copy(f"{host}:{port}")
+    except Exception as exc:
+        log.warning("Copy failed: %s", exc)
+
+
+def _on_copy_network_address():
+    if not is_network_available(_config):
+        return
+    host, port = get_network_connection_address(_config)
+    try:
+        pyperclip.copy(f"{host}:{port}")
+    except Exception as exc:
+        log.warning("Copy failed: %s", exc)
+
+
 def _build_menu():
     if pystray is None:
         return None
-    host = _config.get("host", DEFAULT_CONFIG["host"])
-    port = _config.get("port", DEFAULT_CONFIG["port"])
+    local_host, port = get_local_connection_address(_config)
+    net_available = is_network_available(_config)
+    net_host, _ = get_network_connection_address(_config)
+    if net_available:
+        net_menu_text = f"Копировать адрес (локальная сеть) — {net_host}:{port}"
+        net_menu_callback = _on_copy_network_address
+    else:
+        net_menu_text = "Копировать адрес (локальная сеть) — недоступно"
+        net_menu_callback = lambda *a: None  # не копируем при недоступности
     return pystray.Menu(
         pystray.MenuItem(
-            f"Открыть в Telegram ({host}:{port})",
+            f"Открыть в Telegram ({local_host}:{port})",
             _on_open_in_telegram,
             default=True),
+        pystray.MenuItem(
+            f"Копировать адрес (этот компьютер) — {local_host}:{port}",
+            _on_copy_local_address,
+        ),
+        pystray.MenuItem(net_menu_text, net_menu_callback),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Перезапустить прокси", _on_restart),
         pystray.MenuItem("Настройки...", _on_edit_config),
