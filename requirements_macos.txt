@@ -1,0 +1,4 @@
+rumps>=0.4.0
+cryptography>=41.0.0
+psutil>=5.9.0
+pyinstaller>=6.0.0
