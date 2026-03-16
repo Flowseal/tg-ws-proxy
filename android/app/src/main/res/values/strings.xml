@@ -24,11 +24,15 @@
     <string name="save_button">Save Settings</string>
     <string name="start_button">Start Service</string>
     <string name="stop_button">Stop Service</string>
+    <string name="restart_button">Restart Proxy</string>
     <string name="open_telegram_button">Open in Telegram</string>
+    <string name="open_logs_button">Open Logs</string>
     <string name="disable_battery_optimization_button">Disable Battery Optimization</string>
     <string name="open_app_settings_button">Open App Settings</string>
+    <string name="last_error_label">Last service error</string>
     <string name="settings_saved">Settings saved</string>
     <string name="service_start_requested">Foreground service start requested</string>
+    <string name="service_restart_requested">Foreground service restart requested</string>
     <string name="telegram_not_found">Telegram app was not found for tg://socks.</string>
     <string name="notification_title">TG WS Proxy</string>
     <string name="notification_channel_name">Proxy service</string>
@@ -40,4 +44,13 @@
     <string name="notification_action_stop">Stop</string>
     <string name="saved_config_invalid">Saved proxy settings are invalid.</string>
     <string name="proxy_start_failed_generic">Failed to start embedded Python proxy.</string>
+    <string name="proxy_runtime_stopped_unexpectedly">Proxy runtime stopped unexpectedly.</string>
+    <string name="logs_title">Proxy Logs</string>
+    <string name="logs_subtitle">Shows the latest lines from the embedded Python proxy log.</string>
+    <string name="logs_path_label">Log file</string>
+    <string name="refresh_logs_button">Refresh Logs</string>
+    <string name="close_logs_button">Close</string>
+    <string name="logs_empty">The log file is empty or has not been created yet.</string>
+    <string name="logs_read_failed">Failed to read log file: %1$s</string>
+    <string name="logs_truncated_prefix">Showing the last part of the log file.</string>
 </resources>

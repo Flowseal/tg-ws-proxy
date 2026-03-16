@@ -43,33 +43,24 @@ class ProxyForegroundService : Service() {
                 START_NOT_STICKY
             }
 
-            else -> {
-                val config = settingsStore.load().validate().normalized
-                if (config == null) {
-                    ProxyServiceState.markFailed(getString(R.string.saved_config_invalid))
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
-                    START_NOT_STICKY
-                } else {
-                    ProxyServiceState.markStarting(config)
-                    startForeground(
-                        NOTIFICATION_ID,
-                        buildNotification(
-                            buildNotificationPayload(
-                                config = config,
-                                statusText = getString(
-                                    R.string.notification_starting,
-                                    config.host,
-                                    config.port,
-                                ),
-                            ),
-                        ),
-                    )
-                    serviceScope.launch {
-                        startProxyRuntime(config)
-                    }
-                    START_STICKY
+            ACTION_RESTART -> {
+                val config = loadValidatedConfig() ?: return START_NOT_STICKY
+                ProxyServiceState.clearError()
+                beginProxyStart(config)
+                serviceScope.launch {
+                    stopRuntimeOnly()
+                    startProxyRuntime(config)
                 }
+                START_STICKY
+            }
+
+            else -> {
+                val config = loadValidatedConfig() ?: return START_NOT_STICKY
+                beginProxyStart(config)
+                serviceScope.launch {
+                    startProxyRuntime(config)
+                }
+                START_STICKY
             }
         }
     }
@@ -133,9 +124,36 @@ class ProxyForegroundService : Service() {
         }
     }
 
+    private fun loadValidatedConfig(): NormalizedProxyConfig? {
+        val config = settingsStore.load().validate().normalized
+        if (config == null) {
+            ProxyServiceState.markFailed(getString(R.string.saved_config_invalid))
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+        return config
+    }
+
+    private fun beginProxyStart(config: NormalizedProxyConfig) {
+        ProxyServiceState.markStarting(config)
+        startForeground(
+            NOTIFICATION_ID,
+            buildNotification(
+                buildNotificationPayload(
+                    config = config,
+                    trafficState = TrafficState(),
+                    statusText = getString(
+                        R.string.notification_starting,
+                        config.host,
+                        config.port,
+                    ),
+                ),
+            ),
+        )
+    }
+
     private fun stopProxyRuntime(removeNotification: Boolean, stopService: Boolean) {
-        stopTrafficUpdates()
-        runCatching { PythonProxyBridge.stop(this) }
+        stopRuntimeOnly()
         ProxyServiceState.markStopped()
 
         if (removeNotification) {
@@ -146,6 +164,11 @@ class ProxyForegroundService : Service() {
         }
     }
 
+    private fun stopRuntimeOnly() {
+        stopTrafficUpdates()
+        runCatching { PythonProxyBridge.stop(this) }
+    }
+
     private fun updateNotification(payload: NotificationPayload) {
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, buildNotification(payload))
@@ -153,9 +176,9 @@ class ProxyForegroundService : Service() {
 
     private fun buildNotificationPayload(
         config: NormalizedProxyConfig,
+        trafficState: TrafficState,
         statusText: String,
     ): NotificationPayload {
-        val trafficState = readTrafficState()
         val endpointText = getString(R.string.notification_endpoint, config.host, config.port)
         val detailsText = getString(
             R.string.notification_details,
@@ -176,9 +199,19 @@ class ProxyForegroundService : Service() {
         stopTrafficUpdates()
         trafficJob = serviceScope.launch {
             while (isActive && ProxyServiceState.isRunning.value) {
+                val trafficState = readTrafficState()
+                if (!trafficState.running) {
+                    ProxyServiceState.markFailed(
+                        trafficState.lastError ?: getString(R.string.proxy_runtime_stopped_unexpectedly),
+                    )
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                    break
+                }
                 updateNotification(
                     buildNotificationPayload(
                         config = config,
+                        trafficState = trafficState,
                         statusText = getString(
                             R.string.notification_running,
                             config.host,
@@ -213,6 +246,8 @@ class ProxyForegroundService : Service() {
                 downBytesPerSecond = 0L,
                 totalBytesUp = current.bytesUp,
                 totalBytesDown = current.bytesDown,
+                running = current.running,
+                lastError = current.lastError,
             )
         }
 
@@ -224,6 +259,8 @@ class ProxyForegroundService : Service() {
             downBytesPerSecond = (downDelta * 1000L) / elapsedMillis,
             totalBytesUp = current.bytesUp,
             totalBytesDown = current.bytesDown,
+            running = current.running,
+            lastError = current.lastError,
         )
     }
 
@@ -310,6 +347,7 @@ class ProxyForegroundService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val ACTION_START = "org.flowseal.tgwsproxy.action.START"
         private const val ACTION_STOP = "org.flowseal.tgwsproxy.action.STOP"
+        private const val ACTION_RESTART = "org.flowseal.tgwsproxy.action.RESTART"
 
         fun start(context: Context) {
             val intent = Intent(context, ProxyForegroundService::class.java).apply {
@@ -323,6 +361,13 @@ class ProxyForegroundService : Service() {
                 action = ACTION_STOP
             }
             context.startService(intent)
+        }
+
+        fun restart(context: Context) {
+            val intent = Intent(context, ProxyForegroundService::class.java).apply {
+                action = ACTION_RESTART
+            }
+            androidx.core.content.ContextCompat.startForegroundService(context, intent)
         }
     }
 }
@@ -340,8 +385,10 @@ private data class TrafficSample(
 )
 
 private data class TrafficState(
-    val upBytesPerSecond: Long,
-    val downBytesPerSecond: Long,
-    val totalBytesUp: Long,
-    val totalBytesDown: Long,
+    val upBytesPerSecond: Long = 0L,
+    val downBytesPerSecond: Long = 0L,
+    val totalBytesUp: Long = 0L,
+    val totalBytesDown: Long = 0L,
+    val running: Boolean = false,
+    val lastError: String? = null,
 )

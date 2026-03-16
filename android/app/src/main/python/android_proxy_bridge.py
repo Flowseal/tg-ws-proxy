@@ -118,4 +118,5 @@ def get_runtime_stats_json() -> str:
 
     payload = dict(tg_ws_proxy.get_stats_snapshot())
     payload["running"] = running
+    payload["last_error"] = _LAST_ERROR
     return json.dumps(payload)

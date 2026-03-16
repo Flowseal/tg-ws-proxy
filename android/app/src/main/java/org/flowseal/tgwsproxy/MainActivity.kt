@@ -5,7 +5,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -43,7 +42,9 @@ class MainActivity : AppCompatActivity() {
 
         binding.startButton.setOnClickListener { onStartClicked() }
         binding.stopButton.setOnClickListener { ProxyForegroundService.stop(this) }
+        binding.restartButton.setOnClickListener { onRestartClicked() }
         binding.saveButton.setOnClickListener { onSaveClicked(showMessage = true) }
+        binding.openLogsButton.setOnClickListener { onOpenLogsClicked() }
         binding.openTelegramButton.setOnClickListener { onOpenTelegramClicked() }
         binding.disableBatteryOptimizationButton.setOnClickListener {
             AndroidSystemStatus.openBatteryOptimizationSettings(this)
@@ -84,6 +85,16 @@ class MainActivity : AppCompatActivity() {
         onSaveClicked(showMessage = false) ?: return
         ProxyForegroundService.start(this)
         Snackbar.make(binding.root, R.string.service_start_requested, Snackbar.LENGTH_SHORT).show()
+    }
+
+    private fun onRestartClicked() {
+        onSaveClicked(showMessage = false) ?: return
+        ProxyForegroundService.restart(this)
+        Snackbar.make(binding.root, R.string.service_restart_requested, Snackbar.LENGTH_SHORT).show()
+    }
+
+    private fun onOpenLogsClicked() {
+        startActivity(Intent(this, LogViewerActivity::class.java))
     }
 
     private fun onOpenTelegramClicked() {
@@ -127,6 +138,7 @@ class MainActivity : AppCompatActivity() {
                     )
                     binding.startButton.isEnabled = !isStarting && !isRunning
                     binding.stopButton.isEnabled = isStarting || isRunning
+                    binding.restartButton.isEnabled = !isStarting
                 }
             }
         }
@@ -162,13 +174,10 @@ class MainActivity : AppCompatActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 ProxyServiceState.lastError.collect { error ->
                     if (error.isNullOrBlank()) {
-                        if (!binding.errorText.isVisible) {
-                            return@collect
-                        }
-                        binding.errorText.isVisible = false
+                        binding.lastErrorCard.isVisible = false
                     } else {
-                        binding.errorText.text = error
-                        binding.errorText.isVisible = true
+                        binding.lastErrorValue.text = error
+                        binding.lastErrorCard.isVisible = true
                     }
                 }
             }

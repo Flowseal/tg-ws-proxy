@@ -16,6 +16,10 @@
         android:theme="@style/Theme.TgWsProxy">
 
         <activity
+            android:name=".LogViewerActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".MainActivity"
             android:exported="true">
             <intent-filter>

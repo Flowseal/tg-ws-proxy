@@ -26,6 +26,7 @@ class FakeJavaArrayList:
 class AndroidProxyBridgeTests(unittest.TestCase):
     def tearDown(self):
         tg_ws_proxy.reset_stats()
+        android_proxy_bridge._LAST_ERROR = None
 
     def test_normalize_dc_ip_list_with_python_iterable(self):
         result = android_proxy_bridge._normalize_dc_ip_list([
@@ -52,6 +53,14 @@ class AndroidProxyBridgeTests(unittest.TestCase):
         self.assertEqual(result["bytes_up"], 1536)
         self.assertEqual(result["bytes_down"], 4096)
         self.assertFalse(result["running"])
+        self.assertIsNone(result["last_error"])
+
+    def test_get_runtime_stats_json_includes_last_error(self):
+        android_proxy_bridge._LAST_ERROR = "boom"
+
+        result = json.loads(android_proxy_bridge.get_runtime_stats_json())
+
+        self.assertEqual(result["last_error"], "boom")
 
     def test_normalize_dc_ip_list_with_java_array_list_shape(self):
         result = android_proxy_bridge._normalize_dc_ip_list(FakeJavaArrayList([
