@@ -25,6 +25,7 @@ APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / APP_NAME
 CONFIG_FILE = APP_DIR / "config.json"
 LOG_FILE = APP_DIR / "proxy.log"
 FIRST_RUN_MARKER = APP_DIR / ".first_run_done"
+IPV6_WARN_MARKER = APP_DIR / ".ipv6_warned"
 
 
 DEFAULT_CONFIG = {
@@ -40,30 +41,81 @@ _async_stop: Optional[object] = None
 _tray_icon: Optional[object] = None
 _config: dict = {}
 _exiting: bool = False
+_lock_file_path: Optional[Path] = None
 
 log = logging.getLogger("tg-ws-tray")
 
 
+def _same_process(lock_meta: dict, proc: psutil.Process) -> bool:
+    try:
+        lock_ct = float(lock_meta.get("create_time", 0.0))
+        proc_ct = float(proc.create_time())
+        if lock_ct > 0 and abs(lock_ct - proc_ct) > 1.0:
+            return False
+    except Exception:
+        return False
+
+    frozen = bool(getattr(sys, "frozen", False))
+    if frozen:
+        return os.path.basename(sys.executable) == proc.name()
+
+    return False
+
+
+def _release_lock():
+    global _lock_file_path
+    if not _lock_file_path:
+        return
+    try:
+        _lock_file_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    _lock_file_path = None
+
+
 def _acquire_lock() -> bool:
+    global _lock_file_path
     _ensure_dirs()
     lock_files = list(APP_DIR.glob("*.lock"))
-        
+
     for f in lock_files:
+        pid = None
+        meta: dict = {}
+
         try:
             pid = int(f.stem)
-            if psutil.pid_exists(pid):
-                try:
-                    psutil.Process(pid).status()
-                    return False
-                except (psutil.NoSuchProcess, psutil.ZombieProcess):
-                    pass
+        except Exception:
+            f.unlink(missing_ok=True)
+            continue
+
+        try:
+            raw = f.read_text(encoding="utf-8").strip()
+            if raw:
+                meta = json.loads(raw)
+        except Exception:
+            meta = {}
+
+        try:
+            proc = psutil.Process(pid)
+            if _same_process(meta, proc):
+                return False
         except Exception:
             pass
 
         f.unlink(missing_ok=True)
 
     lock_file = APP_DIR / f"{os.getpid()}.lock"
-    lock_file.touch()
+    try:
+        proc = psutil.Process(os.getpid())
+        payload = {
+            "create_time": proc.create_time(),
+        }
+        lock_file.write_text(json.dumps(payload, ensure_ascii=False),
+                             encoding="utf-8")
+    except Exception:
+        lock_file.touch()
+
+    _lock_file_path = lock_file
     return True
 
 
@@ -220,9 +272,8 @@ def _show_info(text: str, title: str = "TG WS Proxy"):
 
 
 def _on_open_in_telegram(icon=None, item=None):
-    host = _config.get("host", DEFAULT_CONFIG["host"])
     port = _config.get("port", DEFAULT_CONFIG["port"])
-    url = f"tg://socks?server={host}&port={port}"
+    url = f"tg://socks?server=127.0.0.1&port={port}"
     log.info("Opening %s", url)
     try:
         result = webbrowser.open(url)
@@ -524,6 +575,51 @@ def _show_first_run():
     root.mainloop()
 
 
+def _has_ipv6_enabled() -> bool:
+    import socket as _sock
+    try:
+        addrs = _sock.getaddrinfo(_sock.gethostname(), None, _sock.AF_INET6)
+        for addr in addrs:
+            ip = addr[4][0]
+            if ip and not ip.startswith('::1') and not ip.startswith('fe80::1'):
+                return True
+    except Exception:
+        pass
+    try:
+        s = _sock.socket(_sock.AF_INET6, _sock.SOCK_STREAM)
+        s.bind(('::1', 0))
+        s.close()
+        return True
+    except Exception:
+        return False
+
+
+def _check_ipv6_warning():
+    _ensure_dirs()
+    if IPV6_WARN_MARKER.exists():
+        return
+    if not _has_ipv6_enabled():
+        return
+
+    IPV6_WARN_MARKER.touch()
+
+    threading.Thread(target=_show_ipv6_dialog, daemon=True).start()
+
+
+def _show_ipv6_dialog():
+    _show_info(
+        "На вашем компьютере включена поддержка подключения по IPv6.\n\n"
+        "Telegram может пытаться подключаться через IPv6, "
+        "что не поддерживается и может привести к ошибкам.\n\n"
+        "Если прокси не работает или в логах присутствуют ошибки, "
+        "связанные с попытками подключения по IPv6 - "
+        "попробуйте отключить в настройках прокси Telegram попытку соединения "
+        "по IPv6. Если данная мера не помогает, попытайтесь отключить IPv6 "
+        "в системе.\n\n"
+        "Это предупреждение будет показано только один раз.",
+        "TG WS Proxy")
+
+
 def _build_menu():
     if pystray is None:
         return None
@@ -574,6 +670,7 @@ def run_tray():
     start_proxy()
 
     _show_first_run()
+    _check_ipv6_warning()
 
     icon_image = _load_icon()
     _tray_icon = pystray.Icon(
@@ -594,7 +691,10 @@ def main():
         _show_info("Приложение уже запущено.", os.path.basename(sys.argv[0]))
         return
 
-    run_tray()
+    try:
+        run_tray()
+    finally:
+        _release_lock()
 
 
 if __name__ == "__main__":

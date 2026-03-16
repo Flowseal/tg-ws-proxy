@@ -37,7 +37,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: TgWsProxy
-          path: dist/TgWsProxy.exe
+          path: |
+            dist/TgWsProxy.exe
 
   build-win7:
     runs-on: windows-latest
