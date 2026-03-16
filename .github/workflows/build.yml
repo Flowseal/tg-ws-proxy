@@ -28,7 +28,6 @@ jobs:
           $version = python -c "import PyInstaller; print(PyInstaller.__version__)"
           git clone --depth 1 --branch "v$version" https://github.com/pyinstaller/pyinstaller.git _pyinstaller_src
           cd _pyinstaller_src/bootloader
-          $env:CFLAGS = "-Wno-error=old-style-definition"
           python ./waf all --target-arch=64bit
           $dest = python -c "import PyInstaller; import os; print(os.path.join(os.path.dirname(PyInstaller.__file__), 'bootloader', 'Windows-64bit-intel'))"
           New-Item -ItemType Directory -Force -Path $dest
@@ -63,7 +62,7 @@ jobs:
           $version = python -c "import PyInstaller; print(PyInstaller.__version__)"
           git clone --depth 1 --branch "v$version" https://github.com/pyinstaller/pyinstaller.git _pyinstaller_src
           cd _pyinstaller_src/bootloader
-          $env:CFLAGS = "-Wno-error=old-style-definition"
+          $env:CFLAGS = "-Wno-error=old-style-definition -std=c11"
           python ./waf all --target-arch=64bit
           $dest = python -c "import PyInstaller; import os; print(os.path.join(os.path.dirname(PyInstaller.__file__), 'bootloader', 'Windows-64bit-intel'))"
           New-Item -ItemType Directory -Force -Path $dest
