@@ -16,6 +16,13 @@ build/
 .idea/
 *.swp
 *.swo
+.gradle/
+.gradle-local/
+android/.gradle-local/
+local.properties
+android/.idea/
+android/build/
+android/app/build/
 
 # OS
 Thumbs.db

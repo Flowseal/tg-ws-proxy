@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TG WS Proxy</string>
+    <string name="subtitle">Android shell for the local Telegram SOCKS5 proxy. The embedded Python runtime will be wired in the next commit.</string>
+    <string name="status_label">Foreground service</string>
+    <string name="status_running">Running</string>
+    <string name="status_stopped">Stopped</string>
+    <string name="service_hint_idle">The Android service shell is ready. Save settings, then start the service.</string>
+    <string name="service_hint_running">Foreground service active for %1$s:%2$d. Python proxy bootstrap will be connected next.</string>
+    <string name="host_hint">Proxy host</string>
+    <string name="port_hint">Proxy port</string>
+    <string name="dc_ip_hint">DC to IP mappings (one DC:IP per line)</string>
+    <string name="verbose_label">Verbose logging</string>
+    <string name="save_button">Save Settings</string>
+    <string name="start_button">Start Service</string>
+    <string name="stop_button">Stop Service</string>
+    <string name="settings_saved">Settings saved</string>
+    <string name="service_start_requested">Foreground service start requested</string>
+    <string name="notification_title">TG WS Proxy</string>
+    <string name="notification_channel_name">Proxy service</string>
+    <string name="notification_channel_description">Keeps the Telegram proxy service alive in the foreground.</string>
+</resources>

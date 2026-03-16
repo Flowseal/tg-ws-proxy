@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.TgWsProxy" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/proxy_blue</item>
+        <item name="colorSecondary">@color/proxy_navy</item>
+        <item name="android:statusBarColor">@color/proxy_navy</item>
+        <item name="android:navigationBarColor">@color/proxy_white</item>
+        <item name="colorSurface">@color/proxy_surface</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
+    </style>
+</resources>
