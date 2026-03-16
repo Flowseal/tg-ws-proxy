@@ -11,39 +11,33 @@ import time
 import webbrowser
 import pystray
 import pyperclip
-import asyncio as _asyncio
 import customtkinter as ctk
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 from PIL import Image, ImageDraw, ImageFont
 
 import proxy.tg_ws_proxy as tg_ws_proxy
+from proxy.app_runtime import DEFAULT_CONFIG, ProxyAppRuntime
 
 
 APP_NAME = "TgWsProxy"
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / APP_NAME
-CONFIG_FILE = APP_DIR / "config.json"
-LOG_FILE = APP_DIR / "proxy.log"
 FIRST_RUN_MARKER = APP_DIR / ".first_run_done"
 IPV6_WARN_MARKER = APP_DIR / ".ipv6_warned"
-
-
-DEFAULT_CONFIG = {
-    "port": 1080,
-    "host": "127.0.0.1",
-    "dc_ip": ["2:149.154.167.220", "4:149.154.167.220"],
-    "verbose": False,
-}
-
-
-_proxy_thread: Optional[threading.Thread] = None
-_async_stop: Optional[object] = None
 _tray_icon: Optional[object] = None
 _config: dict = {}
 _exiting: bool = False
 _lock_file_path: Optional[Path] = None
 
 log = logging.getLogger("tg-ws-tray")
+_runtime = ProxyAppRuntime(
+    APP_DIR,
+    default_config=DEFAULT_CONFIG,
+    logger_name="tg-ws-tray",
+    on_error=lambda text: _show_error(text),
+)
+CONFIG_FILE = _runtime.config_file
+LOG_FILE = _runtime.log_file
 
 
 def _same_process(lock_meta: dict, proc: psutil.Process) -> bool:
@@ -120,48 +114,19 @@ def _acquire_lock() -> bool:
 
 
 def _ensure_dirs():
-    APP_DIR.mkdir(parents=True, exist_ok=True)
+    _runtime.ensure_dirs()
 
 
 def load_config() -> dict:
-    _ensure_dirs()
-    if CONFIG_FILE.exists():
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            for k, v in DEFAULT_CONFIG.items():
-                data.setdefault(k, v)
-            return data
-        except Exception as exc:
-            log.warning("Failed to load config: %s", exc)
-    return dict(DEFAULT_CONFIG)
+    return _runtime.load_config()
 
 
 def save_config(cfg: dict):
-    _ensure_dirs()
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    _runtime.save_config(cfg)
 
 
 def setup_logging(verbose: bool = False):
-    _ensure_dirs()
-    root = logging.getLogger()
-    root.setLevel(logging.DEBUG if verbose else logging.INFO)
-
-    fh = logging.FileHandler(str(LOG_FILE), encoding="utf-8")
-    fh.setLevel(logging.DEBUG)
-    fh.setFormatter(logging.Formatter(
-        "%(asctime)s  %(levelname)-5s  %(name)s  %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"))
-    root.addHandler(fh)
-
-    if not getattr(sys, "frozen", False):
-        ch = logging.StreamHandler(sys.stdout)
-        ch.setLevel(logging.DEBUG if verbose else logging.INFO)
-        ch.setFormatter(logging.Formatter(
-            "%(asctime)s  %(levelname)-5s  %(message)s",
-            datefmt="%H:%M:%S"))
-        root.addHandler(ch)
+    _runtime.setup_logging(verbose)
 
 
 def _make_icon_image(size: int = 64):
@@ -196,71 +161,16 @@ def _load_icon():
             pass
     return _make_icon_image()
 
-
-
-def _run_proxy_thread(port: int, dc_opt: Dict[int, str], verbose: bool,
-                      host: str = '127.0.0.1'):
-    global _async_stop
-    loop = _asyncio.new_event_loop()
-    _asyncio.set_event_loop(loop)
-    stop_ev = _asyncio.Event()
-    _async_stop = (loop, stop_ev)
-
-    try:
-        loop.run_until_complete(
-            tg_ws_proxy._run(port, dc_opt, stop_event=stop_ev, host=host))
-    except Exception as exc:
-        log.error("Proxy thread crashed: %s", exc)
-        if "10048" in str(exc) or "Address already in use" in str(exc):
-            _show_error("Не удалось запустить прокси:\nПорт уже используется другим приложением.\n\nЗакройте приложение, использующее этот порт, или измените порт в настройках прокси и перезапустите.")
-    finally:
-        loop.close()
-        _async_stop = None
-
-
 def start_proxy():
-    global _proxy_thread, _config
-    if _proxy_thread and _proxy_thread.is_alive():
-        log.info("Proxy already running")
-        return
-
-    cfg = _config
-    port = cfg.get("port", DEFAULT_CONFIG["port"])
-    host = cfg.get("host", DEFAULT_CONFIG["host"])
-    dc_ip_list = cfg.get("dc_ip", DEFAULT_CONFIG["dc_ip"])
-    verbose = cfg.get("verbose", False)
-
-    try:
-        dc_opt = tg_ws_proxy.parse_dc_ip_list(dc_ip_list)
-    except ValueError as e:
-        log.error("Bad config dc_ip: %s", e)
-        _show_error(f"Ошибка конфигурации:\n{e}")
-        return
-
-    log.info("Starting proxy on %s:%d ...", host, port)
-    _proxy_thread = threading.Thread(
-        target=_run_proxy_thread,
-        args=(port, dc_opt, verbose, host),
-        daemon=True, name="proxy")
-    _proxy_thread.start()
+    _runtime.start_proxy(_config)
 
 
 def stop_proxy():
-    global _proxy_thread, _async_stop
-    if _async_stop:
-        loop, stop_ev = _async_stop
-        loop.call_soon_threadsafe(stop_ev.set)
-        if _proxy_thread:
-            _proxy_thread.join(timeout=2)
-    _proxy_thread = None
-    log.info("Proxy stopped")
+    _runtime.stop_proxy()
 
 
 def restart_proxy():
-    log.info("Restarting proxy...")
-    stop_proxy()
-    time.sleep(0.3)
-    start_proxy()
+    _runtime.restart_proxy()
 
 
 def _show_error(text: str, title: str = "TG WS Proxy — Ошибка"):
@@ -642,14 +552,8 @@ def _build_menu():
 def run_tray():
     global _tray_icon, _config
 
-    _config = load_config()
-    save_config(_config)
-
-    if LOG_FILE.exists():
-        try:
-            LOG_FILE.unlink()
-        except Exception:
-            pass
+    _config = _runtime.prepare()
+    _runtime.reset_log_file()
 
     setup_logging(_config.get("verbose", False))
     log.info("TG WS Proxy tray app starting")
