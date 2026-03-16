@@ -1,5 +1,4 @@
 name: Build & Release
-
 on:
   workflow_dispatch:
     inputs:
@@ -7,32 +6,36 @@ on:
         description: "Release version tag (e.g. v1.0.0)"
         required: true
         default: "v1.0.0"
-
 permissions:
   contents: write
-
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Install pyinstaller
         run: pip install pyinstaller
-
+      - name: Rebuild PyInstaller bootloader
+        run: |
+          $version = python -c "import PyInstaller; print(PyInstaller.__version__)"
+          git clone --depth 1 --branch "v$version" https://github.com/pyinstaller/pyinstaller.git _pyinstaller_src
+          cd _pyinstaller_src/bootloader
+          python ./waf all --target-arch=64bit
+          $dest = python -c "import PyInstaller; import os; print(os.path.join(os.path.dirname(PyInstaller.__file__), 'bootloader', 'Windows-64bit-intel'))"
+          New-Item -ItemType Directory -Force -Path $dest
+          Copy-Item -Force .\build\release\*  $dest
+          Copy-Item -Force .\build\releasew\* $dest
+        shell: pwsh
       - name: Build EXE with PyInstaller
         run: pyinstaller packaging/windows.spec --noconfirm
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -45,25 +48,30 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Python 3.8 (last version supporting Win7)
         uses: actions/setup-python@v5
         with:
           python-version: "3.8"
           cache: "pip"
-
       - name: Install dependencies (Win7-compatible)
         run: pip install -r requirements-win7.txt
-
       - name: Install pyinstaller
         run: pip install "pyinstaller==5.13.2"
-
+      - name: Rebuild PyInstaller bootloader
+        run: |
+          $version = python -c "import PyInstaller; print(PyInstaller.__version__)"
+          git clone --depth 1 --branch "v$version" https://github.com/pyinstaller/pyinstaller.git _pyinstaller_src
+          cd _pyinstaller_src/bootloader
+          python ./waf all --target-arch=64bit
+          $dest = python -c "import PyInstaller; import os; print(os.path.join(os.path.dirname(PyInstaller.__file__), 'bootloader', 'Windows-64bit-intel'))"
+          New-Item -ItemType Directory -Force -Path $dest
+          Copy-Item -Force .\build\release\*  $dest
+          Copy-Item -Force .\build\releasew\* $dest
+        shell: pwsh
       - name: Build EXE with PyInstaller (Win7)
         run: pyinstaller packaging/windows.spec --noconfirm
-
       - name: Rename artifact
         run: mv dist/TgWsProxy.exe dist/TgWsProxy-win7.exe
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -79,13 +87,11 @@ jobs:
         with:
           name: TgWsProxy
           path: dist
-
       - name: Download Win7 build
         uses: actions/download-artifact@v4
         with:
           name: TgWsProxy-win7
           path: dist
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
