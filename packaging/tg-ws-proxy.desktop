@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=TG WS Proxy
+Comment=SOCKS5-прокси для Telegram Desktop через WebSocket
+Exec=__INSTALL_DIR__/run.sh
+Icon=network-server
+Terminal=false
+Categories=Network;Utility;
+StartupNotify=false
+Keywords=telegram;proxy;socks5;websocket;

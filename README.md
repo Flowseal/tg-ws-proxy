@@ -35,17 +35,41 @@ Telegram Desktop → SOCKS5 (127.0.0.1:1080) → TG WS Proxy → WSS (kws*.web.t
 
 При первом запуске откроется окно с инструкцией по подключению Telegram Desktop. Приложение сворачивается в системный трей.
 
-**Меню трея:**
-- **Открыть в Telegram** — автоматически настроить прокси через `tg://socks` ссылку
-- **Перезапустить прокси** — перезапуск без выхода из приложения
-- **Настройки...** — GUI-редактор конфигурации
-- **Открыть логи** — открыть файл логов
-- **Выход** — остановить прокси и закрыть приложение
+**Linux (окно приложения):**
+- Окно остаётся открытым, можно свернуть
+- Кнопки: «Открыть в Telegram», «Настройки», «Открыть логи»
+- Закрытие окна (×) — полная остановка приложения
 
 ## Установка из исходников
 
 ```bash
 pip install -r requirements.txt
+```
+
+### Linux (Debian, Ubuntu)
+
+**Системные зависимости:**
+```bash
+sudo apt install python3 python3-venv python3-tk
+```
+
+**Вариант 1 — установка как приложение** (пункт в меню, окно можно свернуть):
+```bash
+./packaging/install-linux.sh
+```
+После установки приложение появится в меню приложений.
+
+**Вариант 2 — запуск из исходников:**
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python linux.py
+```
+
+**Вариант 3 — сборка standalone-бинарника:**
+```bash
+./packaging/build-linux.sh
+# Результат: dist/tg-ws-proxy
 ```
 
 ### Windows (Tray-приложение)
@@ -54,7 +78,7 @@ pip install -r requirements.txt
 python windows.py
 ```
 
-### Консольный режим
+### Консольный режим (все платформы)
 
 ```bash
 python proxy/tg_ws_proxy.py [--port PORT] [--dc-ip DC:IP ...] [-v]
@@ -98,27 +122,28 @@ python proxy/tg_ws_proxy.py -v
 
 ## Конфигурация
 
-Tray-приложение хранит данные в `%APPDATA%/TgWsProxy`:
+| Платформа | Путь |
+|-----------|------|
+| Windows | `%APPDATA%/TgWsProxy/config.json` |
+| Linux | `~/.config/TgWsProxy/config.json` |
 
 ```json
 {
   "port": 1080,
-  "dc_ip": [
-    "2:149.154.167.220",
-    "4:149.154.167.220"
-  ],
+  "host": "127.0.0.1",
+  "dc_ip": ["2:149.154.167.220", "4:149.154.167.220"],
   "verbose": false
 }
 ```
 
-## Автоматическая сборка
+## Сборка
 
-Проект содержит спецификацию PyInstaller ([`windows.spec`](packaging/windows.spec)) и GitHub Actions workflow ([`.github/workflows/build.yml`](.github/workflows/build.yml)) для автоматической сборки.
+| Платформа | Спека | Команда |
+|-----------|-------|---------|
+| Windows | [`packaging/windows.spec`](packaging/windows.spec) | `pyinstaller packaging/windows.spec` |
+| Linux | [`packaging/linux.spec`](packaging/linux.spec) | `./packaging/build-linux.sh` |
 
-```bash
-pip install pyinstaller
-pyinstaller packaging/windows.spec
-```
+GitHub Actions: [`.github/workflows/build.yml`](.github/workflows/build.yml)
 
 ## Лицензия
 
