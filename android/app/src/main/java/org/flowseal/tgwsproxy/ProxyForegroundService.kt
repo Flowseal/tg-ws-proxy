@@ -3,11 +3,13 @@ package org.flowseal.tgwsproxy
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import androidx.core.app.TaskStackBuilder
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,7 +49,14 @@ class ProxyForegroundService : Service() {
                     startForeground(
                         NOTIFICATION_ID,
                         buildNotification(
-                            getString(R.string.notification_starting, config.host, config.port),
+                            buildNotificationPayload(
+                                config = config,
+                                statusText = getString(
+                                    R.string.notification_starting,
+                                    config.host,
+                                    config.port,
+                                ),
+                            ),
                         ),
                     )
                     serviceScope.launch {
@@ -68,11 +77,21 @@ class ProxyForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun buildNotification(contentText: String): Notification {
+    private fun buildNotification(payload: NotificationPayload): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.notification_title))
-            .setContentText(contentText)
+            .setContentText(payload.statusText)
+            .setSubText(payload.endpointText)
+            .setStyle(
+                NotificationCompat.BigTextStyle().bigText(payload.detailsText),
+            )
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentIntent(createOpenAppPendingIntent())
+            .addAction(
+                0,
+                getString(R.string.notification_action_stop),
+                createStopPendingIntent(),
+            )
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .build()
@@ -85,7 +104,16 @@ class ProxyForegroundService : Service() {
 
         result.onSuccess {
             ProxyServiceState.markStarted(config)
-            updateNotification(getString(R.string.notification_running, config.host, config.port))
+            updateNotification(
+                buildNotificationPayload(
+                    config = config,
+                    statusText = getString(
+                        R.string.notification_running,
+                        config.host,
+                        config.port,
+                    ),
+                ),
+            )
         }.onFailure { error ->
             ProxyServiceState.markFailed(
                 error.message ?: getString(R.string.proxy_start_failed_generic),
@@ -107,9 +135,75 @@ class ProxyForegroundService : Service() {
         }
     }
 
-    private fun updateNotification(contentText: String) {
+    private fun updateNotification(payload: NotificationPayload) {
         val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, buildNotification(contentText))
+        manager.notify(NOTIFICATION_ID, buildNotification(payload))
+    }
+
+    private fun buildNotificationPayload(
+        config: NormalizedProxyConfig,
+        statusText: String,
+    ): NotificationPayload {
+        val endpointText = getString(R.string.notification_endpoint, config.host, config.port)
+        val detailsText = getString(
+            R.string.notification_details,
+            config.host,
+            config.port,
+            config.dcIpList.size,
+            if (config.verbose) {
+                getString(R.string.notification_verbose_on)
+            } else {
+                getString(R.string.notification_verbose_off)
+            },
+        )
+        return NotificationPayload(
+            statusText = statusText,
+            endpointText = endpointText,
+            detailsText = detailsText,
+        )
+    }
+
+    private fun createOpenAppPendingIntent(): PendingIntent {
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+            ?.apply {
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP,
+                )
+            }
+            ?: Intent(this, MainActivity::class.java).apply {
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP,
+                )
+            }
+
+        return TaskStackBuilder.create(this)
+            .addNextIntentWithParentStack(launchIntent)
+            .getPendingIntent(
+                1,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            ?: PendingIntent.getActivity(
+                this,
+                1,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+    }
+
+    private fun createStopPendingIntent(): PendingIntent {
+        val intent = Intent(this, ProxyForegroundService::class.java).apply {
+            action = ACTION_STOP
+        }
+        return PendingIntent.getService(
+            this,
+            2,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     private fun createNotificationChannel() {
@@ -149,3 +243,9 @@ class ProxyForegroundService : Service() {
         }
     }
 }
+
+private data class NotificationPayload(
+    val statusText: String,
+    val endpointText: String,
+    val detailsText: String,
+)
