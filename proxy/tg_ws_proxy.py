@@ -467,7 +467,14 @@ def _ws_domains(dc: int, is_media) -> List[str]:
     return [f'kws{dc}.web.telegram.org', f'kws{dc}-1.web.telegram.org']
 
 
+# __slots__ added to Stats ---
 class Stats:
+    __slots__ = (
+        'connections_total', 'connections_ws', 'connections_tcp_fallback',
+        'connections_http_rejected', 'connections_passthrough', 'ws_errors',
+        'bytes_up', 'bytes_down', 'pool_hits', 'pool_misses',
+    )
+
     def __init__(self):
         self.connections_total = 0
         self.connections_ws = 0
@@ -494,7 +501,11 @@ class Stats:
 _stats = Stats()
 
 
+# __slots__ added to _WsPool;
+
 class _WsPool:
+    __slots__ = ('_idle', '_refilling')
+
     def __init__(self):
         self._idle: Dict[Tuple[int, bool], list] = {}
         self._refilling: Set[Tuple[int, bool]] = set()
@@ -535,17 +546,14 @@ class _WsPool:
             needed = _WS_POOL_SIZE - len(bucket)
             if needed <= 0:
                 return
-            tasks = []
-            for _ in range(needed):
-                tasks.append(asyncio.create_task(
-                    self._connect_one(target_ip, domains)))
-            for t in tasks:
-                try:
-                    ws = await t
-                    if ws:
-                        bucket.append((ws, time.monotonic()))
-                except Exception:
-                    pass
+            # using gather for true parallel connections ---
+            results = await asyncio.gather(
+                *[self._connect_one(target_ip, domains) for _ in range(needed)],
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, RawWebSocket):
+                    bucket.append((result, time.monotonic()))
             log.debug("WS pool refilled DC%d%s: %d ready",
                       dc, 'm' if is_media else '', len(bucket))
         finally:
@@ -583,6 +591,21 @@ class _WsPool:
                 key = (dc, is_media)
                 self._schedule_refill(key, target_ip, domains)
         log.info("WS pool warmup started for %d DC(s)", len(dc_opt))
+
+    async def close(self):
+        """Close all idle WebSocket connections in the pool."""
+        all_ws = [
+            ws
+            for bucket in self._idle.values()
+            for ws, _ in bucket
+        ]
+        self._idle.clear()
+        if all_ws:
+            log.debug("WS pool closing %d idle connection(s)", len(all_ws))
+            await asyncio.gather(
+                *[self._quiet_close(ws) for ws in all_ws],
+                return_exceptions=True,
+            )
 
 
 _ws_pool = _WsPool()
@@ -815,7 +838,7 @@ async def _handle_client(reader, writer):
                 "IPv6 addresses are not supported; "
                 "disable IPv6 to continue using the proxy.",
                 label, dst, port)
-            writer.write(_socks5_reply(0x05))
+            writer.write(_socks5_reply(0x08))
             await writer.drain()
             writer.close()
             return
@@ -872,7 +895,7 @@ async def _handle_client(reader, writer):
         # -- Extract DC ID --
         dc, is_media = _dc_from_init(init)
         init_patched = False
-        
+
         # Android (may be ios too) with useSecret=0 has random dc_id bytes — patch it
         if dc is None and dst in _IP_TO_DC:
             dc, is_media = _IP_TO_DC.get(dst)
@@ -1069,6 +1092,7 @@ async def _run(port: int, dc_opt: Dict[int, Optional[str]],
         async def wait_stop():
             await stop_event.wait()
             server.close()
+            await _ws_pool.close()
             me = asyncio.current_task()
             for task in list(asyncio.all_tasks()):
                 if task is not me:

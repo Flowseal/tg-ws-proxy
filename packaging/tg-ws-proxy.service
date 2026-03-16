@@ -1,0 +1,12 @@
+[Unit]
+Description=Telegram WebSocket Bridge Proxy
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=tg-ws-proxy --host 127.0.0.1 --port 1080
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

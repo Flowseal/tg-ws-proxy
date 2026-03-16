@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "tg-ws-proxy"
+version = "1.1.0"
+description = "Local SOCKS5 proxy for bypassing partial Telegram blocking"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "cryptography>=41.0",
+]
+
+[project.optional-dependencies]
+windows = [
+    "cryptography>=41.0",
+    "customtkinter>=5.2.2",
+    "Pillow>=10.4.0",
+    "psutil>=5.9.8",
+    "pystray>=0.19.5",
+    "pyperclip>=1.9.0",
+]
+
+[project.scripts]
+tg-ws-proxy = "proxy.tg_ws_proxy:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["proxy*"]
