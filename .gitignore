@@ -25,7 +25,7 @@ android/.idea/
 android/build/
 android/app/build/
 android/*.jks
-android/*.keystore
+*.keystore
 android/*.keystore.properties
 
 # OS
