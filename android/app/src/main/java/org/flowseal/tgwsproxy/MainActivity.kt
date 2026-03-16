@@ -1,9 +1,11 @@
 package org.flowseal.tgwsproxy
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -42,10 +44,23 @@ class MainActivity : AppCompatActivity() {
         binding.startButton.setOnClickListener { onStartClicked() }
         binding.stopButton.setOnClickListener { ProxyForegroundService.stop(this) }
         binding.saveButton.setOnClickListener { onSaveClicked(showMessage = true) }
+        binding.openTelegramButton.setOnClickListener { onOpenTelegramClicked() }
+        binding.disableBatteryOptimizationButton.setOnClickListener {
+            AndroidSystemStatus.openBatteryOptimizationSettings(this)
+        }
+        binding.openAppSettingsButton.setOnClickListener {
+            AndroidSystemStatus.openAppSettings(this)
+        }
 
         renderConfig(settingsStore.load())
         requestNotificationPermissionIfNeeded()
         observeServiceState()
+        renderSystemStatus()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        renderSystemStatus()
     }
 
     private fun onSaveClicked(showMessage: Boolean): NormalizedProxyConfig? {
@@ -69,6 +84,13 @@ class MainActivity : AppCompatActivity() {
         onSaveClicked(showMessage = false) ?: return
         ProxyForegroundService.start(this)
         Snackbar.make(binding.root, R.string.service_start_requested, Snackbar.LENGTH_SHORT).show()
+    }
+
+    private fun onOpenTelegramClicked() {
+        val config = onSaveClicked(showMessage = false) ?: return
+        if (!TelegramProxyIntent.open(this, config)) {
+            Snackbar.make(binding.root, R.string.telegram_not_found, Snackbar.LENGTH_LONG).show()
+        }
     }
 
     private fun renderConfig(config: ProxyConfig) {
@@ -151,6 +173,35 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun renderSystemStatus() {
+        val status = AndroidSystemStatus.read(this)
+
+        binding.systemStatusValue.text = getString(
+            if (status.canKeepRunningReliably) {
+                R.string.system_status_ready
+            } else {
+                R.string.system_status_attention
+            },
+        )
+
+        val lines = mutableListOf<String>()
+        lines += if (status.ignoringBatteryOptimizations) {
+            getString(R.string.system_check_battery_ignored)
+        } else {
+            getString(R.string.system_check_battery_active)
+        }
+        lines += if (status.backgroundRestricted) {
+            getString(R.string.system_check_background_restricted)
+        } else {
+            getString(R.string.system_check_background_ok)
+        }
+        lines += getString(R.string.system_check_oem_note)
+        binding.systemStatusHint.text = lines.joinToString("\n")
+
+        binding.disableBatteryOptimizationButton.isVisible = !status.ignoringBatteryOptimizations
+        binding.openAppSettingsButton.isVisible = status.backgroundRestricted || !status.ignoringBatteryOptimizations
     }
 
     private fun requestNotificationPermissionIfNeeded() {
