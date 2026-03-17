@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.25.0", "hatch-vcs"]
+requires = ["hatchling>=1.25.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -66,4 +66,4 @@ packages = ["proxy"]
 "windows.py" = "windows.py"
 
 [tool.hatch.version]
-source = "vcs"
+path = "proxy/__init__.py"
