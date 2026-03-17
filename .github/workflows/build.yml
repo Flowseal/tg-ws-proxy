@@ -25,7 +25,7 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install ".[win10]"
 
       - name: Install pyinstaller
         run: pip install pyinstaller
@@ -53,7 +53,7 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies (Win7-compatible)
-        run: pip install -r requirements-win7.txt
+        run: pip install ".[win7]"
 
       - name: Install pyinstaller
         run: pip install "pyinstaller==5.13.2"
