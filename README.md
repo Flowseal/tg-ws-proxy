@@ -45,19 +45,25 @@ Telegram Desktop → SOCKS5 (127.0.0.1:1080) → TG WS Proxy → WSS (kws*.web.t
 ## Установка из исходников
 
 ```bash
-pip install -r requirements.txt
+pip install -e ".[win10]"
+```
+
+### Windows 7
+
+```bash
+pip install -e ".[win7]"
 ```
 
 ### Windows (Tray-приложение)
 
 ```bash
-python windows.py
+tg-ws-proxy-tray
 ```
 
 ### Консольный режим
 
 ```bash
-python proxy/tg_ws_proxy.py [--port PORT] [--dc-ip DC:IP ...] [-v]
+tg-ws-proxy [--port PORT] [--host HOST] [--dc-ip DC:IP ...] [-v]
 ```
 
 **Аргументы:**
@@ -65,6 +71,7 @@ python proxy/tg_ws_proxy.py [--port PORT] [--dc-ip DC:IP ...] [-v]
 | Аргумент | По умолчанию | Описание |
 |---|---|---|
 | `--port` | `1080` | Порт SOCKS5-прокси |
+| `--host` | `127.0.0.1` | Хост SOCKS5-прокси |
 | `--dc-ip` | `2:149.154.167.220`, `4:149.154.167.220` | Целевой IP для DC (можно указать несколько раз) |
 | `-v`, `--verbose` | выкл. | Подробное логирование (DEBUG) |
 
@@ -72,13 +79,25 @@ python proxy/tg_ws_proxy.py [--port PORT] [--dc-ip DC:IP ...] [-v]
 
 ```bash
 # Стандартный запуск
-python proxy/tg_ws_proxy.py
+tg-ws-proxy
 
 # Другой порт и дополнительные DC
-python proxy/tg_ws_proxy.py --port 9050 --dc-ip 1:149.154.175.205 --dc-ip 2:149.154.167.220
+tg-ws-proxy --port 9050 --dc-ip 1:149.154.175.205 --dc-ip 2:149.154.167.220
 
 # С подробным логированием
-python proxy/tg_ws_proxy.py -v
+tg-ws-proxy -v
+```
+
+## CLI-скрипты (pyproject.toml)
+
+CLI команды объявляются в `pyproject.toml` в секции `[project.scripts]` и должны указывать на `module:function`.
+
+Пример:
+
+```toml
+[project.scripts]
+tg-ws-proxy = "proxy.tg_ws_proxy:main"
+tg-ws-proxy-tray = "windows:main"
 ```
 
 ## Настройка Telegram Desktop
