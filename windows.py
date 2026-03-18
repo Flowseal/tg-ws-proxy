@@ -335,7 +335,9 @@ def _edit_config_dialog():
     frame = ctk.CTkFrame(root, fg_color=BG, corner_radius=0)
     frame.pack(fill="both", expand=True, padx=24, pady=20)
 
-    # Host
+    # --- Поля ввода ---
+
+    # IP прокси
     ctk.CTkLabel(frame, text="IP-адрес прокси",
                  font=(FONT_FAMILY, 13), text_color=TEXT_PRIMARY,
                  anchor="w").pack(anchor="w", pady=(0, 4))
@@ -346,7 +348,7 @@ def _edit_config_dialog():
                               border_width=1, text_color=TEXT_PRIMARY)
     host_entry.pack(anchor="w", pady=(0, 12))
 
-    # Port
+    # Порт прокси
     ctk.CTkLabel(frame, text="Порт прокси",
                  font=(FONT_FAMILY, 13), text_color=TEXT_PRIMARY,
                  anchor="w").pack(anchor="w", pady=(0, 4))
@@ -357,7 +359,7 @@ def _edit_config_dialog():
                               border_width=1, text_color=TEXT_PRIMARY)
     port_entry.pack(anchor="w", pady=(0, 12))
 
-    # DC-IP mappings
+    # DC → IP маппинги
     ctk.CTkLabel(frame, text="DC → IP маппинги (по одному на строку, формат DC:IP)",
                  font=(FONT_FAMILY, 13), text_color=TEXT_PRIMARY,
                  anchor="w").pack(anchor="w", pady=(0, 4))
@@ -368,7 +370,76 @@ def _edit_config_dialog():
     dc_textbox.pack(anchor="w", pady=(0, 12))
     dc_textbox.insert("1.0", "\n".join(cfg.get("dc_ip", DEFAULT_CONFIG["dc_ip"])))
 
-    # Verbose
+    # --- Контекстное меню и Ctrl shortcuts ---
+    def make_editable(widget, is_textbox=False):
+        import tkinter as tk
+
+        menu = tk.Menu(widget, tearoff=0)
+
+        def cut():
+            try:
+                if is_textbox:
+                    text = widget.get("sel.first", "sel.last")
+                    widget.delete("sel.first", "sel.last")
+                else:
+                    text = widget.get()[widget.index("sel.first"):widget.index("sel.last")]
+                    widget.delete("sel.first", "sel.last")
+                widget.clipboard_clear()
+                widget.clipboard_append(text)
+            except Exception:
+                pass
+
+        def copy():
+            try:
+                if is_textbox:
+                    text = widget.get("sel.first", "sel.last")
+                else:
+                    text = widget.get()[widget.index("sel.first"):widget.index("sel.last")]
+                widget.clipboard_clear()
+                widget.clipboard_append(text)
+            except Exception:
+                pass
+
+        def paste():
+            try:
+                text = widget.clipboard_get()
+                if is_textbox:
+                    widget.insert("insert", text)
+                else:
+                    widget.insert(widget.index("insert"), text)
+            except Exception:
+                pass
+
+        def select_all(event=None):
+            if is_textbox:
+                widget.tag_add("sel", "1.0", "end")
+            else:
+                widget.selection_range(0, "end")
+            return "break"
+
+        menu.add_command(label="Вырезать", command=cut)
+        menu.add_command(label="Копировать", command=copy)
+        menu.add_command(label="Вставить", command=paste)
+        menu.add_command(label="Выделить всё", command=select_all)
+
+        def show_menu(event):
+            menu.tk_popup(event.x_root, event.y_root)
+
+        widget.bind("<Button-3>", show_menu)
+        widget.bind("<Control-a>", select_all)
+        widget.bind("<Control-A>", select_all)
+        widget.bind("<Control-c>", lambda e: copy())
+        widget.bind("<Control-C>", lambda e: copy())
+        widget.bind("<Control-x>", lambda e: cut())
+        widget.bind("<Control-X>", lambda e: cut())
+        widget.bind("<Control-v>", lambda e: paste())
+        widget.bind("<Control-V>", lambda e: paste())
+
+    make_editable(host_entry)
+    make_editable(port_entry)
+    make_editable(dc_textbox, is_textbox=True)
+
+    # --- Verbose ---
     verbose_var = ctk.BooleanVar(value=cfg.get("verbose", False))
     ctk.CTkCheckBox(frame, text="Подробное логирование (verbose)",
                     variable=verbose_var, font=(FONT_FAMILY, 13),
@@ -382,6 +453,7 @@ def _edit_config_dialog():
                  font=(FONT_FAMILY, 11), text_color=TEXT_SECONDARY,
                  anchor="w").pack(anchor="w", pady=(0, 16))
 
+    # --- Кнопки Сохранить / Отмена ---
     def on_save():
         import socket as _sock
         host_val = host_var.get().strip()
@@ -393,14 +465,13 @@ def _edit_config_dialog():
 
         try:
             port_val = int(port_var.get().strip())
-            if not (1 <= port_val <= 65535):
+            if not (0 <= port_val <= 65535):
                 raise ValueError
         except ValueError:
-            _show_error("Порт должен быть числом 1-65535")
+            _show_error("Порт должен быть числом 0-65535")
             return
 
-        lines = [l.strip() for l in dc_textbox.get("1.0", "end").strip().splitlines()
-                 if l.strip()]
+        lines = [l.strip() for l in dc_textbox.get("1.0", "end").strip().splitlines() if l.strip()]
         try:
             tg_ws_proxy.parse_dc_ip_list(lines)
         except ValueError as e:
@@ -420,10 +491,7 @@ def _edit_config_dialog():
         _tray_icon.menu = _build_menu()
 
         from tkinter import messagebox
-        if messagebox.askyesno("Перезапустить?",
-                               "Настройки сохранены.\n\n"
-                               "Перезапустить прокси сейчас?",
-                               parent=root):
+        if messagebox.askyesno("Перезапустить?", "Настройки сохранены.\n\nПерезапустить прокси сейчас?", parent=root):
             root.destroy()
             restart_proxy()
         else:
@@ -437,17 +505,14 @@ def _edit_config_dialog():
     ctk.CTkButton(btn_frame, text="Сохранить", width=140, height=38,
                   font=(FONT_FAMILY, 14, "bold"), corner_radius=10,
                   fg_color=TG_BLUE, hover_color=TG_BLUE_HOVER,
-                  text_color="#ffffff",
-                  command=on_save).pack(side="left", padx=(0, 10))
+                  text_color="#ffffff", command=on_save).pack(side="left", padx=(0, 10))
     ctk.CTkButton(btn_frame, text="Отмена", width=140, height=38,
                   font=(FONT_FAMILY, 14), corner_radius=10,
                   fg_color=FIELD_BG, hover_color=FIELD_BORDER,
-                  text_color=TEXT_PRIMARY, border_width=1,
-                  border_color=FIELD_BORDER,
+                  text_color=TEXT_PRIMARY, border_width=1, border_color=FIELD_BORDER,
                   command=on_cancel).pack(side="left")
 
     root.mainloop()
-
 
 def _on_open_logs(icon=None, item=None):
     log.info("Opening log file: %s", LOG_FILE)
