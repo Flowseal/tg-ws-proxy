@@ -225,28 +225,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libgirepository1.0-dev \
+            python3-venv \
+            python3-dev \
+            python3-gi \
             gir1.2-ayatanaappindicator3-0.1 \
             python3-tk
 
-      - name: Install dependencies
-        run: pip install ".[linux]"
+      - name: Create venv with system site-packages
+        run: python3 -m venv --system-site-packages .venv
 
-      - name: Install pyinstaller
-        run: pip install "pyinstaller==6.13.0"
+      - name: Install dependencies
+        run: |
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install ".[linux]"
+          .venv/bin/pip install "pyinstaller==6.13.0"
 
       - name: Build binary with PyInstaller
-        run: pyinstaller packaging/linux.spec --noconfirm
+        run: .venv/bin/pyinstaller packaging/linux.spec --noconfirm
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

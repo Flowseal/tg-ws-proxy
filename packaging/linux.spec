@@ -2,6 +2,9 @@
 
 import sys
 import os
+import glob
+
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 block_cipher = None
 
@@ -9,11 +12,21 @@ block_cipher = None
 import customtkinter
 ctk_path = os.path.dirname(customtkinter.__file__)
 
+# Collect gi (PyGObject) submodules and data so pystray._appindicator works
+gi_hiddenimports = collect_submodules('gi')
+gi_datas = collect_data_files('gi')
+
+# Collect GObject typelib files from the system
+typelib_dirs = glob.glob('/usr/lib/*/girepository-1.0')
+typelib_datas = []
+for d in typelib_dirs:
+    typelib_datas.append((d, 'gi_typelibs'))
+
 a = Analysis(
     [os.path.join(os.path.dirname(SPEC), os.pardir, 'linux.py')],
     pathex=[],
     binaries=[],
-    datas=[(ctk_path, 'customtkinter/')],
+    datas=[(ctk_path, 'customtkinter/')] + gi_datas + typelib_datas,
     hiddenimports=[
         'pystray._appindicator',
         'PIL._tkinter_finder',
@@ -22,7 +35,14 @@ a = Analysis(
         'cryptography.hazmat.primitives.ciphers.algorithms',
         'cryptography.hazmat.primitives.ciphers.modes',
         'cryptography.hazmat.backends.openssl',
-    ],
+        'gi',
+        '_gi',
+        'gi.repository.GLib',
+        'gi.repository.GObject',
+        'gi.repository.Gtk',
+        'gi.repository.Gdk',
+        'gi.repository.AyatanaAppIndicator3',
+    ] + gi_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
