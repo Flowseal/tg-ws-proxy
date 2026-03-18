@@ -315,6 +315,8 @@ def _edit_config_dialog():
     root.title("TG WS Proxy — Настройки")
     root.resizable(False, False)
     root.attributes("-topmost", True)
+    icon_path = str(Path(__file__).parent / "icon.ico")
+    root.iconbitmap(icon_path)
 
     TG_BLUE = "#3390ec"
     TG_BLUE_HOVER = "#2b7cd4"
@@ -503,6 +505,8 @@ def _show_first_run():
     root.title("TG WS Proxy")
     root.resizable(False, False)
     root.attributes("-topmost", True)
+    icon_path = str(Path(__file__).parent / "icon.ico")
+    root.iconbitmap(icon_path)
 
     w, h = 520, 440
     sw = root.winfo_screenwidth()

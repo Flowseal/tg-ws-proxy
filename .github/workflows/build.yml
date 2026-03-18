@@ -3,9 +3,14 @@ name: Build & Release
 on:
   workflow_dispatch:
     inputs:
+      make_release:
+        description: 'Create Github Release?'
+        type: boolean
+        required: true
+        default: false
       version:
         description: "Release version tag (e.g. v1.0.0)"
-        required: true
+        required: false
         default: "v1.0.0"
 
 permissions:
@@ -28,7 +33,7 @@ jobs:
         run: pip install ".[win10]"
 
       - name: Install pyinstaller
-        run: pip install pyinstaller
+        run: pip install "pyinstaller==6.13.0"
 
       - name: Build EXE with PyInstaller
         run: pyinstaller packaging/windows.spec --noconfirm
@@ -70,9 +75,154 @@ jobs:
           name: TgWsProxy-win7
           path: dist/TgWsProxy-win7.exe
 
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install universal2 Python
+        run: |
+          set -euo pipefail
+          curl -LO https://www.python.org/ftp/python/3.12.10/python-3.12.10-macos11.pkg
+          sudo installer -pkg python-3.12.10-macos11.pkg -target /
+          echo "/Library/Frameworks/Python.framework/Versions/3.12/bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python3.12 -m pip install --upgrade pip setuptools wheel
+          python3.12 -m pip install delocate==0.13.0
+
+          mkdir -p wheelhouse/arm64 wheelhouse/x86_64 wheelhouse/universal2
+
+          python3.12 -m pip download \
+            --only-binary=:all: \
+            --platform macosx_11_0_arm64 \
+            --python-version 3.12 \
+            --implementation cp \
+            -d wheelhouse/arm64 \
+            'cffi>=2.0.0' \
+            Pillow==12.1.0 \
+            psutil==7.0.0
+
+          python3.12 -m pip download \
+            --only-binary=:all: \
+            --platform macosx_10_13_x86_64 \
+            --python-version 3.12 \
+            --implementation cp \
+            -d wheelhouse/x86_64 \
+            'cffi>=2.0.0' \
+            Pillow==12.1.0
+
+          python3.12 -m pip download \
+            --only-binary=:all: \
+            --platform macosx_10_9_x86_64 \
+            --python-version 3.12 \
+            --implementation cp \
+            -d wheelhouse/x86_64 \
+            psutil==7.0.0
+
+          delocate-merge \
+            wheelhouse/arm64/cffi-*.whl \
+            wheelhouse/x86_64/cffi-*.whl \
+            -w wheelhouse/universal2
+
+          delocate-merge \
+            wheelhouse/arm64/pillow-12.1.0-*.whl \
+            wheelhouse/x86_64/pillow-12.1.0-*.whl \
+            -w wheelhouse/universal2
+
+          delocate-merge \
+            wheelhouse/arm64/psutil-7.0.0-*.whl \
+            wheelhouse/x86_64/psutil-7.0.0-*.whl \
+            -w wheelhouse/universal2
+
+          python3.12 -m pip install --no-deps wheelhouse/universal2/*.whl
+          python3.12 -m pip install -r requirements-macos.txt
+          python3.12 -m pip install pyinstaller==6.13.0
+
+      - name: Create macOS icon from ICO
+        run: |
+          set -euo pipefail
+          python3.12 - <<'PY'
+          from PIL import Image
+
+          image = Image.open('icon.ico')
+          image = image.resize((1024, 1024), Image.LANCZOS)
+          image.save('icon_1024.png', 'PNG')
+          PY
+
+          mkdir -p icon.iconset
+          sips -z 16 16 icon_1024.png --out icon.iconset/icon_16x16.png
+          sips -z 32 32 icon_1024.png --out icon.iconset/icon_16x16@2x.png
+          sips -z 32 32 icon_1024.png --out icon.iconset/icon_32x32.png
+          sips -z 64 64 icon_1024.png --out icon.iconset/icon_32x32@2x.png
+          sips -z 128 128 icon_1024.png --out icon.iconset/icon_128x128.png
+          sips -z 256 256 icon_1024.png --out icon.iconset/icon_128x128@2x.png
+          sips -z 256 256 icon_1024.png --out icon.iconset/icon_256x256.png
+          sips -z 512 512 icon_1024.png --out icon.iconset/icon_256x256@2x.png
+          sips -z 512 512 icon_1024.png --out icon.iconset/icon_512x512.png
+          sips -z 1024 1024 icon_1024.png --out icon.iconset/icon_512x512@2x.png
+          iconutil -c icns icon.iconset -o icon.icns
+          rm -rf icon.iconset icon_1024.png
+
+      - name: Build app with PyInstaller
+        run: python3.12 -m PyInstaller packaging/macos.spec --noconfirm
+
+      - name: Validate universal2 app bundle
+        run: |
+          set -euo pipefail
+          found=0
+          while IFS= read -r -d '' file; do
+            if file "$file" | grep -q "Mach-O"; then
+              found=1
+              archs="$(lipo -archs "$file" 2>/dev/null || true)"
+              case "$archs" in
+                *arm64*x86_64*|*x86_64*arm64*) ;;
+                *)
+                  echo "Missing universal2 slices in $file: ${archs:-unknown}" >&2
+                  exit 1
+                  ;;
+              esac
+            fi
+          done < <(find "dist/TG WS Proxy.app" -type f -print0)
+
+          if [ "$found" -eq 0 ]; then
+            echo "No Mach-O files found in app bundle" >&2
+            exit 1
+          fi
+
+      - name: Create DMG
+        run: |
+          set -euo pipefail
+          APP_NAME="TG WS Proxy"
+          DMG_TEMP="dist/dmg_temp"
+
+          rm -rf "$DMG_TEMP"
+          mkdir -p "$DMG_TEMP"
+          cp -R "dist/${APP_NAME}.app" "$DMG_TEMP/"
+          ln -s /Applications "$DMG_TEMP/Applications"
+
+          hdiutil create \
+            -volname "$APP_NAME" \
+            -srcfolder "$DMG_TEMP" \
+            -ov \
+            -format UDZO \
+            "dist/TgWsProxy.dmg"
+
+          rm -rf "$DMG_TEMP"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TgWsProxy-macOS
+          path: dist/TgWsProxy.dmg
+
   release:
-    needs: [build, build-win7]
+    needs: [build, build-win7, build-macos]
     runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.make_release == 'true' }}
     steps:
       - name: Download main build
         uses: actions/download-artifact@v4
@@ -86,6 +236,12 @@ jobs:
           name: TgWsProxy-win7
           path: dist
 
+      - name: Download macOS build
+        uses: actions/download-artifact@v4
+        with:
+          name: TgWsProxy-macOS
+          path: dist
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -96,6 +252,7 @@ jobs:
           files: |
             dist/TgWsProxy.exe
             dist/TgWsProxy-win7.exe
+            dist/TgWsProxy.dmg
           draft: false
           prerelease: false
         env:
