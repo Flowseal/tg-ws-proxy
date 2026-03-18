@@ -335,9 +335,8 @@ def _edit_config_dialog():
     frame = ctk.CTkFrame(root, fg_color=BG, corner_radius=0)
     frame.pack(fill="both", expand=True, padx=24, pady=20)
 
-    # --- Поля ввода ---
+    # Host
 
-    # IP прокси
     ctk.CTkLabel(frame, text="IP-адрес прокси",
                  font=(FONT_FAMILY, 13), text_color=TEXT_PRIMARY,
                  anchor="w").pack(anchor="w", pady=(0, 4))
@@ -348,7 +347,7 @@ def _edit_config_dialog():
                               border_width=1, text_color=TEXT_PRIMARY)
     host_entry.pack(anchor="w", pady=(0, 12))
 
-    # Порт прокси
+    # Port
     ctk.CTkLabel(frame, text="Порт прокси",
                  font=(FONT_FAMILY, 13), text_color=TEXT_PRIMARY,
                  anchor="w").pack(anchor="w", pady=(0, 4))
@@ -359,7 +358,7 @@ def _edit_config_dialog():
                               border_width=1, text_color=TEXT_PRIMARY)
     port_entry.pack(anchor="w", pady=(0, 12))
 
-    # DC → IP маппинги
+    # DC-IP mappings
     ctk.CTkLabel(frame, text="DC → IP маппинги (по одному на строку, формат DC:IP)",
                  font=(FONT_FAMILY, 13), text_color=TEXT_PRIMARY,
                  anchor="w").pack(anchor="w", pady=(0, 4))
@@ -439,7 +438,7 @@ def _edit_config_dialog():
     make_editable(port_entry)
     make_editable(dc_textbox, is_textbox=True)
 
-    # --- Verbose ---
+    # Verbose
     verbose_var = ctk.BooleanVar(value=cfg.get("verbose", False))
     ctk.CTkCheckBox(frame, text="Подробное логирование (verbose)",
                     variable=verbose_var, font=(FONT_FAMILY, 13),
@@ -465,10 +464,10 @@ def _edit_config_dialog():
 
         try:
             port_val = int(port_var.get().strip())
-            if not (0 <= port_val <= 65535):
+            if not (1 <= port_val <= 65535):
                 raise ValueError
         except ValueError:
-            _show_error("Порт должен быть числом 0-65535")
+            _show_error("Порт должен быть числом 1-65535")
             return
 
         lines = [l.strip() for l in dc_textbox.get("1.0", "end").strip().splitlines() if l.strip()]
