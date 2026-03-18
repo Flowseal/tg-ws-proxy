@@ -124,8 +124,63 @@ jobs:
           name: TgWsProxy-macOS
           path: dist/TgWsProxy.dmg
 
+  build-macos-intel:
+    runs-on: macos-13
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements-macos.txt
+
+      - name: Install pyinstaller
+        run: pip install pyinstaller
+
+      - name: Create macOS icon from ICO
+        run: |
+          python3 -c "
+          from PIL import Image
+          img = Image.open('icon.ico')
+          img = img.resize((1024, 1024), Image.LANCZOS)
+          img.save('icon_1024.png', 'PNG')
+          "
+          mkdir -p icon.iconset
+          sips -z 16 16     icon_1024.png --out icon.iconset/icon_16x16.png
+          sips -z 32 32     icon_1024.png --out icon.iconset/icon_16x16@2x.png
+          sips -z 32 32     icon_1024.png --out icon.iconset/icon_32x32.png
+          sips -z 64 64     icon_1024.png --out icon.iconset/icon_32x32@2x.png
+          sips -z 128 128   icon_1024.png --out icon.iconset/icon_128x128.png
+          sips -z 256 256   icon_1024.png --out icon.iconset/icon_128x128@2x.png
+          sips -z 256 256   icon_1024.png --out icon.iconset/icon_256x256.png
+          sips -z 512 512   icon_1024.png --out icon.iconset/icon_256x256@2x.png
+          sips -z 512 512   icon_1024.png --out icon.iconset/icon_512x512.png
+          sips -z 1024 1024 icon_1024.png --out icon.iconset/icon_512x512@2x.png
+          iconutil -c icns icon.iconset -o icon.icns
+          rm -rf icon.iconset icon_1024.png
+
+      - name: Build app with PyInstaller
+        run: pyinstaller packaging/macos.spec --noconfirm
+
+      - name: Create DMG
+        run: |
+          chmod +x packaging/create_dmg.sh
+          packaging/create_dmg.sh
+          mv dist/TgWsProxy.dmg dist/TgWsProxy-Intel.dmg
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TgWsProxy-macOS-Intel
+          path: dist/TgWsProxy-Intel.dmg
+
   release:
-    needs: [build, build-win7, build-macos]
+    needs: [build, build-win7, build-macos, build-macos-intel]
     runs-on: ubuntu-latest
     steps:
       - name: Download main build
@@ -146,6 +201,12 @@ jobs:
           name: TgWsProxy-macOS
           path: dist
 
+      - name: Download macOS Intel build
+        uses: actions/download-artifact@v4
+        with:
+          name: TgWsProxy-macOS-Intel
+          path: dist
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -157,6 +218,7 @@ jobs:
             dist/TgWsProxy.exe
             dist/TgWsProxy-win7.exe
             dist/TgWsProxy.dmg
+            dist/TgWsProxy-Intel.dmg
           draft: false
           prerelease: false
         env:
