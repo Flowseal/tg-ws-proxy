@@ -552,7 +552,7 @@ class TgWsProxyApp(_TgWsProxyAppBase):
         super().__init__(
             "TG WS Proxy",
             icon=icon_path,
-            template=True,
+            template=False,
             quit_button="Выход",
             menu=[
                 self._open_tg_item,
