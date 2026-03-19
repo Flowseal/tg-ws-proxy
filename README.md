@@ -65,6 +65,23 @@ chmod +x TgWsProxy_linux_amd64
 
 При первом запуске откроется окно с инструкцией. Приложение работает в системном трее (требуется AppIndicator).
 
+### Android
+
+Перейдите на [страницу релизов](https://github.com/Flowseal/tg-ws-proxy/releases) и скачайте подписанный APK вида **`tg-ws-proxy-android-vX.Y.Z.apk`**.
+
+После установки:
+
+- откройте приложение
+- проверьте `Android background limits`
+- при необходимости отключите battery optimization и снимите background restrictions
+- нажмите **Start Service**
+- нажмите **Open in Telegram**
+
+Что важно для стабильной работы на Android:
+
+- разрешите уведомления
+- отключите battery optimization для приложения
+
 ## Установка из исходников
 
 ### Консольный proxy
@@ -108,6 +125,44 @@ tg-ws-proxy-tray-linux
 
 ```bash
 tg-ws-proxy [--port PORT] [--host HOST] [--dc-ip DC:IP ...] [-v]
+```
+
+### Android debug APK
+
+Требуются JDK 17, Android SDK и Gradle. Локальная debug-сборка:
+
+```bash
+./android/build-local-debug.sh
+```
+
+Результат:
+
+```text
+android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+### Android signed release APK
+
+Для локальной release-сборки нужен keystore и переменные окружения:
+
+```bash
+export ANDROID_KEYSTORE_FILE=/path/to/tg-ws-proxy-release.keystore
+export ANDROID_KEYSTORE_PASSWORD=...
+export ANDROID_KEY_ALIAS=tg-ws-proxy
+export ANDROID_KEY_PASSWORD=...
+```
+
+Сборка:
+
+```bash
+cd android
+./gradlew assembleRelease
+```
+
+Результат:
+
+```text
+android/app/build/outputs/apk/release/app-release.apk
 ```
 
 **Аргументы:**
@@ -160,6 +215,26 @@ tg-ws-proxy-tray-linux = "linux:main"
    - **Сервер:** `127.0.0.1`
    - **Порт:** `1080`
    - **Логин/Пароль:** оставить пустыми
+
+## Настройка Telegram Android
+
+### Автоматически
+
+В приложении нажмите **Open in Telegram** после запуска foreground service.
+
+### Вручную
+
+1. Telegram → **Настройки** → **Данные и память** → **Настройки прокси**
+2. Добавить прокси:
+   - **Тип:** SOCKS5
+   - **Сервер:** `127.0.0.1`
+   - **Порт:** `1080`
+   - **Логин/Пароль:** оставить пустыми
+
+Важно:
+
+- сначала должен быть запущен foreground service
+- если Telegram был уже открыт, иногда проще закрыть и открыть его заново после запуска прокси
 
 ## Конфигурация
 

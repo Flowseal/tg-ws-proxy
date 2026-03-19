@@ -11,7 +11,8 @@ import struct
 import sys
 import time
 from typing import Dict, List, Optional, Set, Tuple
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+from proxy.crypto_backend import create_aes_ctr_transform
 
 
 DEFAULT_PORT = 1080
@@ -373,8 +374,7 @@ def _dc_from_init(data: bytes) -> Tuple[Optional[int], bool]:
     try:
         key = bytes(data[8:40])
         iv = bytes(data[40:56])
-        cipher = Cipher(algorithms.AES(key), modes.CTR(iv))
-        encryptor = cipher.encryptor()
+        encryptor = create_aes_ctr_transform(key, iv)
         keystream = encryptor.update(b'\x00' * 64) + encryptor.finalize()
         plain = bytes(a ^ b for a, b in zip(data[56:64], keystream[56:64]))
         proto = struct.unpack('<I', plain[0:4])[0]
@@ -404,8 +404,7 @@ def _patch_init_dc(data: bytes, dc: int) -> bytes:
     try:
         key_raw = bytes(data[8:40])
         iv = bytes(data[40:56])
-        cipher = Cipher(algorithms.AES(key_raw), modes.CTR(iv))
-        enc = cipher.encryptor()
+        enc = create_aes_ctr_transform(key_raw, iv)
         ks = enc.update(b'\x00' * 64) + enc.finalize()
         patched = bytearray(data[:64])
         patched[60] = ks[60] ^ new_dc[0]
@@ -432,8 +431,7 @@ class _MsgSplitter:
     def __init__(self, init_data: bytes):
         key_raw = bytes(init_data[8:40])
         iv = bytes(init_data[40:56])
-        cipher = Cipher(algorithms.AES(key_raw), modes.CTR(iv))
-        self._dec = cipher.encryptor()
+        self._dec = create_aes_ctr_transform(key_raw, iv)
         self._dec.update(b'\x00' * 64)  # skip init packet
 
     def split(self, chunk: bytes) -> List[bytes]:
@@ -501,6 +499,21 @@ class Stats:
 
 
 _stats = Stats()
+
+
+def reset_stats() -> None:
+    global _stats
+    _stats = Stats()
+
+
+def get_stats_snapshot() -> Dict[str, int]:
+    return {
+        "bytes_up": _stats.bytes_up,
+        "bytes_down": _stats.bytes_down,
+        "connections_total": _stats.connections_total,
+        "connections_ws": _stats.connections_ws,
+        "connections_tcp_fallback": _stats.connections_tcp_fallback,
+    }
 
 
 class _WsPool:
