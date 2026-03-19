@@ -1,4 +1,0 @@
-# Minimal runtime dependencies for the headless proxy.
-# The main requirements.txt also includes Windows GUI/tray packages
-# that are not needed in containers.
-cryptography==46.0.5

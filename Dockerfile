@@ -15,8 +15,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY requirements-docker.txt ./requirements-docker.txt
-RUN "$VIRTUAL_ENV/bin/pip" install -r requirements-docker.txt
+RUN "$VIRTUAL_ENV/bin/pip" install cryptography==46.0.5
 
 FROM python:3.12-slim AS runtime
 
