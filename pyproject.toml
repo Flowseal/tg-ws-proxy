@@ -18,8 +18,11 @@ authors = [
 
 keywords = [
     "telegram",
+    "tdesktop",
     "proxy",
-    "websocket"
+    "bypass",
+    "websocket",
+    "socks5",
 ]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
