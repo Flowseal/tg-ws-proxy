@@ -30,7 +30,7 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        run: pip install ".[win10]"
+        run: pip install .
 
       - name: Install pyinstaller
         run: pip install "pyinstaller==6.13.0"
@@ -61,7 +61,7 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies (Win7-compatible)
-        run: pip install ".[win7]"
+        run: pip install .
 
       - name: Install pyinstaller
         run: pip install "pyinstaller==5.13.2"
@@ -142,7 +142,7 @@ jobs:
             -w wheelhouse/universal2
 
           python3.12 -m pip install --no-deps wheelhouse/universal2/*.whl
-          python3.12 -m pip install ".[macos]"
+          python3.12 -m pip install .
           python3.12 -m pip install pyinstaller==6.13.0
 
       - name: Create macOS icon from ICO
@@ -244,7 +244,7 @@ jobs:
       - name: Install dependencies
         run: |
           .venv/bin/pip install --upgrade pip
-          .venv/bin/pip install ".[linux]"
+          .venv/bin/pip install .
           .venv/bin/pip install "pyinstaller==6.13.0"
 
       - name: Build binary with PyInstaller
