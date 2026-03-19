@@ -76,31 +76,24 @@ pip install -e .
 tg-ws-proxy
 ```
 
-### Windows 10+
+### Windows 7/10+
 
 ```bash
-pip install -e ".[win10]"
-tg-ws-proxy-tray-win
-```
-
-### Windows 7
-
-```bash
-pip install -e ".[win7]"
+pip install -e .
 tg-ws-proxy-tray-win
 ```
 
 ### macOS
 
 ```bash
-pip install -e ".[macos]"
+pip install -e .
 tg-ws-proxy-tray-macos
 ```
 
 ### Linux
 
 ```bash
-pip install -e ".[linux]"
+pip install -e .
 tg-ws-proxy-tray-linux
 ```
 
