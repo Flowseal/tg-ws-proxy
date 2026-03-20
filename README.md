@@ -130,10 +130,8 @@ pyinstaller packaging/windows.spec
 
 ### 1) Linux/NAS
 Сборка запуск
+Клонируем репозиторий и далее собираем образ и запускаем контейнер
 ```bash
-sudo apt update && sudo apt install git
-git clone https://github.com/borisovmsw/tg-ws-proxy.git
-cd tg-ws-proxy
 docker build -t tg-proxy .
 docker run -d --name tg-proxy -p 1080:1080 tg-proxy:latest -u userx -P 123456
 ```
