@@ -151,13 +151,13 @@ tg://socks/?server=192.168.1.139&port=1080&user=userx&pass=123456
 
 #### Настраиваем компьютер на компиляцию под ARM64 процессор роутера 
 ```bash
-docker run --privileged --rm tonistiigi/binfmt --install all\n
+docker run --privileged --rm tonistiigi/binfmt --install all
 docker buildx create --name mybuilder --use
 docker buildx inspect --bootstrap
 ```
 #### Собираем образ для роутера
 ```bash
-docker buildx build --platform linux/arm64 -t tg-proxy-flint:latest --load .\n
+docker buildx build --platform linux/arm64 -t tg-proxy-flint:latest --load .
 ```
 #### Сохраняем образ в файл
 ```bash
