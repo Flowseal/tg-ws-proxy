@@ -192,7 +192,7 @@ sed -i "s/^\([[:space:]]*\)list blocked_interfaces 'wan'/#\1&/" /etc/config/dock
 ```bash
 /etc/init.d/dockerd restart
 ```
-#### Запускаем контейнер только на внутреннем IP
+#### Запускаем контейнер на внутреннем IP (можно и на внешнем -p 1080:1080, но зачем?🙂)
 ```bash
 docker run -d --name tg-proxy -p 192.168.1.1:1080:1080 tg-proxy-flint:latest -u userx -P 123456
 ```
