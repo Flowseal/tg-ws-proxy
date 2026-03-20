@@ -127,7 +127,9 @@ pyinstaller packaging/windows.spec
 [MIT License](LICENSE)
 
 ## FORK
-### Linux/NAS
+
+### 1) Linux/NAS
+Сборка запуск
 ```bash
 sudo apt update && sudo apt install git
 git clone https://github.com/borisovmsw/tg-ws-proxy.git
@@ -145,7 +147,8 @@ tg://socks/?server=127.0.0.1&port=1080&user=userx&pass=123456
 tg://socks/?server=192.168.1.139&port=1080&user=userx&pass=123456
 ```
 
-### Openwrt ARM64
+### 2) Openwrt ARM64
+
 #### Настраиваем компьютер на компиляцию под ARM64 процессор роутера 
 ```bash
 docker run --privileged --rm tonistiigi/binfmt --install all\n
@@ -174,13 +177,12 @@ ssh root@192.168.1.1
 docker load -i /tmp/tg-proxy-flint.tar && rm /tmp/tg-proxy-flint.tar
 ```
 #### Настройки роутера
-```
-  Заходим в настройки Firewall - Traffic Rules
-  Создаем Rule с именем Docker, 
-     Source zone - docker, 
-     Destination zone - WAN
-     на закладке Advanced Settings оставляем только ip4
-```
+Заходим в настройки Firewall - Traffic Rules
+Создаем Rule с именем Docker
+* Source zone - docker
+* Destination zone - WAN
+* на закладке Advanced Settings оставляем только ip4
+
 #### Далее самое главное!!! Включаем WAN для Docker, информации крайне мало про эту срочку, времени на ее поиск ушло не мало
 ```bash
 sed -i "s/^\([[:space:]]*\)list blocked_interfaces 'wan'/#\1&/" /etc/config/dockerd
