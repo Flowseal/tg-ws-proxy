@@ -56,7 +56,7 @@ Telegram Desktop → SOCKS5 (127.0.0.1:1080) → TG WS Proxy → WSS → Telegra
 
 Для Debian/Ubuntu скачайте со [страницы релизов](https://github.com/Flowseal/tg-ws-proxy/releases) пакет **`TgWsProxy_linux_amd64.deb`**.
 
-Для Arch и Arch-based дистрибутивов есть пакет в [AUR](https://aur.archlinux.org/packages/tg-ws-proxy-bin)
+Для Arch и Arch-based дистрибутивов есть пакет в [AUR](https://aur.archlinux.org/packages/tg-ws-proxy-bin). Можете использовать любой AUR-helper помимо paru.
 ```bash
 paru -S tg-ws-proxy-bin
 ```
