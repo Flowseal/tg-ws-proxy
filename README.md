@@ -125,3 +125,79 @@ pyinstaller packaging/windows.spec
 ## Лицензия
 
 [MIT License](LICENSE)
+
+## FORK
+### Linux/NAS
+```bash
+sudo apt update && sudo apt install git
+git clone https://github.com/borisovmsw/tg-ws-proxy.git
+cd tg-ws-proxy
+docker build -t tg-proxy .
+docker run -d --name tg-proxy -p 1080:1080 tg-proxy:latest -u userx -P 123456
+```
+### Подключаемся и проверяем
+#### Локально
+```
+tg://socks/?server=127.0.0.1&port=1080&user=userx&pass=123456
+```
+#### Удаленно
+```
+tg://socks/?server=192.168.1.139&port=1080&user=userx&pass=123456
+```
+
+### Openwrt ARM64
+#### Настраиваем компьютер на компиляцию под ARM64 процессор роутера 
+```bash
+docker run --privileged --rm tonistiigi/binfmt --install all\n
+docker buildx create --name mybuilder --use
+docker buildx inspect --bootstrap
+```
+#### Собираем образ для роутера
+```bash
+docker buildx build --platform linux/arm64 -t tg-proxy-flint:latest --load .\n
+```
+#### Сохраняем образ в файл
+```bash
+docker save tg-proxy-flint:latest -o tg-proxy-flint.tar
+```
+#### Закидываем образ на роутер
+```bash
+scp -O tg-proxy-flint.tar root@192.168.1.1:/tmp/
+```
+
+#### Подключаемся к роутеру
+```bash
+ssh root@192.168.1.1
+```
+#### Загружаем образ и удалям его
+```bash
+docker load -i /tmp/tg-proxy-flint.tar && rm /tmp/tg-proxy-flint.tar
+```
+#### Настройки роутера
+```
+  Заходим в настройки Firewall - Traffic Rules
+  Создаем Rule с именем Docker, 
+     Source zone - docker, 
+     Destination zone - WAN
+     на закладке Advanced Settings оставляем только ip4
+```
+#### Далее самое главное!!! Включаем WAN для Docker, информации крайне мало про эту срочку, времени на ее поиск ушло не мало
+```bash
+sed -i "s/^\([[:space:]]*\)list blocked_interfaces 'wan'/#\1&/" /etc/config/dockerd
+```
+#### Перезагружаем роутер или же выполняем команду
+```bash
+/etc/init.d/dockerd restart
+```
+#### Запускаем контейнер только на внутреннем IP
+```bash
+docker run -d --name tg-proxy -p 192.168.1.1:1080:1080 tg-proxy-flint:latest -u userx -P 123456
+```
+#### Смотрим логи, практически все INFO на каждое соединение заменил на DEBUG, чтобы не тратить ресурс постоянной памяти
+```bash
+docker logs tg-proxy
+```
+#### Тестируем
+```bash
+tg://socks/?server=192.168.1.1&port=1080&user=userx&pass=123456
+```

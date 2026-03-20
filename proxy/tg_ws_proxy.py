@@ -670,7 +670,7 @@ async def _bridge_ws(reader, writer, ws: RawWebSocket, label,
             except BaseException:
                 pass
         elapsed = asyncio.get_event_loop().time() - start_time
-        log.info("[%s] %s (%s) WS session closed: "
+        log.debug("[%s] %s (%s) WS session closed: "
                  "^%s (%d pkts) v%s (%d pkts) in %.1fs",
                  label, dc_tag, dst_tag,
                  _human_bytes(up_bytes), up_packets,
@@ -765,7 +765,7 @@ async def _tcp_fallback(reader, writer, dst, port, init, label,
         rr, rw = await asyncio.wait_for(
             asyncio.open_connection(dst, port), timeout=10)
     except Exception as exc:
-        log.warning("[%s] TCP fallback connect to %s:%d failed: %s",
+        log.debug("[%s] TCP fallback connect to %s:%d failed: %s",
                     label, dst, port, exc)
         return False
 
@@ -823,7 +823,7 @@ async def _handle_client(reader, writer):
             client_password = (await reader.readexactly(plen)).decode('utf-8', errors='ignore')
 
             if client_username != _auth_user or client_password != _auth_password:
-                log.warning("[%s] auth failed with creds: %s/%s", label, client_username, client_password)
+                log.debug("[%s] auth failed with creds: %s/%s", label, client_username, client_password)
                 writer.write(b'\x01\x01')
                 await writer.drain()
                 writer.close()
@@ -866,7 +866,7 @@ async def _handle_client(reader, writer):
         port = struct.unpack('!H', await reader.readexactly(2))[0]
 
         if ':' in dst:
-            log.error(
+            log.debug(
                 "[%s] IPv6 address detected: %s:%d — "
                 "IPv6 addresses are not supported; "
                 "disable IPv6 to continue using the proxy.",
@@ -884,7 +884,7 @@ async def _handle_client(reader, writer):
                 rr, rw = await asyncio.wait_for(
                     asyncio.open_connection(dst, port), timeout=10)
             except Exception as exc:
-                log.warning("[%s] passthrough failed to %s: %s: %s", label, dst, type(exc).__name__, str(exc) or "(no message)")
+                log.debug("[%s] passthrough failed to %s: %s: %s", label, dst, type(exc).__name__, str(exc) or "(no message)")
                 writer.write(_socks5_reply(0x05))
                 await writer.drain()
                 writer.close()
@@ -937,7 +937,7 @@ async def _handle_client(reader, writer):
                 init_patched = True
 
         if dc is None or dc not in _dc_opt:
-            log.warning("[%s] unknown DC%s for %s:%d -> TCP passthrough",
+            log.debug("[%s] unknown DC%s for %s:%d -> TCP passthrough",
                         label, dc, dst, port)
             await _tcp_fallback(reader, writer, dst, port, init, label)
             return
@@ -954,7 +954,7 @@ async def _handle_client(reader, writer):
             ok = await _tcp_fallback(reader, writer, dst, port, init,
                                      label, dc=dc, is_media=is_media)
             if ok:
-                log.info("[%s] DC%d%s TCP fallback closed",
+                log.debug("[%s] DC%d%s TCP fallback closed",
                          label, dc, media_tag)
             return
 
@@ -967,7 +967,7 @@ async def _handle_client(reader, writer):
             ok = await _tcp_fallback(reader, writer, dst, port, init,
                                      label, dc=dc, is_media=is_media)
             if ok:
-                log.info("[%s] DC%d%s TCP fallback closed",
+                log.debug("[%s] DC%d%s TCP fallback closed",
                          label, dc, media_tag)
             return
 
@@ -980,12 +980,12 @@ async def _handle_client(reader, writer):
 
         ws = await _ws_pool.get(dc, is_media, target, domains)
         if ws:
-            log.info("[%s] DC%d%s (%s:%d) -> pool hit via %s",
+            log.debug("[%s] DC%d%s (%s:%d) -> pool hit via %s",
                      label, dc, media_tag, dst, port, target)
         else:
             for domain in domains:
                 url = f'wss://{domain}/apiws'
-                log.info("[%s] DC%d%s (%s:%d) -> %s via %s",
+                log.debug("[%s] DC%d%s (%s:%d) -> %s via %s",
                          label, dc, media_tag, dst, port, url, target)
                 try:
                     ws = await RawWebSocket.connect(target, domain,
@@ -996,14 +996,14 @@ async def _handle_client(reader, writer):
                     _stats.ws_errors += 1
                     if exc.is_redirect:
                         ws_failed_redirect = True
-                        log.warning("[%s] DC%d%s got %d from %s -> %s",
+                        log.debug("[%s] DC%d%s got %d from %s -> %s",
                                     label, dc, media_tag,
                                     exc.status_code, domain,
                                     exc.location or '?')
                         continue
                     else:
                         all_redirects = False
-                        log.warning("[%s] DC%d%s WS handshake: %s",
+                        log.debug("[%s] DC%d%s WS handshake: %s",
                                     label, dc, media_tag, exc.status_line)
                 except Exception as exc:
                     _stats.ws_errors += 1
@@ -1011,32 +1011,32 @@ async def _handle_client(reader, writer):
                     err_str = str(exc)
                     if ('CERTIFICATE_VERIFY_FAILED' in err_str or
                             'Hostname mismatch' in err_str):
-                        log.warning("[%s] DC%d%s SSL error: %s",
+                        log.debug("[%s] DC%d%s SSL error: %s",
                                     label, dc, media_tag, exc)
                     else:
-                        log.warning("[%s] DC%d%s WS connect failed: %s",
+                        log.debug("[%s] DC%d%s WS connect failed: %s",
                                     label, dc, media_tag, exc)
 
         # -- WS failed -> fallback --
         if ws is None:
             if ws_failed_redirect and all_redirects:
                 _ws_blacklist.add(dc_key)
-                log.warning(
+                log.debug(
                     "[%s] DC%d%s blacklisted for WS (all 302)",
                     label, dc, media_tag)
             elif ws_failed_redirect:
                 _dc_fail_until[dc_key] = now + _DC_FAIL_COOLDOWN
             else:
                 _dc_fail_until[dc_key] = now + _DC_FAIL_COOLDOWN
-                log.info("[%s] DC%d%s WS cooldown for %ds",
+                log.debug("[%s] DC%d%s WS cooldown for %ds",
                          label, dc, media_tag, int(_DC_FAIL_COOLDOWN))
 
-            log.info("[%s] DC%d%s -> TCP fallback to %s:%d",
+            log.debug("[%s] DC%d%s -> TCP fallback to %s:%d",
                      label, dc, media_tag, dst, port)
             ok = await _tcp_fallback(reader, writer, dst, port, init,
                                      label, dc=dc, is_media=is_media)
             if ok:
-                log.info("[%s] DC%d%s TCP fallback closed",
+                log.debug("[%s] DC%d%s TCP fallback closed",
                          label, dc, media_tag)
             return
 
@@ -1060,7 +1060,7 @@ async def _handle_client(reader, writer):
                          splitter=splitter)
 
     except asyncio.TimeoutError:
-        log.warning("[%s] timeout during SOCKS5 handshake", label)
+        log.debug("[%s] timeout during SOCKS5 handshake", label)
     except asyncio.IncompleteReadError:
         log.debug("[%s] client disconnected", label)
     except asyncio.CancelledError:
@@ -1116,7 +1116,7 @@ async def _run(port: int, dc_opt: Dict[int, Optional[str]],
             bl = ', '.join(
                 f'DC{d}{"m" if m else ""}'
                 for d, m in sorted(_ws_blacklist)) or 'none'
-            log.info("stats: %s | ws_bl: %s", _stats.summary(), bl)
+            log.debug("stats: %s | ws_bl: %s", _stats.summary(), bl)
 
     asyncio.create_task(log_stats())
 
