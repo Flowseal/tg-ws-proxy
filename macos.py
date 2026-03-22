@@ -221,6 +221,10 @@ def _ensure_menubar_icon():
 
 # Native macOS dialogs
 
+def _escape_osascript_text(text: str) -> str:
+    return text.replace('\\', '\\\\').replace('"', '\\"')
+
+
 def _osascript(script: str) -> str:
     r = subprocess.run(
         ['osascript', '-e', script],
@@ -229,28 +233,46 @@ def _osascript(script: str) -> str:
 
 
 def _show_error(text: str, title: str = "TG WS Proxy"):
-    text_esc = text.replace('\\', '\\\\').replace('"', '\\"')
-    title_esc = title.replace('\\', '\\\\').replace('"', '\\"')
+    text_esc = _escape_osascript_text(text)
+    title_esc = _escape_osascript_text(title)
     _osascript(
         f'display dialog "{text_esc}" with title "{title_esc}" '
         f'buttons {{"OK"}} default button "OK" with icon stop')
 
 
 def _show_info(text: str, title: str = "TG WS Proxy"):
-    text_esc = text.replace('\\', '\\\\').replace('"', '\\"')
-    title_esc = title.replace('\\', '\\\\').replace('"', '\\"')
+    text_esc = _escape_osascript_text(text)
+    title_esc = _escape_osascript_text(title)
     _osascript(
         f'display dialog "{text_esc}" with title "{title_esc}" '
         f'buttons {{"OK"}} default button "OK" with icon note')
 
 
 def _ask_yes_no(text: str, title: str = "TG WS Proxy") -> bool:
-    text_esc = text.replace('\\', '\\\\').replace('"', '\\"')
-    title_esc = title.replace('\\', '\\\\').replace('"', '\\"')
-    result = _osascript(
-        f'display dialog "{text_esc}" with title "{title_esc}" '
-        f'buttons {{"Нет", "Да"}} default button "Да" with icon note')
-    return "Да" in result
+    result = _ask_yes_no_close(text, title)
+    return result is True
+
+
+def _ask_yes_no_close(text: str,
+                      title: str = "TG WS Proxy") -> Optional[bool]:
+    text_esc = _escape_osascript_text(text)
+    title_esc = _escape_osascript_text(title)
+    r = subprocess.run(
+        ['osascript', '-e',
+         f'button returned of (display dialog "{text_esc}" '
+         f'with title "{title_esc}" '
+         f'buttons {{"Закрыть", "Нет", "Да"}} '
+         f'default button "Да" cancel button "Закрыть" with icon note)'],
+        capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+
+    result = r.stdout.strip()
+    if result == "Да":
+        return True
+    if result == "Нет":
+        return False
+    return None
 
 
 # Proxy lifecycle
@@ -383,15 +405,16 @@ def _on_open_logs(_=None):
 # Show a native text input dialog. Returns None if cancelled.
 def _osascript_input(prompt: str, default: str,
                      title: str = "TG WS Proxy") -> Optional[str]:
-    prompt_esc = prompt.replace('\\', '\\\\').replace('"', '\\"')
-    default_esc = default.replace('\\', '\\\\').replace('"', '\\"')
-    title_esc = title.replace('\\', '\\\\').replace('"', '\\"')
+    prompt_esc = _escape_osascript_text(prompt)
+    default_esc = _escape_osascript_text(default)
+    title_esc = _escape_osascript_text(title)
     r = subprocess.run(
         ['osascript', '-e',
          f'text returned of (display dialog "{prompt_esc}" '
          f'default answer "{default_esc}" '
          f'with title "{title_esc}" '
-         f'buttons {{"Отмена", "OK"}} default button "OK")'],
+         f'buttons {{"Закрыть", "OK"}} '
+         f'default button "OK" cancel button "Закрыть")'],
         capture_output=True, text=True)
     if r.returncode != 0:
         return None
@@ -452,7 +475,9 @@ def _edit_config_dialog():
         return
 
     # Verbose
-    verbose = _ask_yes_no("Включить подробное логирование (verbose)?")
+    verbose = _ask_yes_no_close("Включить подробное логирование (verbose)?")
+    if verbose is None:
+        return
 
     # Advanced settings
     adv_str = _osascript_input(
@@ -461,6 +486,8 @@ def _edit_config_dialog():
         f"{cfg.get('buf_kb', DEFAULT_CONFIG['buf_kb'])},"
         f"{cfg.get('pool_size', DEFAULT_CONFIG['pool_size'])},"
         f"{cfg.get('log_max_mb', DEFAULT_CONFIG['log_max_mb'])}")
+    if adv_str is None:
+        return
 
     adv = {}
     if adv_str:
@@ -491,7 +518,8 @@ def _edit_config_dialog():
     if _app:
         _app.update_menu_title()
 
-    if _ask_yes_no("Настройки сохранены.\n\nПерезапустить прокси сейчас?"):
+    if _ask_yes_no_close(
+            "Настройки сохранены.\n\nПерезапустить прокси сейчас?"):
         restart_proxy()
 
 
