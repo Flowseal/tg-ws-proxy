@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 import os
 import psutil
 import subprocess
@@ -43,6 +44,9 @@ DEFAULT_CONFIG = {
     "host": "127.0.0.1",
     "dc_ip": ["2:149.154.167.220", "4:149.154.167.220"],
     "verbose": False,
+    "log_max_mb": 5,
+    "buf_kb": 256,
+    "pool_size": 4,
 }
 
 _proxy_thread: Optional[threading.Thread] = None
@@ -153,12 +157,17 @@ def save_config(cfg: dict):
         json.dump(cfg, f, indent=2, ensure_ascii=False)
 
 
-def setup_logging(verbose: bool = False):
+def setup_logging(verbose: bool = False, log_max_mb: float = 5):
     _ensure_dirs()
     root = logging.getLogger()
     root.setLevel(logging.DEBUG if verbose else logging.INFO)
 
-    fh = logging.FileHandler(str(LOG_FILE), encoding="utf-8")
+    fh = logging.handlers.RotatingFileHandler(
+        str(LOG_FILE),
+        maxBytes=max(32 * 1024, log_max_mb * 1024 * 1024),
+        backupCount=0,
+        encoding='utf-8',
+    )
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(logging.Formatter(
         "%(asctime)s  %(levelname)-5s  %(name)s  %(message)s",
@@ -290,6 +299,13 @@ def start_proxy():
         return
 
     log.info("Starting proxy on %s:%d ...", host, port)
+
+    buf_kb = cfg.get("buf_kb", DEFAULT_CONFIG["buf_kb"])
+    pool_size = cfg.get("pool_size", DEFAULT_CONFIG["pool_size"])
+    tg_ws_proxy._RECV_BUF = max(4, buf_kb) * 1024
+    tg_ws_proxy._SEND_BUF = tg_ws_proxy._RECV_BUF
+    tg_ws_proxy._WS_POOL_SIZE = max(0, pool_size)
+
     _proxy_thread = threading.Thread(
         target=_run_proxy_thread,
         args=(port, dc_opt, verbose, host),
@@ -438,11 +454,34 @@ def _edit_config_dialog():
     # Verbose
     verbose = _ask_yes_no("Включить подробное логирование (verbose)?")
 
+    # Advanced settings
+    adv_str = _osascript_input(
+        "Расширенные настройки (буфер KB, WS пул, лог MB):\n"
+        "Формат: buf_kb,pool_size,log_max_mb",
+        f"{cfg.get('buf_kb', DEFAULT_CONFIG['buf_kb'])},"
+        f"{cfg.get('pool_size', DEFAULT_CONFIG['pool_size'])},"
+        f"{cfg.get('log_max_mb', DEFAULT_CONFIG['log_max_mb'])}")
+
+    adv = {}
+    if adv_str:
+        parts = [s.strip() for s in adv_str.split(',')]
+        keys = [("buf_kb", int), ("pool_size", int),
+                ("log_max_mb", float)]
+        for i, (k, typ) in enumerate(keys):
+            if i < len(parts):
+                try:
+                    adv[k] = typ(parts[i])
+                except ValueError:
+                    pass
+
     new_cfg = {
         "host": host,
         "port": port,
         "dc_ip": dc_lines,
         "verbose": verbose,
+        "buf_kb": adv.get("buf_kb", cfg.get("buf_kb", DEFAULT_CONFIG["buf_kb"])),
+        "pool_size": adv.get("pool_size", cfg.get("pool_size", DEFAULT_CONFIG["pool_size"])),
+        "log_max_mb": adv.get("log_max_mb", cfg.get("log_max_mb", DEFAULT_CONFIG["log_max_mb"])),
     }
     save_config(new_cfg)
     log.info("Config saved: %s", new_cfg)
@@ -581,7 +620,8 @@ def run_menubar():
         except Exception:
             pass
 
-    setup_logging(_config.get("verbose", False))
+    setup_logging(_config.get("verbose", False),
+                  log_max_mb=_config.get("log_max_mb", DEFAULT_CONFIG["log_max_mb"]))
     log.info("TG WS Proxy menubar app starting")
     log.info("Config: %s", _config)
     log.info("Log file: %s", LOG_FILE)
