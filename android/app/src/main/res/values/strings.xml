@@ -20,6 +20,9 @@
     <string name="host_hint">Proxy host</string>
     <string name="port_hint">Proxy port</string>
     <string name="dc_ip_hint">DC to IP mappings (one DC:IP per line)</string>
+    <string name="log_max_mb_hint">Max log size before rotation (MB)</string>
+    <string name="buffer_kb_hint">Socket buffer size (KB)</string>
+    <string name="pool_size_hint">WS pool size per DC</string>
     <string name="verbose_label">Verbose logging</string>
     <string name="save_button">Save Settings</string>
     <string name="start_button">Start Service</string>

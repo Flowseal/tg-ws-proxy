@@ -41,7 +41,9 @@ def _normalize_dc_ip_list(dc_ip_list: Iterable[object]) -> list[str]:
 
 
 def start_proxy(app_dir: str, host: str, port: int,
-                dc_ip_list: Iterable[object], verbose: bool = False) -> str:
+                dc_ip_list: Iterable[object], log_max_mb: float = 5.0,
+                buf_kb: int = 256, pool_size: int = 4,
+                verbose: bool = False) -> str:
     global _RUNTIME, _LAST_ERROR
 
     with _RUNTIME_LOCK:
@@ -59,12 +61,15 @@ def start_proxy(app_dir: str, host: str, port: int,
             on_error=_remember_error,
         )
         runtime.reset_log_file()
-        runtime.setup_logging(verbose=verbose)
+        runtime.setup_logging(verbose=verbose, log_max_mb=float(log_max_mb))
 
         config = {
             "host": host,
             "port": int(port),
             "dc_ip": _normalize_dc_ip_list(dc_ip_list),
+            "log_max_mb": float(log_max_mb),
+            "buf_kb": int(buf_kb),
+            "pool_size": int(pool_size),
             "verbose": bool(verbose),
         }
         runtime.save_config(config)

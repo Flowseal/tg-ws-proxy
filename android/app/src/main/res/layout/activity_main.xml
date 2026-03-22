@@ -197,6 +197,48 @@
             android:layout_marginTop="16dp"
             android:text="@string/verbose_label" />
 
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:hint="@string/log_max_mb_hint">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/logMaxMbInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="numberDecimal"
+                android:maxLines="1" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:hint="@string/buffer_kb_hint">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/bufferKbInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number"
+                android:maxLines="1" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:hint="@string/pool_size_hint">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/poolSizeInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number"
+                android:maxLines="1" />
+        </com.google.android.material.textfield.TextInputLayout>
+
         <TextView
             android:id="@+id/errorText"
             android:layout_width="match_parent"

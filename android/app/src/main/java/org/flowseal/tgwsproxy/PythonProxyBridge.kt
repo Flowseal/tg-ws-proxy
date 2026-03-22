@@ -17,6 +17,9 @@ object PythonProxyBridge {
             config.host,
             config.port,
             config.dcIpList,
+            config.logMaxMb,
+            config.bufferKb,
+            config.poolSize,
             config.verbose,
         ).toString()
     }

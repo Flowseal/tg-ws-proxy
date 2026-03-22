@@ -13,6 +13,20 @@ class ProxySettingsStore(context: Context) {
                 KEY_DC_IP_TEXT,
                 ProxyConfig.DEFAULT_DC_IP_LINES.joinToString("\n"),
             ).orEmpty(),
+            logMaxMbText = ProxyConfig.formatDecimal(
+                preferences.getFloat(
+                    KEY_LOG_MAX_MB,
+                    ProxyConfig.DEFAULT_LOG_MAX_MB.toFloat(),
+                ).toDouble()
+            ),
+            bufferKbText = preferences.getInt(
+                KEY_BUFFER_KB,
+                ProxyConfig.DEFAULT_BUFFER_KB,
+            ).toString(),
+            poolSizeText = preferences.getInt(
+                KEY_POOL_SIZE,
+                ProxyConfig.DEFAULT_POOL_SIZE,
+            ).toString(),
             verbose = preferences.getBoolean(KEY_VERBOSE, false),
         )
     }
@@ -22,6 +36,9 @@ class ProxySettingsStore(context: Context) {
             .putString(KEY_HOST, config.host)
             .putInt(KEY_PORT, config.port)
             .putString(KEY_DC_IP_TEXT, config.dcIpList.joinToString("\n"))
+            .putFloat(KEY_LOG_MAX_MB, config.logMaxMb.toFloat())
+            .putInt(KEY_BUFFER_KB, config.bufferKb)
+            .putInt(KEY_POOL_SIZE, config.poolSize)
             .putBoolean(KEY_VERBOSE, config.verbose)
             .apply()
     }
@@ -31,6 +48,9 @@ class ProxySettingsStore(context: Context) {
         private const val KEY_HOST = "host"
         private const val KEY_PORT = "port"
         private const val KEY_DC_IP_TEXT = "dc_ip_text"
+        private const val KEY_LOG_MAX_MB = "log_max_mb"
+        private const val KEY_BUFFER_KB = "buf_kb"
+        private const val KEY_POOL_SIZE = "pool_size"
         private const val KEY_VERBOSE = "verbose"
     }
 }

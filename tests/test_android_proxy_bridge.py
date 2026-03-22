@@ -73,6 +73,57 @@ class AndroidProxyBridgeTests(unittest.TestCase):
             "4:149.154.167.220",
         ])
 
+    def test_start_proxy_saves_advanced_runtime_config(self):
+        captured = {}
+
+        class FakeRuntime:
+            def __init__(self, *args, **kwargs):
+                captured["runtime_init"] = kwargs
+                self.log_file = Path("/tmp/proxy.log")
+
+            def reset_log_file(self):
+                captured["reset_log_file"] = True
+
+            def setup_logging(self, verbose=False, log_max_mb=5):
+                captured["verbose"] = verbose
+                captured["log_max_mb"] = log_max_mb
+
+            def save_config(self, config):
+                captured["config"] = dict(config)
+
+            def start_proxy(self, config):
+                captured["start_proxy"] = dict(config)
+                return True
+
+            def is_proxy_running(self):
+                return True
+
+            def stop_proxy(self):
+                captured["stop_proxy"] = True
+
+        original_runtime = android_proxy_bridge.ProxyAppRuntime
+        try:
+            android_proxy_bridge.ProxyAppRuntime = FakeRuntime
+            log_path = android_proxy_bridge.start_proxy(
+                "/tmp/app",
+                "127.0.0.1",
+                1080,
+                ["2:149.154.167.220"],
+                7.0,
+                512,
+                6,
+                True,
+            )
+        finally:
+            android_proxy_bridge.ProxyAppRuntime = original_runtime
+
+        self.assertEqual(log_path, "/tmp/proxy.log")
+        self.assertEqual(captured["config"]["log_max_mb"], 7.0)
+        self.assertEqual(captured["config"]["buf_kb"], 512)
+        self.assertEqual(captured["config"]["pool_size"], 6)
+        self.assertEqual(captured["log_max_mb"], 7.0)
+        self.assertTrue(captured["verbose"])
+
 
 if __name__ == "__main__":
     unittest.main()

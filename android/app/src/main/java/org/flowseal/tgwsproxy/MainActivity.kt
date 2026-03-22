@@ -108,6 +108,9 @@ class MainActivity : AppCompatActivity() {
         binding.hostInput.setText(config.host)
         binding.portInput.setText(config.portText)
         binding.dcIpInput.setText(config.dcIpText)
+        binding.logMaxMbInput.setText(config.logMaxMbText)
+        binding.bufferKbInput.setText(config.bufferKbText)
+        binding.poolSizeInput.setText(config.poolSizeText)
         binding.verboseSwitch.isChecked = config.verbose
     }
 
@@ -116,6 +119,9 @@ class MainActivity : AppCompatActivity() {
             host = binding.hostInput.text?.toString().orEmpty(),
             portText = binding.portInput.text?.toString().orEmpty(),
             dcIpText = binding.dcIpInput.text?.toString().orEmpty(),
+            logMaxMbText = binding.logMaxMbInput.text?.toString().orEmpty(),
+            bufferKbText = binding.bufferKbInput.text?.toString().orEmpty(),
+            poolSizeText = binding.poolSizeInput.text?.toString().orEmpty(),
             verbose = binding.verboseSwitch.isChecked,
         )
     }
