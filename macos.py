@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 import os
 import psutil
 import subprocess
@@ -43,6 +44,9 @@ DEFAULT_CONFIG = {
     "host": "127.0.0.1",
     "dc_ip": ["2:149.154.167.220", "4:149.154.167.220"],
     "verbose": False,
+    "log_max_mb": 5,
+    "buf_kb": 256,
+    "pool_size": 4,
 }
 
 _app: Optional[object] = None
@@ -147,8 +151,8 @@ def save_config(cfg: dict):
     _runtime.save_config(cfg)
 
 
-def setup_logging(verbose: bool = False):
-    _runtime.setup_logging(verbose)
+def setup_logging(verbose: bool = False, log_max_mb: float = 5):
+    _runtime.setup_logging(verbose, log_max_mb=log_max_mb)
 
 
 # Menubar icon
@@ -358,11 +362,34 @@ def _edit_config_dialog():
     # Verbose
     verbose = _ask_yes_no("Включить подробное логирование (verbose)?")
 
+    # Advanced settings
+    adv_str = _osascript_input(
+        "Расширенные настройки (буфер KB, WS пул, лог MB):\n"
+        "Формат: buf_kb,pool_size,log_max_mb",
+        f"{cfg.get('buf_kb', DEFAULT_CONFIG['buf_kb'])},"
+        f"{cfg.get('pool_size', DEFAULT_CONFIG['pool_size'])},"
+        f"{cfg.get('log_max_mb', DEFAULT_CONFIG['log_max_mb'])}")
+
+    adv = {}
+    if adv_str:
+        parts = [s.strip() for s in adv_str.split(',')]
+        keys = [("buf_kb", int), ("pool_size", int),
+                ("log_max_mb", float)]
+        for i, (k, typ) in enumerate(keys):
+            if i < len(parts):
+                try:
+                    adv[k] = typ(parts[i])
+                except ValueError:
+                    pass
+
     new_cfg = {
         "host": host,
         "port": port,
         "dc_ip": dc_lines,
         "verbose": verbose,
+        "buf_kb": adv.get("buf_kb", cfg.get("buf_kb", DEFAULT_CONFIG["buf_kb"])),
+        "pool_size": adv.get("pool_size", cfg.get("pool_size", DEFAULT_CONFIG["pool_size"])),
+        "log_max_mb": adv.get("log_max_mb", cfg.get("log_max_mb", DEFAULT_CONFIG["log_max_mb"])),
     }
     save_config(new_cfg)
     log.info("Config saved: %s", new_cfg)
@@ -495,7 +522,8 @@ def run_menubar():
     _config = _runtime.prepare()
     _runtime.reset_log_file()
 
-    setup_logging(_config.get("verbose", False))
+    setup_logging(_config.get("verbose", False),
+                  log_max_mb=_config.get("log_max_mb", DEFAULT_CONFIG["log_max_mb"]))
     log.info("TG WS Proxy menubar app starting")
     log.info("Config: %s", _config)
     log.info("Log file: %s", LOG_FILE)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 import os
 import subprocess
 import sys
@@ -32,6 +33,9 @@ DEFAULT_CONFIG = {
     "host": "127.0.0.1",
     "dc_ip": ["2:149.154.167.220", "4:149.154.167.220"],
     "verbose": False,
+    "log_max_mb": 5,
+    "buf_kb": 256,
+    "pool_size": 4,
 }
 
 
@@ -143,8 +147,8 @@ def save_config(cfg: dict):
     _runtime.save_config(cfg)
 
 
-def setup_logging(verbose: bool = False):
-    _runtime.setup_logging(verbose)
+def setup_logging(verbose: bool = False, log_max_mb: float = 5):
+    _runtime.setup_logging(verbose, log_max_mb=log_max_mb)
 
 
 def _make_icon_image(size: int = 64):
@@ -276,7 +280,7 @@ def _edit_config_dialog():
     TEXT_SECONDARY = "#707579"
     FONT_FAMILY = "Sans"
 
-    w, h = 420, 480
+    w, h = 420, 540
     sw = root.winfo_screenwidth()
     sh = root.winfo_screenheight()
     root.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
@@ -368,14 +372,29 @@ def _edit_config_dialog():
         border_color=FIELD_BORDER,
     ).pack(anchor="w", pady=(0, 8))
 
-    # Info label
-    ctk.CTkLabel(
-        frame,
-        text="Изменения вступят в силу после перезапуска прокси.",
-        font=(FONT_FAMILY, 11),
-        text_color=TEXT_SECONDARY,
-        anchor="w",
-    ).pack(anchor="w", pady=(0, 16))
+    # Advanced: buf_kb, pool_size, log_max_mb
+    adv_frame = ctk.CTkFrame(frame, fg_color="transparent")
+    adv_frame.pack(anchor="w", fill="x", pady=(4, 8))
+
+    for col, (lbl, key, w_) in enumerate([
+        ("Буфер (KB, 256 default)", "buf_kb", 120),
+        ("WS пулов (4 default)", "pool_size", 120),
+        ("Log size (MB, 5 def)", "log_max_mb", 120),
+    ]):
+        col_frame = ctk.CTkFrame(adv_frame, fg_color="transparent")
+        col_frame.pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(col_frame, text=lbl, font=(FONT_FAMILY, 11),
+                     text_color=TEXT_SECONDARY, anchor="w").pack(anchor="w")
+        ctk.CTkEntry(col_frame, width=w_, height=30, font=(FONT_FAMILY, 12),
+                     corner_radius=8, fg_color=FIELD_BG,
+                     border_color=FIELD_BORDER, border_width=1,
+                     text_color=TEXT_PRIMARY,
+                     textvariable=ctk.StringVar(
+                         value=str(cfg.get(key, DEFAULT_CONFIG[key]))
+                     )).pack(anchor="w")
+
+    _adv_entries = list(adv_frame.winfo_children())
+    _adv_keys = ["buf_kb", "pool_size", "log_max_mb"]
 
     def on_save():
         import socket as _sock
@@ -412,6 +431,17 @@ def _edit_config_dialog():
             "dc_ip": lines,
             "verbose": verbose_var.get(),
         }
+
+        for i, key in enumerate(_adv_keys):
+            col_frame = _adv_entries[i]
+            entry = col_frame.winfo_children()[1]
+            try:
+                val = float(entry.get().strip())
+                if key in ("buf_kb", "pool_size"):
+                    val = int(val)
+                new_cfg[key] = val
+            except ValueError:
+                new_cfg[key] = DEFAULT_CONFIG[key]
         save_config(new_cfg)
         _config.update(new_cfg)
         log.info("Config saved: %s", new_cfg)
@@ -434,33 +464,18 @@ def _edit_config_dialog():
         root.destroy()
 
     btn_frame = ctk.CTkFrame(frame, fg_color="transparent")
-    btn_frame.pack(fill="x")
-    ctk.CTkButton(
-        btn_frame,
-        text="Сохранить",
-        width=140,
-        height=38,
-        font=(FONT_FAMILY, 14, "bold"),
-        corner_radius=10,
-        fg_color=TG_BLUE,
-        hover_color=TG_BLUE_HOVER,
-        text_color="#ffffff",
-        command=on_save,
-    ).pack(side="left", padx=(0, 10))
-    ctk.CTkButton(
-        btn_frame,
-        text="Отмена",
-        width=140,
-        height=38,
-        font=(FONT_FAMILY, 14),
-        corner_radius=10,
-        fg_color=FIELD_BG,
-        hover_color=FIELD_BORDER,
-        text_color=TEXT_PRIMARY,
-        border_width=1,
-        border_color=FIELD_BORDER,
-        command=on_cancel,
-    ).pack(side="left")
+    btn_frame.pack(fill="x", pady=(20, 0))
+    ctk.CTkButton(btn_frame, text="Сохранить", height=38,
+                  font=(FONT_FAMILY, 14, "bold"), corner_radius=10,
+                  fg_color=TG_BLUE, hover_color=TG_BLUE_HOVER,
+                  text_color="#ffffff",
+                  command=on_save).pack(side="left", fill="x", expand=True, padx=(0, 8))
+    ctk.CTkButton(btn_frame, text="Отмена", height=38,
+                  font=(FONT_FAMILY, 14), corner_radius=10,
+                  fg_color=FIELD_BG, hover_color=FIELD_BORDER,
+                  text_color=TEXT_PRIMARY, border_width=1,
+                  border_color=FIELD_BORDER,
+                  command=on_cancel).pack(side="right", fill="x", expand=True)
 
     root.mainloop()
 
@@ -705,7 +720,8 @@ def run_tray():
     _config = _runtime.prepare()
     _runtime.reset_log_file()
 
-    setup_logging(_config.get("verbose", False))
+    setup_logging(_config.get("verbose", False),
+                  log_max_mb=_config.get("log_max_mb", DEFAULT_CONFIG["log_max_mb"]))
     log.info("TG WS Proxy tray app starting")
     log.info("Config: %s", _config)
     log.info("Log file: %s", LOG_FILE)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio as _asyncio
 import json
 import logging
+import logging.handlers
 import sys
 import threading
 import time
@@ -17,6 +18,9 @@ DEFAULT_CONFIG = {
     "host": "127.0.0.1",
     "dc_ip": ["2:149.154.167.220", "4:149.154.167.220"],
     "verbose": False,
+    "log_max_mb": 5,
+    "buf_kb": 256,
+    "pool_size": 4,
 }
 
 
@@ -76,7 +80,7 @@ class ProxyAppRuntime:
             except Exception:
                 pass
 
-    def setup_logging(self, verbose: bool = False):
+    def setup_logging(self, verbose: bool = False, log_max_mb: float = 5):
         self.ensure_dirs()
         root = logging.getLogger()
         root.setLevel(logging.DEBUG if verbose else logging.INFO)
@@ -89,7 +93,12 @@ class ProxyAppRuntime:
                 except Exception:
                     pass
 
-        fh = logging.FileHandler(str(self.log_file), encoding="utf-8")
+        fh = logging.handlers.RotatingFileHandler(
+            str(self.log_file),
+            maxBytes=max(32 * 1024, log_max_mb * 1024 * 1024),
+            backupCount=0,
+            encoding="utf-8",
+        )
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(logging.Formatter(
             "%(asctime)s  %(levelname)-5s  %(name)s  %(message)s",
@@ -148,6 +157,9 @@ class ProxyAppRuntime:
         port = active_cfg.get("port", self.default_config["port"])
         host = active_cfg.get("host", self.default_config["host"])
         dc_ip_list = active_cfg.get("dc_ip", self.default_config["dc_ip"])
+        buf_kb = active_cfg.get("buf_kb", self.default_config["buf_kb"])
+        pool_size = active_cfg.get(
+            "pool_size", self.default_config["pool_size"])
 
         try:
             dc_opt = self.parse_dc_ip_list(dc_ip_list)
@@ -157,6 +169,9 @@ class ProxyAppRuntime:
             return False
 
         self.log.info("Starting proxy on %s:%d ...", host, port)
+        tg_ws_proxy._RECV_BUF = max(4, buf_kb) * 1024
+        tg_ws_proxy._SEND_BUF = tg_ws_proxy._RECV_BUF
+        tg_ws_proxy._WS_POOL_SIZE = max(0, pool_size)
         self._proxy_thread = self.thread_factory(
             target=self._run_proxy_thread,
             args=(port, dc_opt, host),

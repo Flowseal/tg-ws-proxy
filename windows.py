@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import json
 import logging
+import logging.handlers
 import os
 import winreg
 import psutil
@@ -38,6 +39,9 @@ DEFAULT_CONFIG = {
     "dc_ip": ["2:149.154.167.220", "4:149.154.167.220"],
     "verbose": False,
     "autostart": False,
+    "log_max_mb": 5,
+    "buf_kb": 256,
+    "pool_size": 4,
 }
 
 
@@ -142,8 +146,8 @@ def save_config(cfg: dict):
     _runtime.save_config(cfg)
 
 
-def setup_logging(verbose: bool = False):
-    _runtime.setup_logging(verbose)
+def setup_logging(verbose: bool = False, log_max_mb: float = 5):
+    _runtime.setup_logging(verbose, log_max_mb=log_max_mb)
 
 
 def _autostart_reg_name() -> str:
@@ -319,7 +323,7 @@ def _edit_config_dialog():
     TEXT_SECONDARY = "#707579"
     FONT_FAMILY = "Segoe UI"
 
-    w, h = 420, 460
+    w, h = 420, 540
 
     if _supports_autostart(): 
         h += 70
@@ -374,6 +378,30 @@ def _edit_config_dialog():
                     corner_radius=6, border_width=2,
                     border_color=FIELD_BORDER).pack(anchor="w", pady=(0, 8))
 
+    # Advanced: buf_kb, pool_size, log_max_mb
+    adv_frame = ctk.CTkFrame(frame, fg_color="transparent")
+    adv_frame.pack(anchor="w", fill="x", pady=(4, 8))
+
+    for col, (lbl, key, w_) in enumerate([
+        ("Буфер (KB, 256 default)", "buf_kb", 120),
+        ("WS пулов (4 default)", "pool_size", 120),
+        ("Log size (MB, 5 def)", "log_max_mb", 120),
+    ]):
+        col_frame = ctk.CTkFrame(adv_frame, fg_color="transparent")
+        col_frame.pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(col_frame, text=lbl, font=(FONT_FAMILY, 11),
+                     text_color=TEXT_SECONDARY, anchor="w").pack(anchor="w")
+        ctk.CTkEntry(col_frame, width=w_, height=30, font=(FONT_FAMILY, 12),
+                     corner_radius=8, fg_color=FIELD_BG,
+                     border_color=FIELD_BORDER, border_width=1,
+                     text_color=TEXT_PRIMARY,
+                     textvariable=ctk.StringVar(
+                         value=str(cfg.get(key, DEFAULT_CONFIG[key]))
+                     )).pack(anchor="w")
+
+    _adv_entries = list(adv_frame.winfo_children())
+    _adv_keys = ["buf_kb", "pool_size", "log_max_mb"]
+
     autostart_var = None
     if _supports_autostart():
         autostart_var = ctk.BooleanVar(value=cfg["autostart"])
@@ -419,6 +447,17 @@ def _edit_config_dialog():
             "verbose": verbose_var.get(),
             "autostart": (autostart_var.get() if autostart_var is not None else False),
         }
+
+        for i, key in enumerate(_adv_keys):
+            col_frame = _adv_entries[i]
+            entry = col_frame.winfo_children()[1]
+            try:
+                val = float(entry.get().strip())
+                if key in ("buf_kb", "pool_size"):
+                    val = int(val)
+                new_cfg[key] = val
+            except ValueError:
+                new_cfg[key] = DEFAULT_CONFIG[key]
         save_config(new_cfg)
         _config.update(new_cfg)
         log.info("Config saved: %s", new_cfg)
@@ -658,7 +697,8 @@ def run_tray():
     _config = _runtime.prepare()
     _runtime.reset_log_file()
 
-    setup_logging(_config.get("verbose", False))
+    setup_logging(_config.get("verbose", False),
+                  log_max_mb=_config.get("log_max_mb", DEFAULT_CONFIG["log_max_mb"]))
     log.info("TG WS Proxy tray app starting")
     log.info("Config: %s", _config)
     log.info("Log file: %s", LOG_FILE)
