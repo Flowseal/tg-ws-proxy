@@ -45,70 +45,40 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: TgWsProxy
-          path: |
-            dist/TgWsProxy_windows.exe
+          path: dist/TgWsProxy_windows.exe
 
-  build-win7-64bit:
+  build-win7:
     runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            suffix: 64bit
+          - arch: x86
+            suffix: 32bit
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - name: Setup Python 3.8 (last version supporting Win7)
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.8"
-          architecture: "x64"
+          architecture: ${{ matrix.arch }}
           cache: "pip"
+          
+      - name: Install dependencies & pyinstaller
+        run: pip install . "pyinstaller==5.13.2"
 
-      - name: Install dependencies (Win7-compatible)
-        run: pip install .
-
-      - name: Install pyinstaller
-        run: pip install "pyinstaller==5.13.2"
-
-      - name: Build EXE with PyInstaller (Win7)
+      - name: Build EXE with PyInstaller
         run: pyinstaller packaging/windows.spec --noconfirm
 
       - name: Rename artifact
-        run: mv dist/TgWsProxy.exe dist/TgWsProxy_windows_7_64bit.exe
+        run: mv dist/TgWsProxy.exe dist/TgWsProxy_windows_7_${{ matrix.suffix }}.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: TgWsProxy-win7-64bit
-          path: dist/TgWsProxy_windows_7_64bit.exe
-
-  build-win7-32bit:
-    runs-on: windows-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Python 3.8 32-bit (Win7 x86)
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.8"
-          architecture: "x86"
-          cache: "pip"
-
-      - name: Install dependencies (Win7 x86)
-        run: pip install .
-
-      - name: Install PyInstaller (Win7 x86)
-        run: pip install "pyinstaller==5.13.2"
-
-      - name: Build EXE with PyInstaller (Win7 32-bit)
-        run: pyinstaller packaging/windows.spec --noconfirm
-
-      - name: Rename artifact
-        run: mv dist/TgWsProxy.exe dist/TgWsProxy_windows_7_32bit.exe
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: TgWsProxy-win7-32bit
-          path: dist/TgWsProxy_windows_7_32bit.exe
+          name: TgWsProxy-win7-${{ matrix.suffix }}
+          path: dist/TgWsProxy_windows_7_${{ matrix.suffix }}.exe
 
   build-macos:
     runs-on: macos-latest
@@ -349,39 +319,15 @@ jobs:
             dist/TgWsProxy_linux_amd64.deb
 
   release:
-    needs: [build, build-win7-64bit, build-win7-32bit, build-macos, build-linux]
+    needs: [build, build-win7, build-macos, build-linux]
     runs-on: ubuntu-latest
     if: ${{ github.event.inputs.make_release == 'true' }}
     steps:
-      - name: Download main build
-        uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v4
         with:
-          name: TgWsProxy
+          pattern: TgWsProxy*
           path: dist
-
-      - name: Download Win7 (64bit) build
-        uses: actions/download-artifact@v8
-        with:
-          name: TgWsProxy-win7-64bit
-          path: dist
-
-      - name: Download Win7 (32bit) build
-        uses: actions/download-artifact@v8
-        with:
-          name: TgWsProxy-win7-32bit
-          path: dist
-
-      - name: Download macOS build
-        uses: actions/download-artifact@v8
-        with:
-          name: TgWsProxy-macOS
-          path: dist
-
-      - name: Download Linux build
-        uses: actions/download-artifact@v8
-        with:
-          name: TgWsProxy-linux
-          path: dist
+          merge-multiple: true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
