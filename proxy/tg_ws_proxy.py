@@ -13,14 +13,15 @@ import sys
 import time
 from typing import Dict, List, Optional, Set, Tuple
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from urllib.parse import quote
 
 
 DEFAULT_PORT = 1080
 log = logging.getLogger('tg-ws-proxy')
 
 _TCP_NODELAY = True
-_RECV_BUF = 256 * 1024
-_SEND_BUF = 256 * 1024
+_RECV_BUF = 131072
+_SEND_BUF = 131072
 _WS_POOL_SIZE = 4
 _WS_POOL_MAX_AGE = 120.0
 
@@ -69,12 +70,10 @@ _IP_TO_DC: Dict[str, Tuple[int, bool]] = {
     '91.105.192.100': (203, False),
 }
 
-# This case might work but not actually sure
-_DC_OVERRIDES: Dict[int, int] = {
-    203: 2
-}
-
 _dc_opt: Dict[int, Optional[str]] = {}
+
+_auth_user = ''
+_auth_password = ''
 
 # DCs where WS is known to fail (302 redirect)
 # Raw TCP fallback will be used instead
@@ -83,8 +82,7 @@ _ws_blacklist: Set[Tuple[int, bool]] = set()
 
 # Rate-limit re-attempts per (dc, is_media)
 _dc_fail_until: Dict[Tuple[int, bool], float] = {}
-_DC_FAIL_COOLDOWN = 30.0   # seconds to keep reduced WS timeout after failure
-_WS_FAIL_TIMEOUT = 2.0    # quick-retry timeout after a recent WS failure
+_DC_FAIL_COOLDOWN = 60.0  # seconds
 
 _ZERO_64 = b'\x00' * 64
 
@@ -396,7 +394,7 @@ def _dc_from_init(data: bytes) -> Tuple[Optional[int], bool]:
                   proto, dc_raw, plain.hex())
         if proto in _VALID_PROTOS:
             dc = abs(dc_raw)
-            if 1 <= dc <= 5 or dc == 203:
+            if 1 <= dc <= 1000:
                 return dc, (dc_raw < 0)
     except Exception as exc:
         log.debug("DC extraction failed: %s", exc)
@@ -481,10 +479,16 @@ class _MsgSplitter:
 
 
 def _ws_domains(dc: int, is_media) -> List[str]:
-    dc = _DC_OVERRIDES.get(dc, dc)
+    """
+    Return domain names to try for WebSocket connection to a DC.
+
+    DC 1-5:  kws{N}[-1].web.telegram.org
+    DC >5:   kws{N}[-1].telegram.org
+    """
+    base = 'telegram.org' if dc > 5 else 'web.telegram.org'
     if is_media is None or is_media:
-        return [f'kws{dc}-1.web.telegram.org', f'kws{dc}.web.telegram.org']
-    return [f'kws{dc}.web.telegram.org', f'kws{dc}-1.web.telegram.org']
+        return [f'kws{dc}-1.{base}', f'kws{dc}.{base}']
+    return [f'kws{dc}.{base}', f'kws{dc}-1.{base}']
 
 
 class Stats:
@@ -625,7 +629,7 @@ async def _bridge_ws(reader, writer, ws: RawWebSocket, label,
         nonlocal up_bytes, up_packets
         try:
             while True:
-                chunk = await reader.read(65536)
+                chunk = await reader.read(131072)
                 if not chunk:
                     break
                 n = len(chunk)
@@ -676,7 +680,7 @@ async def _bridge_ws(reader, writer, ws: RawWebSocket, label,
             except BaseException:
                 pass
         elapsed = asyncio.get_event_loop().time() - start_time
-        log.info("[%s] %s (%s) WS session closed: "
+        log.debug("[%s] %s (%s) WS session closed: "
                  "^%s (%d pkts) v%s (%d pkts) in %.1fs",
                  label, dc_tag, dst_tag,
                  _human_bytes(up_bytes), up_packets,
@@ -776,7 +780,7 @@ async def _tcp_fallback(reader, writer, dst, port, init, label,
         rr, rw = await asyncio.wait_for(
             asyncio.open_connection(dst, port), timeout=10)
     except Exception as exc:
-        log.warning("[%s] TCP fallback connect to %s:%d failed: %s",
+        log.debug("[%s] TCP fallback connect to %s:%d failed: %s",
                     label, dst, port, exc)
         return False
 
@@ -802,10 +806,53 @@ async def _handle_client(reader, writer):
             log.debug("[%s] not SOCKS5 (ver=%d)", label, hdr[0])
             writer.close()
             return
+
+        # Auth check
         nmethods = hdr[1]
-        await reader.readexactly(nmethods)
-        writer.write(b'\x05\x00')  # no-auth
-        await writer.drain()
+        auth_methods = await reader.readexactly(nmethods)
+
+        if not _auth_user and not _auth_password:
+            writer.write(b'\x05\x00')  # no-auth
+            await writer.drain()
+        elif _auth_user and _auth_password:
+            if b'\x02' not in auth_methods:
+                writer.write(b'\x05\xff')
+                await writer.drain()
+                writer.close()
+                return
+            writer.write(b'\x05\x02')  # username/password required
+            log.debug("[%s] auth required", label)
+
+            # Username/password subnegotiation
+            auth_hdr = await asyncio.wait_for(reader.readexactly(1), timeout=10)
+            if auth_hdr[0] != 1:
+                log.debug("[%s] bad auth request ver: %s", label, auth_hdr)
+                writer.write(b'\x01\x01')
+                await writer.drain()
+                writer.close()
+                return
+
+            ulen = (await reader.readexactly(1))[0]
+            client_username = (await reader.readexactly(ulen)).decode('utf-8', errors='ignore')
+            plen = (await reader.readexactly(1))[0]
+            client_password = (await reader.readexactly(plen)).decode('utf-8', errors='ignore')
+
+            if client_username != _auth_user or client_password != _auth_password:
+                log.debug("[%s] auth failed with creds: %s/%s", label, client_username, client_password)
+                writer.write(b'\x01\x01')
+                await writer.drain()
+                writer.close()
+                return
+
+            log.debug("[%s] auth success", label)
+            writer.write(b'\x01\x00')  # Success
+        else:
+            # If have some problems
+            writer.write(b'\x05\xff')
+            await writer.drain()
+            writer.close()
+            return
+
 
         # -- SOCKS5 CONNECT request --
         req = await asyncio.wait_for(reader.readexactly(4), timeout=10)
@@ -834,7 +881,7 @@ async def _handle_client(reader, writer):
         port = _st_H.unpack(await reader.readexactly(2))[0]
 
         if ':' in dst:
-            log.error(
+            log.debug(
                 "[%s] IPv6 address detected: %s:%d — "
                 "IPv6 addresses are not supported; "
                 "disable IPv6 to continue using the proxy.",
@@ -852,7 +899,7 @@ async def _handle_client(reader, writer):
                 rr, rw = await asyncio.wait_for(
                     asyncio.open_connection(dst, port), timeout=10)
             except Exception as exc:
-                log.warning("[%s] passthrough failed to %s: %s: %s", label, dst, type(exc).__name__, str(exc) or "(no message)")
+                log.debug("[%s] passthrough failed to %s: %s: %s", label, dst, type(exc).__name__, str(exc) or "(no message)")
                 writer.write(_socks5_reply(0x05))
                 await writer.drain()
                 writer.close()
@@ -905,7 +952,7 @@ async def _handle_client(reader, writer):
                 init_patched = True
 
         if dc is None or dc not in _dc_opt:
-            log.warning("[%s] unknown DC%s for %s:%d -> TCP passthrough",
+            log.debug("[%s] unknown DC%s for %s:%d -> TCP passthrough",
                         label, dc, dst, port)
             await _tcp_fallback(reader, writer, dst, port, init, label)
             return
@@ -922,14 +969,24 @@ async def _handle_client(reader, writer):
             ok = await _tcp_fallback(reader, writer, dst, port, init,
                                      label, dc=dc, is_media=is_media)
             if ok:
-                log.info("[%s] DC%d%s TCP fallback closed",
+                log.debug("[%s] DC%d%s TCP fallback closed",
+                         label, dc, media_tag)
+            return
+
+        # -- Cooldown check --
+        fail_until = _dc_fail_until.get(dc_key, 0)
+        if now < fail_until:
+            remaining = fail_until - now
+            log.debug("[%s] DC%d%s WS cooldown (%.0fs) -> TCP",
+                      label, dc, media_tag, remaining)
+            ok = await _tcp_fallback(reader, writer, dst, port, init,
+                                     label, dc=dc, is_media=is_media)
+            if ok:
+                log.debug("[%s] DC%d%s TCP fallback closed",
                          label, dc, media_tag)
             return
 
         # -- Try WebSocket via direct connection --
-        fail_until = _dc_fail_until.get(dc_key, 0)
-        ws_timeout = _WS_FAIL_TIMEOUT if now < fail_until else 10.0
-
         domains = _ws_domains(dc, is_media)
         target = _dc_opt[dc]
         ws = None
@@ -938,30 +995,30 @@ async def _handle_client(reader, writer):
 
         ws = await _ws_pool.get(dc, is_media, target, domains)
         if ws:
-            log.info("[%s] DC%d%s (%s:%d) -> pool hit via %s",
+            log.debug("[%s] DC%d%s (%s:%d) -> pool hit via %s",
                      label, dc, media_tag, dst, port, target)
         else:
             for domain in domains:
                 url = f'wss://{domain}/apiws'
-                log.info("[%s] DC%d%s (%s:%d) -> %s via %s",
+                log.debug("[%s] DC%d%s (%s:%d) -> %s via %s",
                          label, dc, media_tag, dst, port, url, target)
                 try:
                     ws = await RawWebSocket.connect(target, domain,
-                                                    timeout=ws_timeout)
+                                                    timeout=10)
                     all_redirects = False
                     break
                 except WsHandshakeError as exc:
                     _stats.ws_errors += 1
                     if exc.is_redirect:
                         ws_failed_redirect = True
-                        log.warning("[%s] DC%d%s got %d from %s -> %s",
+                        log.debug("[%s] DC%d%s got %d from %s -> %s",
                                     label, dc, media_tag,
                                     exc.status_code, domain,
                                     exc.location or '?')
                         continue
                     else:
                         all_redirects = False
-                        log.warning("[%s] DC%d%s WS handshake: %s",
+                        log.debug("[%s] DC%d%s WS handshake: %s",
                                     label, dc, media_tag, exc.status_line)
                 except Exception as exc:
                     _stats.ws_errors += 1
@@ -969,32 +1026,32 @@ async def _handle_client(reader, writer):
                     err_str = str(exc)
                     if ('CERTIFICATE_VERIFY_FAILED' in err_str or
                             'Hostname mismatch' in err_str):
-                        log.warning("[%s] DC%d%s SSL error: %s",
+                        log.debug("[%s] DC%d%s SSL error: %s",
                                     label, dc, media_tag, exc)
                     else:
-                        log.warning("[%s] DC%d%s WS connect failed: %s",
+                        log.debug("[%s] DC%d%s WS connect failed: %s",
                                     label, dc, media_tag, exc)
 
         # -- WS failed -> fallback --
         if ws is None:
             if ws_failed_redirect and all_redirects:
                 _ws_blacklist.add(dc_key)
-                log.warning(
+                log.debug(
                     "[%s] DC%d%s blacklisted for WS (all 302)",
                     label, dc, media_tag)
             elif ws_failed_redirect:
                 _dc_fail_until[dc_key] = now + _DC_FAIL_COOLDOWN
             else:
                 _dc_fail_until[dc_key] = now + _DC_FAIL_COOLDOWN
-                log.info("[%s] DC%d%s WS cooldown for %ds",
+                log.debug("[%s] DC%d%s WS cooldown for %ds",
                          label, dc, media_tag, int(_DC_FAIL_COOLDOWN))
 
-            log.info("[%s] DC%d%s -> TCP fallback to %s:%d",
+            log.debug("[%s] DC%d%s -> TCP fallback to %s:%d",
                      label, dc, media_tag, dst, port)
             ok = await _tcp_fallback(reader, writer, dst, port, init,
                                      label, dc=dc, is_media=is_media)
             if ok:
-                log.info("[%s] DC%d%s TCP fallback closed",
+                log.debug("[%s] DC%d%s TCP fallback closed",
                          label, dc, media_tag)
             return
 
@@ -1018,7 +1075,7 @@ async def _handle_client(reader, writer):
                          splitter=splitter)
 
     except asyncio.TimeoutError:
-        log.warning("[%s] timeout during SOCKS5 handshake", label)
+        log.debug("[%s] timeout during SOCKS5 handshake", label)
     except asyncio.IncompleteReadError:
         log.debug("[%s] client disconnected", label)
     except asyncio.CancelledError:
@@ -1065,6 +1122,7 @@ async def _run(port: int, dc_opt: Dict[int, Optional[str]],
     log.info("=" * 60)
     log.info("  Configure Telegram Desktop:")
     log.info("    SOCKS5 proxy -> %s:%d  (no user/pass)", host, port)
+    log.info(f"    tg://socks/?server={host}&port={port}&user={quote(_auth_user)}&pass={quote(_auth_password)}")
     log.info("=" * 60)
 
     async def log_stats():
@@ -1073,7 +1131,7 @@ async def _run(port: int, dc_opt: Dict[int, Optional[str]],
             bl = ', '.join(
                 f'DC{d}{"m" if m else ""}'
                 for d, m in sorted(_ws_blacklist)) or 'none'
-            log.info("stats: %s | ws_bl: %s", _stats.summary(), bl)
+            log.debug("stats: %s | ws_bl: %s", _stats.summary(), bl)
 
     asyncio.create_task(log_stats())
 
@@ -1099,6 +1157,20 @@ async def _run(port: int, dc_opt: Dict[int, Optional[str]],
         except asyncio.CancelledError:
             pass
     _server_instance = None
+
+
+def set_auth_credentials(username: str, password: str):
+    """Validate 'user' and 'password': both are specified, or both aren't"""
+    empty_user = username is None or not str(username).strip()
+    empty_pass = password is None or not str(password).strip()
+
+    if empty_user != empty_pass:
+        raise ValueError(
+            "Both --username (-u) and --password (-P) must be specified together, or neither should be used")
+
+    global _auth_user, _auth_password
+    _auth_user = username
+    _auth_password = password
 
 
 def parse_dc_ip_list(dc_ip_list: List[str]) -> Dict[int, str]:
@@ -1127,12 +1199,16 @@ def run_proxy(port: int, dc_opt: Dict[int, str],
 def main():
     ap = argparse.ArgumentParser(
         description='Telegram Desktop WebSocket Bridge Proxy')
-    ap.add_argument('--port', type=int, default=DEFAULT_PORT,
-                    help=f'Listen port (default {DEFAULT_PORT})')
     ap.add_argument('--host', type=str, default='127.0.0.1',
                     help='Listen host (default 127.0.0.1)')
+    ap.add_argument('--port', type=int, default=DEFAULT_PORT,
+                    help=f'Listen port (default {DEFAULT_PORT})')
+    ap.add_argument('-u', '--user', type=str, default='',
+                    help='User for proxy')
+    ap.add_argument('-P', '--password', type=str, default='',
+                    help='Password for proxy')
     ap.add_argument('--dc-ip', metavar='DC:IP', action='append',
-                    default=[],
+                    default=['2:149.154.167.220', '4:149.154.167.220'],
                     help='Target IP for a DC, e.g. --dc-ip 1:149.154.175.205'
                          ' --dc-ip 2:149.154.167.220')
     ap.add_argument('-v', '--verbose', action='store_true',
@@ -1149,11 +1225,9 @@ def main():
                     help='WS connection pool size per DC (default 4, min 0)')
     args = ap.parse_args()
 
-    if not args.dc_ip:
-        args.dc_ip = ['2:149.154.167.220', '4:149.154.167.220']
-
     try:
         dc_opt = parse_dc_ip_list(args.dc_ip)
+        set_auth_credentials(args.user, args.password)
     except ValueError as e:
         log.error(str(e))
         sys.exit(1)
