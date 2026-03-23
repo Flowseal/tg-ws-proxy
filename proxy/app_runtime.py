@@ -17,6 +17,13 @@ DEFAULT_CONFIG = {
     "port": 1080,
     "host": "127.0.0.1",
     "dc_ip": ["2:149.154.167.220", "4:149.154.167.220"],
+    "upstream_mode": "telegram_ws_direct",
+    "relay_url": "",
+    "relay_token": "",
+    "direct_ws_timeout_seconds": 10.0,
+    "log_max_mb": 5,
+    "buf_kb": 256,
+    "pool_size": 4,
     "verbose": False,
     "log_max_mb": 5,
     "buf_kb": 256,
@@ -125,7 +132,11 @@ class ProxyAppRuntime:
             self.on_error(text)
 
     def _run_proxy_thread(self, port: int, dc_opt: Dict[int, str],
-                          host: str = "127.0.0.1"):
+                          host: str = "127.0.0.1",
+                          upstream_mode: str = "telegram_ws_direct",
+                          relay_url: str = "",
+                          relay_token: str = "",
+                          direct_ws_timeout_seconds: float = 10.0):
         loop = _asyncio.new_event_loop()
         _asyncio.set_event_loop(loop)
         stop_ev = _asyncio.Event()
@@ -133,7 +144,12 @@ class ProxyAppRuntime:
 
         try:
             loop.run_until_complete(
-                self.run_proxy(port, dc_opt, stop_event=stop_ev, host=host))
+                self.run_proxy(
+                    port, dc_opt, stop_event=stop_ev, host=host,
+                    upstream_mode=upstream_mode,
+                    relay_url=relay_url or None,
+                    relay_token=relay_token,
+                    direct_ws_timeout_seconds=direct_ws_timeout_seconds))
         except Exception as exc:
             self.log.error("Proxy thread crashed: %s", exc)
             if ("10048" in str(exc) or
@@ -157,6 +173,15 @@ class ProxyAppRuntime:
         port = active_cfg.get("port", self.default_config["port"])
         host = active_cfg.get("host", self.default_config["host"])
         dc_ip_list = active_cfg.get("dc_ip", self.default_config["dc_ip"])
+        upstream_mode = active_cfg.get(
+            "upstream_mode", self.default_config["upstream_mode"])
+        relay_url = active_cfg.get(
+            "relay_url", self.default_config["relay_url"])
+        relay_token = active_cfg.get(
+            "relay_token", self.default_config["relay_token"])
+        direct_ws_timeout_seconds = active_cfg.get(
+            "direct_ws_timeout_seconds",
+            self.default_config["direct_ws_timeout_seconds"])
         buf_kb = active_cfg.get("buf_kb", self.default_config["buf_kb"])
         pool_size = active_cfg.get(
             "pool_size", self.default_config["pool_size"])
@@ -174,7 +199,15 @@ class ProxyAppRuntime:
         tg_ws_proxy._WS_POOL_SIZE = max(0, pool_size)
         self._proxy_thread = self.thread_factory(
             target=self._run_proxy_thread,
-            args=(port, dc_opt, host),
+            args=(
+                port,
+                dc_opt,
+                host,
+                upstream_mode,
+                relay_url,
+                relay_token,
+                direct_ws_timeout_seconds,
+            ),
             daemon=True,
             name="proxy")
         self._proxy_thread.start()
