@@ -21,10 +21,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: "pip"
@@ -42,7 +42,7 @@ jobs:
         run: mv dist/TgWsProxy.exe dist/TgWsProxy_windows.exe
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: TgWsProxy
           path: |
@@ -52,10 +52,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Python 3.8 (last version supporting Win7)
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.8"
           architecture: "x64"
@@ -74,7 +74,7 @@ jobs:
         run: mv dist/TgWsProxy.exe dist/TgWsProxy_windows_7_64bit.exe
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: TgWsProxy-win7-64bit
           path: dist/TgWsProxy_windows_7_64bit.exe
@@ -83,7 +83,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Python 3.8 32-bit (Win7 x86)
         uses: actions/setup-python@v5
@@ -105,7 +105,7 @@ jobs:
         run: mv dist/TgWsProxy.exe dist/TgWsProxy_windows_7_32bit.exe
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: TgWsProxy-win7-32bit
           path: dist/TgWsProxy_windows_7_32bit.exe
@@ -114,7 +114,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install universal2 Python
         run: |
@@ -249,7 +249,7 @@ jobs:
           rm -rf "$DMG_TEMP"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: TgWsProxy-macOS
           path: dist/TgWsProxy_macos_universal.dmg
@@ -258,7 +258,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install system dependencies
         run: |
@@ -341,7 +341,7 @@ jobs:
             "dist/TgWsProxy_linux_amd64.deb"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: TgWsProxy-linux
           path: |
@@ -354,31 +354,31 @@ jobs:
     if: ${{ github.event.inputs.make_release == 'true' }}
     steps:
       - name: Download main build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: TgWsProxy
           path: dist
 
       - name: Download Win7 (64bit) build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: TgWsProxy-win7-64bit
           path: dist
 
       - name: Download Win7 (32bit) build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: TgWsProxy-win7-32bit
           path: dist
 
       - name: Download macOS build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: TgWsProxy-macOS
           path: dist
 
       - name: Download Linux build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: TgWsProxy-linux
           path: dist
