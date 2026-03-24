@@ -1,30 +1,32 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.egg-info/
-dist/
-build/
-*.spec.bak
-
-# PyInstaller
-*.manifest
-*.log
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-Thumbs.db
-Desktop.ini
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
 .DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+/app/build/
 
-# Project-specific (not for the repo)
-scan_ips.py
-scan.txt
-AyuGramDesktop-dev/
-tweb-master/
-/icon.icns
+# Go files
+/vendor/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.cgo1.go
+*.cgo2.c
+
+# Android specific
+*.jks
+*.keystore
+local.properties
