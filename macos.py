@@ -356,8 +356,9 @@ def restart_proxy():
 # Menu callbacks
 
 def _on_open_in_telegram(_=None):
+    host = _config.get("host", DEFAULT_CONFIG["host"])
     port = _config.get("port", DEFAULT_CONFIG["port"])
-    url = f"tg://socks?server=127.0.0.1&port={port}"
+    url = f"tg://socks?server={host}&port={port}"
     log.info("Opening %s", url)
     try:
         result = subprocess.call(['open', url])
