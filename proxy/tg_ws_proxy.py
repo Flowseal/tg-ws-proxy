@@ -497,7 +497,7 @@ class Stats:
         self.connections_ws = 0
         self.connections_tcp_fallback = 0
         self.connections_http_rejected = 0
-        self.connections_passthrough = 0
+        self.connections_not_tg_rejected = 0
         self.ws_errors = 0
         self.bytes_up = 0
         self.bytes_down = 0
@@ -508,7 +508,7 @@ class Stats:
         return (f"total={self.connections_total} ws={self.connections_ws} "
                 f"tcp_fb={self.connections_tcp_fallback} "
                 f"http_skip={self.connections_http_rejected} "
-                f"pass={self.connections_passthrough} "
+                f"non_tg_skip={self.connections_not_tg_rejected} "
                 f"err={self.ws_errors} "
                 f"pool={self.pool_hits}/{self.pool_hits+self.pool_misses} "
                 f"up={_human_bytes(self.bytes_up)} "
@@ -895,34 +895,13 @@ async def _handle_client(reader, writer):
             writer.close()
             return
 
-        # -- Non-Telegram IP -> direct passthrough --
+        # -- Non-Telegram IP -> drop connection --
         if not _is_telegram_ip(dst):
-            _stats.connections_passthrough += 1
-            log.debug("[%s] passthrough -> %s:%d", label, dst, port)
-            try:
-                rr, rw = await asyncio.wait_for(
-                    asyncio.open_connection(dst, port), timeout=10)
-            except Exception as exc:
-                log.warning("[%s] passthrough failed to %s: %s: %s", label, dst, type(exc).__name__, str(exc) or "(no message)")
-                writer.write(_socks5_reply(0x05))
-                await writer.drain()
-                writer.close()
-                return
-
-            writer.write(_socks5_reply(0x00))
+            _stats.connections_not_tg_rejected += 1
+            log.error("[%s] Non-Telegram IP blocked -> %s:%d", label, dst, port)
+            writer.write(_socks5_reply(0x05))
             await writer.drain()
-
-            tasks = [asyncio.create_task(_pipe(reader, rw)),
-                     asyncio.create_task(_pipe(rr, writer))]
-            await asyncio.wait(tasks,
-                               return_when=asyncio.FIRST_COMPLETED)
-            for t in tasks:
-                t.cancel()
-            for t in tasks:
-                try:
-                    await t
-                except BaseException:
-                    pass
+            writer.close()
             return
 
         # -- Telegram DC: accept SOCKS, read init --
