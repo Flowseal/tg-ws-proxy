@@ -9,8 +9,8 @@
 -keep interface com.sun.jna.Library { *; }
 
 # Keep our proxy library interface and NativeProxy object
--keep class com.example.tgwsproxy.NativeProxy { *; }
--keep interface com.example.tgwsproxy.ProxyLibrary { *; }
+-keep class com.amurcanov.tgwsproxy.NativeProxy { *; }
+-keep interface com.amurcanov.tgwsproxy.ProxyLibrary { *; }
 -keepclassmembers class * extends com.sun.jna.Library {
     <methods>;
 }
