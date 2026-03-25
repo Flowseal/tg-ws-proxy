@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.tgwsproxy"
+    namespace = "com.amurcanov.tgwsproxy"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.tgwsproxy"
+        applicationId = "com.amurcanov.tgwsproxy"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
@@ -25,17 +25,21 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            storeFile = file("release.jks")
-            storePassword = "password"
-            keyAlias = "release"
-            keyPassword = "password"
+        val keystoreFile = file("amurcanov.jks")
+        if (keystoreFile.exists()) {
+            create("release") {
+                storeFile = keystoreFile
+                // Берем пароли из локальных переменных среды или файла
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "flowseal-fork"
+                keyAlias = "amurcanov"
+                keyPassword = System.getenv("KEY_PASSWORD") ?: "flowseal-fork"
+            }
         }
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
