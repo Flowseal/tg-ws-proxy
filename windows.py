@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import ipaddress
 import json
 import logging
 import logging.handlers
@@ -11,14 +12,29 @@ import sys
 import threading
 import time
 import webbrowser
-import pyperclip
 import asyncio as _asyncio
 from pathlib import Path
 from typing import Dict, Optional
 
-import pystray
-import customtkinter as ctk
-from PIL import Image, ImageDraw, ImageFont
+try:
+    import pyperclip
+except ImportError:
+    pyperclip = None
+
+try:
+    import pystray
+except ImportError:
+    pystray = None
+
+try:
+    import customtkinter as ctk
+except ImportError:
+    ctk = None
+
+try:
+    from PIL import Image, ImageDraw, ImageFont
+except ImportError:
+    Image = ImageDraw = ImageFont = None
 
 import proxy.tg_ws_proxy as tg_ws_proxy
 from ui.ctk_tray_ui import (
@@ -68,6 +84,15 @@ _lock_file_path: Optional[Path] = None
 
 log = logging.getLogger("tg-ws-tray")
 
+_user32 = ctypes.windll.user32
+_user32.MessageBoxW.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_wchar_p,
+    ctypes.c_wchar_p,
+    ctypes.c_uint,
+]
+_user32.MessageBoxW.restype = ctypes.c_int
+
 
 def _same_process(lock_meta: dict, proc: psutil.Process) -> bool:
     try:
@@ -78,9 +103,18 @@ def _same_process(lock_meta: dict, proc: psutil.Process) -> bool:
     except Exception:
         return False
 
+    try:
+        for arg in proc.cmdline():
+            if "windows.py" in arg:
+                return True
+    except Exception:
+        pass
+
     frozen = bool(getattr(sys, "frozen", False))
     if frozen:
-        return os.path.basename(sys.executable) == proc.name()
+        return (
+            os.path.basename(sys.executable).lower() == proc.name().lower()
+        )
 
     return False
 
@@ -344,7 +378,11 @@ def stop_proxy():
         loop, stop_ev = _async_stop
         loop.call_soon_threadsafe(stop_ev.set)
         if _proxy_thread:
-            _proxy_thread.join(timeout=2)
+            _proxy_thread.join(timeout=5)
+            if _proxy_thread.is_alive():
+                log.warning(
+                    "Proxy thread did not finish within timeout; "
+                    "the process may still exit shortly")
     _proxy_thread = None
     log.info("Proxy stopped")
 
@@ -357,11 +395,11 @@ def restart_proxy():
 
 
 def _show_error(text: str, title: str = "TG WS Proxy — Ошибка"):
-    ctypes.windll.user32.MessageBoxW(0, text, title, 0x10)
+    _user32.MessageBoxW(None, text, title, 0x10)
 
 
 def _show_info(text: str, title: str = "TG WS Proxy"):
-    ctypes.windll.user32.MessageBoxW(0, text, title, 0x40)
+    _user32.MessageBoxW(None, text, title, 0x40)
 
 
 def _on_open_in_telegram(icon=None, item=None):
@@ -375,6 +413,11 @@ def _on_open_in_telegram(icon=None, item=None):
             raise RuntimeError("webbrowser.open returned False")
     except Exception:
         log.info("Browser open failed, copying to clipboard")
+        if pyperclip is None:
+            _show_error(
+                "Не удалось открыть Telegram автоматически.\n\n"
+                f"Установите пакет pyperclip для копирования в буфер или откройте вручную:\n{url}")
+            return
         try:
             pyperclip.copy(url)
             _show_info(
@@ -545,8 +588,15 @@ def _has_ipv6_enabled() -> bool:
         addrs = _sock.getaddrinfo(_sock.gethostname(), None, _sock.AF_INET6)
         for addr in addrs:
             ip = addr[4][0]
-            if ip and not ip.startswith('::1') and not ip.startswith('fe80::1'):
-                return True
+            if not ip or ip.startswith("::1"):
+                continue
+            try:
+                if ipaddress.IPv6Address(ip).is_link_local:
+                    continue
+            except ValueError:
+                if ip.startswith("fe80:"):
+                    continue
+            return True
     except Exception:
         pass
     try:
@@ -621,9 +671,10 @@ def run_tray():
     log.info("Config: %s", _config)
     log.info("Log file: %s", LOG_FILE)
 
-    if pystray is None or Image is None:
-        log.error("pystray or Pillow not installed; "
-                  "running in console mode")
+    if pystray is None or Image is None or ctk is None:
+        log.error(
+            "pystray, Pillow or customtkinter not installed; "
+            "running in console mode")
         start_proxy()
         try:
             while True:
