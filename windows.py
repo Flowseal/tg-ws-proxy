@@ -38,6 +38,7 @@ except ImportError:
 
 import proxy.tg_ws_proxy as tg_ws_proxy
 from proxy import __version__
+from utils.default_config import default_tray_config
 from ui.ctk_tray_ui import (
     install_tray_config_buttons,
     install_tray_config_form,
@@ -65,16 +66,7 @@ FIRST_RUN_MARKER = APP_DIR / ".first_run_done"
 IPV6_WARN_MARKER = APP_DIR / ".ipv6_warned"
 
 
-DEFAULT_CONFIG = {
-    "port": 1080,
-    "host": "127.0.0.1",
-    "dc_ip": ["2:149.154.167.220", "4:149.154.167.220"],
-    "verbose": False,
-    "autostart": False,
-    "log_max_mb": 5,
-    "buf_kb": 256,
-    "pool_size": 4,
-}
+DEFAULT_CONFIG = default_tray_config()
 
 
 _proxy_thread: Optional[threading.Thread] = None
@@ -404,6 +396,50 @@ def _show_info(text: str, title: str = "TG WS Proxy"):
     _user32.MessageBoxW(None, text, title, 0x40)
 
 
+def _ask_open_release_page(latest_version: str, url: str) -> bool:
+    """Win32 Yes/No: открыть страницу релиза."""
+    MB_YESNO = 0x4
+    MB_ICONQUESTION = 0x20
+    IDYES = 6
+    text = (
+        f"Доступна новая версия: {latest_version}\n\n"
+        f"Открыть страницу релиза в браузере?"
+    )
+    r = _user32.MessageBoxW(
+        None,
+        text,
+        "TG WS Proxy — обновление",
+        MB_YESNO | MB_ICONQUESTION,
+    )
+    return r == IDYES
+
+
+def _maybe_notify_update_async():
+    """
+    Фоновая проверка GitHub Releases и уведомление (не блокирует трей).
+    """
+    def _work():
+        time.sleep(1.5)
+        if _exiting:
+            return
+        if not _config.get("check_updates", True):
+            return
+        try:
+            from utils.update_check import RELEASES_PAGE_URL, get_status, run_check
+            run_check(__version__)
+            st = get_status()
+            if not st.get("has_update"):
+                return
+            url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
+            ver = st.get("latest") or "?"
+            if _ask_open_release_page(str(ver), url):
+                webbrowser.open(url)
+        except Exception as exc:
+            log.debug("Update check failed: %s", exc)
+
+    threading.Thread(target=_work, daemon=True, name="update-check").start()
+
+
 def _on_open_in_telegram(icon=None, item=None):
     host = _config.get("host", DEFAULT_CONFIG["host"])
     port = _config.get("port", DEFAULT_CONFIG["port"])
@@ -704,6 +740,8 @@ def run_tray():
         return
 
     start_proxy()
+
+    _maybe_notify_update_async()
 
     _show_first_run()
     _check_ipv6_warning()

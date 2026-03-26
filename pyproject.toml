@@ -62,7 +62,7 @@ Source = "https://github.com/Flowseal/tg-ws-proxy"
 Issues = "https://github.com/Flowseal/tg-ws-proxy/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["proxy", "ui"]
+packages = ["proxy", "ui", "utils"]
 
 [tool.hatch.build.force-include]
 "windows.py" = "windows.py"

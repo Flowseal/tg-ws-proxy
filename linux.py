@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import threading
+import webbrowser
 import time
 from pathlib import Path
 from typing import Dict, Optional
@@ -20,6 +21,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 import proxy.tg_ws_proxy as tg_ws_proxy
 from proxy import __version__
+from utils.default_config import default_tray_config
 from ui.ctk_tray_ui import (
     install_tray_config_buttons,
     install_tray_config_form,
@@ -44,15 +46,7 @@ FIRST_RUN_MARKER = APP_DIR / ".first_run_done"
 IPV6_WARN_MARKER = APP_DIR / ".ipv6_warned"
 
 
-DEFAULT_CONFIG = {
-    "port": 1080,
-    "host": "127.0.0.1",
-    "dc_ip": ["2:149.154.167.220", "4:149.154.167.220"],
-    "verbose": False,
-    "log_max_mb": 5,
-    "buf_kb": 256,
-    "pool_size": 4,
-}
+DEFAULT_CONFIG = default_tray_config()
 
 
 _proxy_thread: Optional[threading.Thread] = None
@@ -350,6 +344,48 @@ def _show_info(text: str, title: str = "TG WS Proxy"):
     root.destroy()
 
 
+def _ask_yes_no_dialog(text: str, title: str = "TG WS Proxy") -> bool:
+    import tkinter as _tk
+    from tkinter import messagebox as _mb
+
+    root = _tk.Tk()
+    root.withdraw()
+    try:
+        root.attributes("-topmost", True)
+    except Exception:
+        pass
+    r = _mb.askyesno(title, text, parent=root)
+    root.destroy()
+    return bool(r)
+
+
+def _maybe_notify_update_async():
+    def _work():
+        time.sleep(1.5)
+        if _exiting:
+            return
+        if not _config.get("check_updates", True):
+            return
+        try:
+            from utils.update_check import RELEASES_PAGE_URL, get_status, run_check
+            run_check(__version__)
+            st = get_status()
+            if not st.get("has_update"):
+                return
+            url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
+            ver = st.get("latest") or "?"
+            text = (
+                f"Доступна новая версия: {ver}\n\n"
+                f"Открыть страницу релиза в браузере?"
+            )
+            if _ask_yes_no_dialog(text, "TG WS Proxy — обновление"):
+                webbrowser.open(url)
+        except Exception as exc:
+            log.debug("Update check failed: %s", exc)
+
+    threading.Thread(target=_work, daemon=True, name="update-check").start()
+
+
 def _on_open_in_telegram(icon=None, item=None):
     host = _config.get("host", DEFAULT_CONFIG["host"])
     port = _config.get("port", DEFAULT_CONFIG["port"])
@@ -623,6 +659,8 @@ def run_tray():
         return
 
     start_proxy()
+
+    _maybe_notify_update_async()
 
     _show_first_run()
     _check_ipv6_warning()

@@ -1,0 +1,9 @@
+# macOS, Python 3.9+ (без customtkinter/pystray — нативное меню rumps)
+# Установка: pip install -r requirements/macos.txt
+# Затем из корня репозитория: pip install -e .
+
+pyperclip==1.9.0
+psutil==7.0.0
+cryptography==46.0.5
+Pillow==12.1.0
+rumps==0.4.0

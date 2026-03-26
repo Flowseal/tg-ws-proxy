@@ -5,11 +5,13 @@
 
 from __future__ import annotations
 
+import webbrowser
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import proxy.tg_ws_proxy as tg_ws_proxy
 from proxy import __version__
+from utils.update_check import RELEASES_PAGE_URL, get_status
 
 from ui.ctk_theme import (
     FIRST_RUN_FRAME_PAD,
@@ -51,6 +53,10 @@ _TIP_LOG_MB = (
 _TIP_AUTOSTART = (
     "Запускать TG WS Proxy при входе в Windows. "
     "Если вы переместите программу в другую папку, запись автозапуска может сброситься."
+)
+_TIP_CHECK_UPDATES = (
+    "При запуске запрашивать с GitHub информацию о последнем релизе. "
+    "При появлении новой версии можно открыть страницу загрузки."
 )
 _TIP_SAVE = "Сохранить настройки в файл. После сохранения можно перезапустить прокси."
 _TIP_CANCEL = "Закрыть окно без сохранения изменений."
@@ -121,6 +127,7 @@ class TrayConfigFormWidgets:
     adv_entries: List[Any]
     adv_keys: Tuple[str, ...]
     autostart_var: Optional[Any]
+    check_updates_var: Optional[Any]
 
 
 def install_tray_config_form(
@@ -291,6 +298,71 @@ def install_tray_config_form(
     adv_entries = list(adv_frame.winfo_children())
     adv_keys = ("buf_kb", "pool_size", "log_max_mb")
 
+    upd_inner = _config_section(ctk, frame, theme, "Обновления")
+    st = get_status()
+    check_updates_var = ctk.BooleanVar(
+        value=bool(
+            cfg.get("check_updates", default_config.get("check_updates", True))
+        )
+    )
+    upd_cb = ctk.CTkCheckBox(
+        upd_inner,
+        text="Проверять обновления при запуске",
+        variable=check_updates_var,
+        font=(theme.ui_font_family, 13),
+        text_color=theme.text_primary,
+        fg_color=theme.tg_blue,
+        hover_color=theme.tg_blue_hover,
+        corner_radius=6,
+        border_width=2,
+        border_color=theme.field_border,
+    )
+    upd_cb.pack(anchor="w", pady=(0, 6))
+    attach_ctk_tooltip(upd_cb, _TIP_CHECK_UPDATES)
+
+    if st.get("error"):
+        upd_status = "Не удалось связаться с GitHub. Проверьте сеть."
+    elif not st.get("checked"):
+        upd_status = "Статус появится после фоновой проверки при запуске."
+    elif st.get("has_update") and st.get("latest"):
+        upd_status = (
+            f"На GitHub доступна версия {st['latest']} "
+            f"(у вас {__version__})."
+        )
+    elif st.get("ahead_of_release") and st.get("latest"):
+        upd_status = (
+            f"У вас {__version__} — новее последнего релиза на GitHub "
+            f"({st['latest']})."
+        )
+    else:
+        upd_status = "Установлена последняя известная версия с GitHub."
+
+    ctk.CTkLabel(
+        upd_inner,
+        text=upd_status,
+        font=(theme.ui_font_family, 11),
+        text_color=theme.text_secondary,
+        anchor="w",
+        justify="left",
+        wraplength=inner_w,
+    ).pack(anchor="w", pady=(0, 8))
+
+    rel_url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
+    open_rel_btn = ctk.CTkButton(
+        upd_inner,
+        text="Открыть страницу релиза",
+        height=32,
+        font=(theme.ui_font_family, 13),
+        corner_radius=8,
+        fg_color=theme.field_bg,
+        hover_color=theme.field_border,
+        text_color=theme.text_primary,
+        border_width=1,
+        border_color=theme.field_border,
+        command=lambda u=rel_url: webbrowser.open(u),
+    )
+    open_rel_btn.pack(anchor="w")
+
     autostart_var = None
     if show_autostart:
         sys_inner = _config_section(
@@ -330,6 +402,7 @@ def install_tray_config_form(
         adv_entries=adv_entries,
         adv_keys=adv_keys,
         autostart_var=autostart_var,
+        check_updates_var=check_updates_var,
     )
 
 
@@ -399,6 +472,8 @@ def validate_config_form(
         )
 
     merge_adv_from_form(widgets, new_cfg, default_config)
+    if widgets.check_updates_var is not None:
+        new_cfg["check_updates"] = bool(widgets.check_updates_var.get())
     return new_cfg
 
 

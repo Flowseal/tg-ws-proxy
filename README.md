@@ -40,9 +40,11 @@ Telegram Desktop → SOCKS5 (127.0.0.1:1080) → TG WS Proxy → WSS → Telegra
 
 - **Открыть в Telegram** — автоматически настроить прокси через `tg://socks` ссылку
 - **Перезапустить прокси** — перезапуск без выхода из приложения
-- **Настройки...** — GUI-редактор конфигурации
+- **Настройки...** — GUI-редактор конфигурации (в т.ч. версия приложения, опциональная проверка обновлений с GitHub)
 - **Открыть логи** — открыть файл логов
 - **Выход** — остановить прокси и закрыть приложение
+
+При первом запуске после старта может появиться запрос об открытии страницы релиза, если на GitHub вышла новая версия (отключается в настройках).
 
 ### macOS
 
@@ -82,6 +84,11 @@ chmod +x TgWsProxy_linux_amd64
 
 ## Установка из исходников
 
+Список пакетов `pip` с версиями **по ОС** (Windows/Linux/macOS, отдельно для Python 3.8 на Windows) — в каталоге [`requirements/`](requirements/README.md). Кратко:
+
+- **Linux (трей):** системный пакет Tcl/Tk для `tkinter`, например `python3-tk` (Debian/Ubuntu).
+- Дальше: `pip install -r requirements/<файл>.txt` и `pip install -e .` из корня репозитория.
+
 ### Консольный proxy
 
 Для запуска только SOCKS5/WebSocket proxy без tray-интерфейса достаточно базовой установки:
@@ -94,6 +101,7 @@ tg-ws-proxy
 ### Windows 7/10+
 
 ```bash
+pip install -r requirements/windows-py39plus.txt
 pip install -e .
 tg-ws-proxy-tray-win
 ```
@@ -101,6 +109,7 @@ tg-ws-proxy-tray-win
 ### macOS
 
 ```bash
+pip install -r requirements/macos.txt
 pip install -e .
 tg-ws-proxy-tray-macos
 ```
@@ -108,6 +117,7 @@ tg-ws-proxy-tray-macos
 ### Linux
 
 ```bash
+pip install -r requirements/linux.txt
 pip install -e .
 tg-ws-proxy-tray-linux
 ```
@@ -179,14 +189,21 @@ Tray-приложение хранит данные в:
 
 ```json
 {
+  "host": "127.0.0.1",
   "port": 1080,
   "dc_ip": [
     "2:149.154.167.220",
     "4:149.154.167.220"
   ],
-  "verbose": false
+  "verbose": false,
+  "buf_kb": 256,
+  "pool_size": 4,
+  "log_max_mb": 5.0,
+  "check_updates": true
 }
 ```
+
+Ключ **`check_updates`** — при `true` при запросе к GitHub сравнивается версия с последним релизом (только уведомление и ссылка на страницу загрузки). На Windows в конфиге может быть **`autostart`** (автозапуск при входе в систему).
 
 ## Автоматическая сборка
 
