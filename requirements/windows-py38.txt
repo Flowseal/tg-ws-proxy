@@ -1,9 +1,0 @@
-# Windows, Python 3.8 (устаревшие пины из pyproject.toml)
-# Установка: pip install -r requirements/windows-py38.txt
-
-pyperclip==1.9.0
-psutil==5.9.8
-cryptography==41.0.7
-Pillow==10.4.0
-customtkinter==5.2.2
-pystray==0.19.5

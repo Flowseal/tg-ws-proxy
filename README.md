@@ -84,11 +84,6 @@ chmod +x TgWsProxy_linux_amd64
 
 ## Установка из исходников
 
-Список пакетов `pip` с версиями **по ОС** (Windows/Linux/macOS, отдельно для Python 3.8 на Windows) — в каталоге [`requirements/`](requirements/README.md). Кратко:
-
-- **Linux (трей):** системный пакет Tcl/Tk для `tkinter`, например `python3-tk` (Debian/Ubuntu).
-- Дальше: `pip install -r requirements/<файл>.txt` и `pip install -e .` из корня репозитория.
-
 ### Консольный proxy
 
 Для запуска только SOCKS5/WebSocket proxy без tray-интерфейса достаточно базовой установки:
@@ -101,7 +96,6 @@ tg-ws-proxy
 ### Windows 7/10+
 
 ```bash
-pip install -r requirements/windows-py39plus.txt
 pip install -e .
 tg-ws-proxy-tray-win
 ```
@@ -109,7 +103,6 @@ tg-ws-proxy-tray-win
 ### macOS
 
 ```bash
-pip install -r requirements/macos.txt
 pip install -e .
 tg-ws-proxy-tray-macos
 ```
@@ -117,7 +110,6 @@ tg-ws-proxy-tray-macos
 ### Linux
 
 ```bash
-pip install -r requirements/linux.txt
 pip install -e .
 tg-ws-proxy-tray-linux
 ```
