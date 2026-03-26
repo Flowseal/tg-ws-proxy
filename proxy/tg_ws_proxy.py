@@ -388,43 +388,31 @@ def _is_http_transport(data: bytes) -> bool:
             data[:5] == b'HEAD ' or data[:8] == b'OPTIONS ')
 
 
-def _dc_from_init(data: bytes) -> Tuple[Optional[int], bool]:
-    """
-    Extract DC ID from the 64-byte MTProto obfuscation init packet.
-    Returns (dc_id, is_media).
-    """
-    try:
-        cipher = Cipher(algorithms.AES(data[8:40]), modes.CTR(data[40:56]))
-        encryptor = cipher.encryptor()
-        keystream = encryptor.update(_ZERO_64)
-        plain = (int.from_bytes(data[56:64], 'big') ^ int.from_bytes(keystream[56:64], 'big')).to_bytes(8, 'big')
-        proto, dc_raw = _st_Ih.unpack(plain[:6])
-        log.debug("dc_from_init: proto=0x%08X dc_raw=%d plain=%s",
-                  proto, dc_raw, plain.hex())
-        if proto in _VALID_PROTOS:
-            dc = abs(dc_raw)
-            if 1 <= dc <= 5 or dc == 203:
-                return dc, (dc_raw < 0)
-    except Exception as exc:
-        log.debug("DC extraction failed: %s", exc)
-    return None, False
-
-
-def _proto_from_init(data: bytes) -> Optional[int]:
-    """Extract MTProto transport marker from the obfuscated init packet."""
+def _dc_from_init(data: bytes):
     try:
         cipher = Cipher(algorithms.AES(data[8:40]), modes.CTR(data[40:56]))
         encryptor = cipher.encryptor()
         keystream = encryptor.update(_ZERO_64)
         plain = (int.from_bytes(data[56:64], 'big') ^
                  int.from_bytes(keystream[56:64], 'big')).to_bytes(8, 'big')
-        proto = _st_I_le.unpack(plain[:4])[0]
+        
+        proto, dc_raw = _st_Ih.unpack(plain[:6])
+        
+        log.debug("dc_from_init: proto=0x%08X dc_raw=%d plain=%s",
+                  proto, dc_raw, plain.hex())
+        
         if proto in _VALID_PROTOS:
-            return proto
+            dc = abs(dc_raw)
+            if 1 <= dc <= 5 or dc == 203:
+                return dc, (dc_raw < 0), proto
+            # IMPORTANT: If the protocol is valid, but dc_id is invalid (Android),
+            # we must return the proto so that the Splitter knows the protocol type
+            # and can split packets correctly, even if DC extraction failed.
+            return None, False, proto
     except Exception as exc:
-        log.debug("Transport extraction failed: %s", exc)
-    return None
-
+        log.debug("DC extraction failed: %s", exc)
+        
+    return None, False, None
 
 def _patch_init_dc(data: bytes, dc: int) -> bytes:
     """
@@ -970,14 +958,16 @@ async def _handle_client(reader, writer):
             return
 
         # -- Extract DC ID --
-        proto = _proto_from_init(init)
-        dc, is_media = _dc_from_init(init)
+        dc, is_media, proto = _dc_from_init(init)
         
+        init_patched = False
         # Android (may be ios too) with useSecret=0 has random dc_id bytes — patch it
         if dc is None and dst in _IP_TO_DC:
             dc, is_media = _IP_TO_DC.get(dst)
             if dc in _dc_opt:
-                init = _patch_init_dc(init, dc if is_media else -dc)
+                # FIX: Negative DC for media connections, so the WS pool can distinguish them and use the correct domains.
+                init = _patch_init_dc(init, -dc if is_media else dc)
+                init_patched = True
 
         if dc is None or dc not in _dc_opt:
             log.warning("[%s] unknown DC%s for %s:%d -> TCP passthrough",
@@ -1078,11 +1068,15 @@ async def _handle_client(reader, writer):
         _stats.connections_ws += 1
 
         splitter = None
-        if proto in _VALID_PROTOS:
+
+        # Fix: Let the Splitter be As Is turned off for the main PC stream (as Flowseal asked in PR #415),
+        # but STRICTLY turning it On for media-connections (is_media), so as the big files don't get fragmented by the TCP socket.
+        if proto is not None and (init_patched or is_media or proto != _PROTO_INTERMEDIATE):
             try:
                 splitter = _MsgSplitter(init, proto)
+                log.debug("[%s] MsgSplitter activated for proto 0x%08X", label, proto)
             except Exception:
-                pass
+                 pass
 
         # Send the buffered init packet
         await ws.send(init)
