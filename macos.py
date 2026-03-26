@@ -30,6 +30,7 @@ except ImportError:
     pyperclip = None
 
 import proxy.tg_ws_proxy as tg_ws_proxy
+from proxy import __version__
 
 APP_NAME = "TgWsProxy"
 APP_DIR = Path.home() / "Library" / "Application Support" / APP_NAME
@@ -616,6 +617,9 @@ class TgWsProxyApp(_TgWsProxyAppBase):
         self._logs_item = rumps.MenuItem(
             "Открыть логи",
             callback=_on_open_logs)
+        self._version_item = rumps.MenuItem(
+            f"Версия {__version__}",
+            callback=lambda _: None)
 
         super().__init__(
             "TG WS Proxy",
@@ -628,6 +632,8 @@ class TgWsProxyApp(_TgWsProxyAppBase):
                 self._restart_item,
                 self._settings_item,
                 self._logs_item,
+                None,
+                self._version_item,
             ])
 
     def update_menu_title(self):
@@ -651,7 +657,7 @@ def run_menubar():
 
     setup_logging(_config.get("verbose", False),
                   log_max_mb=_config.get("log_max_mb", DEFAULT_CONFIG["log_max_mb"]))
-    log.info("TG WS Proxy menubar app starting")
+    log.info("TG WS Proxy версия %s, menubar app starting", __version__)
     log.info("Config: %s", _config)
     log.info("Log file: %s", LOG_FILE)
 

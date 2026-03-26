@@ -6,12 +6,35 @@
 from __future__ import annotations
 
 import sys
+import tkinter
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Tuple
 
+_tk_variable_del_guard_installed = False
+
+
+def _install_tkinter_variable_del_guard() -> None:
+    """
+    Убирает «Exception ignored» при выходе процесса: Tcl уже разрушен, а GC ещё
+    вызывает Variable.__del__ (StringVar и т.д.) — напр. окно CTk в фоновом потоке.
+    """
+    global _tk_variable_del_guard_installed
+    if _tk_variable_del_guard_installed:
+        return
+    _orig = tkinter.Variable.__del__
+
+    def _safe_variable_del(self: Any, _orig: Any = _orig) -> None:
+        try:
+            _orig(self)
+        except (RuntimeError, tkinter.TclError):
+            pass
+
+    tkinter.Variable.__del__ = _safe_variable_del  # type: ignore[assignment]
+    _tk_variable_del_guard_installed = True
+
 # Размеры и отступы (единые для диалогов настроек и первого запуска)
-CONFIG_DIALOG_SIZE: Tuple[int, int] = (420, 540)
-CONFIG_DIALOG_FRAME_PAD: Tuple[int, int] = (24, 20)
+CONFIG_DIALOG_SIZE: Tuple[int, int] = (460, 560)
+CONFIG_DIALOG_FRAME_PAD: Tuple[int, int] = (20, 14)
 FIRST_RUN_SIZE: Tuple[int, int] = (520, 440)
 FIRST_RUN_FRAME_PAD: Tuple[int, int] = (28, 24)
 
@@ -62,6 +85,7 @@ def create_ctk_root(
     Создаёт CTk: глобальная тема, заголовок, без ресайза, по центру экрана, фон из палитры.
     after_create — опционально: установка иконки окна (различается по ОС).
     """
+    _install_tkinter_variable_del_guard()
     apply_ctk_appearance(ctk)
     root = ctk.CTk()
     root.title(title)

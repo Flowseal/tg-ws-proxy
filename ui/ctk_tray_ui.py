@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import proxy.tg_ws_proxy as tg_ws_proxy
+from proxy import __version__
 
 from ui.ctk_theme import (
     FIRST_RUN_FRAME_PAD,
@@ -54,6 +55,62 @@ _TIP_AUTOSTART = (
 _TIP_SAVE = "Сохранить настройки в файл. После сохранения можно перезапустить прокси."
 _TIP_CANCEL = "Закрыть окно без сохранения изменений."
 
+# Внутренняя ширина полей относительно ширины окна настроек (см. CONFIG_DIALOG_SIZE)
+_CONFIG_FORM_INNER_WIDTH = 396
+
+
+def tray_settings_scroll_and_footer(
+    ctk: Any,
+    content_parent: Any,
+    theme: CtkTheme,
+) -> Tuple[Any, Any]:
+    """
+    Нижняя панель под кнопки и прокручиваемая область для формы (форма не обрезает кнопки).
+    Возвращает (scroll_frame, footer_frame).
+    """
+    footer = ctk.CTkFrame(content_parent, fg_color=theme.bg)
+    footer.pack(side="bottom", fill="x")
+    scroll = ctk.CTkScrollableFrame(
+        content_parent,
+        fg_color=theme.bg,
+        corner_radius=0,
+        scrollbar_button_color=theme.field_border,
+        scrollbar_button_hover_color=theme.text_secondary,
+    )
+    scroll.pack(fill="both", expand=True)
+    return scroll, footer
+
+
+def _config_section(
+    ctk: Any,
+    parent: Any,
+    theme: CtkTheme,
+    title: str,
+    *,
+    bottom_spacer: int = 6,
+) -> Any:
+    """Заголовок секции и карточка с рамкой для группировки полей."""
+    wrap = ctk.CTkFrame(parent, fg_color="transparent")
+    wrap.pack(fill="x", pady=(0, bottom_spacer))
+    ctk.CTkLabel(
+        wrap,
+        text=title,
+        font=(theme.ui_font_family, 12, "bold"),
+        text_color=theme.text_primary,
+        anchor="w",
+    ).pack(anchor="w", pady=(0, 2))
+    card = ctk.CTkFrame(
+        wrap,
+        fg_color=theme.field_bg,
+        corner_radius=10,
+        border_width=1,
+        border_color=theme.field_border,
+    )
+    card.pack(fill="x")
+    inner = ctk.CTkFrame(card, fg_color="transparent")
+    inner.pack(fill="x", padx=10, pady=8)
+    return inner
+
 
 @dataclass
 class TrayConfigFormWidgets:
@@ -77,80 +134,158 @@ def install_tray_config_form(
     autostart_value: bool = False,
 ) -> TrayConfigFormWidgets:
     """Поля настроек прокси внутри уже созданного `frame`."""
-    host_lbl = ctk.CTkLabel(frame, text="IP-адрес прокси",
-                            font=(theme.ui_font_family, 13),
-                            text_color=theme.text_primary, anchor="w")
-    host_lbl.pack(anchor="w", pady=(0, 4))
+    header = ctk.CTkFrame(frame, fg_color="transparent")
+    header.pack(fill="x", pady=(0, 2))
+    ctk.CTkLabel(
+        header,
+        text="Настройки прокси",
+        font=(theme.ui_font_family, 17, "bold"),
+        text_color=theme.text_primary,
+        anchor="w",
+    ).pack(side="left")
+    ctk.CTkLabel(
+        header,
+        text=f"v{__version__}",
+        font=(theme.ui_font_family, 12),
+        text_color=theme.text_secondary,
+        anchor="e",
+    ).pack(side="right")
+
+    inner_w = _CONFIG_FORM_INNER_WIDTH
+
+    conn = _config_section(ctk, frame, theme, "Подключение SOCKS5")
+
+    host_row = ctk.CTkFrame(conn, fg_color="transparent")
+    host_row.pack(fill="x")
+
+    host_col = ctk.CTkFrame(host_row, fg_color="transparent")
+    host_col.pack(side="left", fill="x", expand=True, padx=(0, 10))
+    host_lbl = ctk.CTkLabel(
+        host_col,
+        text="IP-адрес",
+        font=(theme.ui_font_family, 12),
+        text_color=theme.text_secondary,
+        anchor="w",
+    )
+    host_lbl.pack(anchor="w", pady=(0, 2))
     host_var = ctk.StringVar(value=cfg.get("host", default_config["host"]))
     host_entry = ctk.CTkEntry(
-        frame, textvariable=host_var, width=200, height=36,
-        font=(theme.ui_font_family, 13), corner_radius=10,
-        fg_color=theme.field_bg, border_color=theme.field_border,
-        border_width=1, text_color=theme.text_primary)
-    host_entry.pack(anchor="w", pady=(0, 12))
-    attach_tooltip_to_widgets([host_lbl, host_entry], _TIP_HOST)
+        host_col,
+        textvariable=host_var,
+        width=160,
+        height=36,
+        font=(theme.ui_font_family, 13),
+        corner_radius=10,
+        fg_color=theme.bg,
+        border_color=theme.field_border,
+        border_width=1,
+        text_color=theme.text_primary,
+    )
+    host_entry.pack(fill="x", pady=(0, 0))
+    attach_tooltip_to_widgets([host_lbl, host_entry, host_col], _TIP_HOST)
 
-    port_lbl = ctk.CTkLabel(frame, text="Порт прокси",
-                            font=(theme.ui_font_family, 13),
-                            text_color=theme.text_primary, anchor="w")
-    port_lbl.pack(anchor="w", pady=(0, 4))
+    port_col = ctk.CTkFrame(host_row, fg_color="transparent")
+    port_col.pack(side="left")
+    port_lbl = ctk.CTkLabel(
+        port_col,
+        text="Порт",
+        font=(theme.ui_font_family, 12),
+        text_color=theme.text_secondary,
+        anchor="w",
+    )
+    port_lbl.pack(anchor="w", pady=(0, 2))
     port_var = ctk.StringVar(value=str(cfg.get("port", default_config["port"])))
     port_entry = ctk.CTkEntry(
-        frame, textvariable=port_var, width=120, height=36,
-        font=(theme.ui_font_family, 13), corner_radius=10,
-        fg_color=theme.field_bg, border_color=theme.field_border,
-        border_width=1, text_color=theme.text_primary)
-    port_entry.pack(anchor="w", pady=(0, 12))
-    attach_tooltip_to_widgets([port_lbl, port_entry], _TIP_PORT)
+        port_col,
+        textvariable=port_var,
+        width=100,
+        height=36,
+        font=(theme.ui_font_family, 13),
+        corner_radius=10,
+        fg_color=theme.bg,
+        border_color=theme.field_border,
+        border_width=1,
+        text_color=theme.text_primary,
+    )
+    port_entry.pack(anchor="w")
+    attach_tooltip_to_widgets([port_lbl, port_entry, port_col], _TIP_PORT)
 
+    dc_inner = _config_section(ctk, frame, theme, "Датацентры Telegram (DC → IP)")
     dc_lbl = ctk.CTkLabel(
-        frame, text="DC → IP маппинги (по одному на строку, формат DC:IP)",
-        font=(theme.ui_font_family, 13), text_color=theme.text_primary,
-        anchor="w")
+        dc_inner,
+        text="По одному правилу на строку, формат: номер:IP",
+        font=(theme.ui_font_family, 11),
+        text_color=theme.text_secondary,
+        anchor="w",
+    )
     dc_lbl.pack(anchor="w", pady=(0, 4))
     dc_textbox = ctk.CTkTextbox(
-        frame, width=370, height=120,
-        font=(theme.mono_font_family, 12), corner_radius=10,
-        fg_color=theme.field_bg, border_color=theme.field_border,
-        border_width=1, text_color=theme.text_primary)
-    dc_textbox.pack(anchor="w", pady=(0, 12))
+        dc_inner,
+        width=inner_w,
+        height=88,
+        font=(theme.mono_font_family, 12),
+        corner_radius=10,
+        fg_color=theme.bg,
+        border_color=theme.field_border,
+        border_width=1,
+        text_color=theme.text_primary,
+    )
+    dc_textbox.pack(fill="x")
     dc_textbox.insert("1.0", "\n".join(cfg.get("dc_ip", default_config["dc_ip"])))
     attach_tooltip_to_widgets([dc_lbl, dc_textbox], _TIP_DC)
 
+    log_inner = _config_section(ctk, frame, theme, "Логи и производительность")
+
     verbose_var = ctk.BooleanVar(value=cfg.get("verbose", False))
     verbose_cb = ctk.CTkCheckBox(
-        frame, text="Подробное логирование (verbose)",
-        variable=verbose_var, font=(theme.ui_font_family, 13),
+        log_inner,
+        text="Подробное логирование (verbose)",
+        variable=verbose_var,
+        font=(theme.ui_font_family, 13),
         text_color=theme.text_primary,
-        fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
-        corner_radius=6, border_width=2,
-        border_color=theme.field_border)
-    verbose_cb.pack(anchor="w", pady=(0, 8))
+        fg_color=theme.tg_blue,
+        hover_color=theme.tg_blue_hover,
+        corner_radius=6,
+        border_width=2,
+        border_color=theme.field_border,
+    )
+    verbose_cb.pack(anchor="w", pady=(0, 6))
     attach_ctk_tooltip(verbose_cb, _TIP_VERBOSE)
 
-    adv_frame = ctk.CTkFrame(frame, fg_color="transparent")
-    adv_frame.pack(anchor="w", fill="x", pady=(4, 8))
+    adv_frame = ctk.CTkFrame(log_inner, fg_color="transparent")
+    adv_frame.pack(fill="x")
 
     adv_rows = [
-        ("Буфер (KB, 256 default)", "buf_kb", 120, _TIP_BUF_KB),
-        ("WS пулов (4 default)", "pool_size", 120, _TIP_POOL),
-        ("Log size (MB, 5 def)", "log_max_mb", 120, _TIP_LOG_MB),
+        ("Буфер, КБ (по умолчанию 256)", "buf_kb", _TIP_BUF_KB),
+        ("Пул WebSocket-сессий (по умолчанию 4)", "pool_size", _TIP_POOL),
+        ("Макс. размер лога, МБ (по умолчанию 5)", "log_max_mb", _TIP_LOG_MB),
     ]
-    for lbl, key, w_, tip in adv_rows:
+    for lbl, key, tip in adv_rows:
         col_frame = ctk.CTkFrame(adv_frame, fg_color="transparent")
-        col_frame.pack(side="left", padx=(0, 10))
-        adv_l = ctk.CTkLabel(col_frame, text=lbl, font=(theme.ui_font_family, 11),
-                             text_color=theme.text_secondary, anchor="w")
-        adv_l.pack(anchor="w")
+        col_frame.pack(fill="x", pady=(0, 0 if key == "log_max_mb" else 5))
+        adv_l = ctk.CTkLabel(
+            col_frame,
+            text=lbl,
+            font=(theme.ui_font_family, 11),
+            text_color=theme.text_secondary,
+            anchor="w",
+        )
+        adv_l.pack(anchor="w", pady=(0, 2))
         adv_e = ctk.CTkEntry(
-            col_frame, width=w_, height=30, font=(theme.ui_font_family, 12),
-            corner_radius=8, fg_color=theme.field_bg,
-            border_color=theme.field_border, border_width=1,
+            col_frame,
+            width=inner_w,
+            height=32,
+            font=(theme.ui_font_family, 13),
+            corner_radius=8,
+            fg_color=theme.bg,
+            border_color=theme.field_border,
+            border_width=1,
             text_color=theme.text_primary,
             textvariable=ctk.StringVar(
                 value=str(cfg.get(key, default_config[key]))
-            ))
-        adv_e.pack(anchor="w")
+            ),
+        )
+        adv_e.pack(fill="x")
         attach_tooltip_to_widgets([adv_l, adv_e, col_frame], tip)
 
     adv_entries = list(adv_frame.winfo_children())
@@ -158,21 +293,33 @@ def install_tray_config_form(
 
     autostart_var = None
     if show_autostart:
+        sys_inner = _config_section(
+            ctk, frame, theme, "Запуск Windows", bottom_spacer=4
+        )
         autostart_var = ctk.BooleanVar(value=autostart_value)
         as_cb = ctk.CTkCheckBox(
-            frame, text="Автозапуск при включении Windows",
-            variable=autostart_var, font=(theme.ui_font_family, 13),
+            sys_inner,
+            text="Автозапуск при включении компьютера",
+            variable=autostart_var,
+            font=(theme.ui_font_family, 13),
             text_color=theme.text_primary,
-            fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
-            corner_radius=6, border_width=2,
-            border_color=theme.field_border)
-        as_cb.pack(anchor="w", pady=(0, 8))
+            fg_color=theme.tg_blue,
+            hover_color=theme.tg_blue_hover,
+            corner_radius=6,
+            border_width=2,
+            border_color=theme.field_border,
+        )
+        as_cb.pack(anchor="w", pady=(0, 4))
         as_hint = ctk.CTkLabel(
-            frame, text="При перемещении файла или открытии из другой папки\n"
-            "автозапуск будет сброшен",
-            font=(theme.ui_font_family, 13), text_color=theme.text_secondary,
-            anchor="w", justify="left")
-        as_hint.pack(anchor="w", pady=(0, 8))
+            sys_inner,
+            text="Если переместить программу в другую папку, запись автозапуска может сброситься.",
+            font=(theme.ui_font_family, 11),
+            text_color=theme.text_secondary,
+            anchor="w",
+            justify="left",
+            wraplength=inner_w,
+        )
+        as_hint.pack(anchor="w")
         attach_tooltip_to_widgets([as_cb, as_hint], _TIP_AUTOSTART)
 
     return TrayConfigFormWidgets(
@@ -263,8 +410,14 @@ def install_tray_config_buttons(
     on_save: Callable[[], None],
     on_cancel: Callable[[], None],
 ) -> None:
+    ctk.CTkFrame(
+        frame,
+        fg_color=theme.field_border,
+        height=1,
+        corner_radius=0,
+    ).pack(fill="x", pady=(4, 10))
     btn_frame = ctk.CTkFrame(frame, fg_color="transparent")
-    btn_frame.pack(fill="x", pady=(20, 0))
+    btn_frame.pack(fill="x", pady=(0, 0))
     save_btn = ctk.CTkButton(
         btn_frame, text="Сохранить", height=38,
         font=(theme.ui_font_family, 14, "bold"), corner_radius=10,

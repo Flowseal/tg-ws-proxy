@@ -19,10 +19,12 @@ import pystray
 from PIL import Image, ImageDraw, ImageFont
 
 import proxy.tg_ws_proxy as tg_ws_proxy
+from proxy import __version__
 from ui.ctk_tray_ui import (
     install_tray_config_buttons,
     install_tray_config_form,
     populate_first_run_window,
+    tray_settings_scroll_and_footer,
     validate_config_form,
 )
 from ui.ctk_theme import (
@@ -395,8 +397,10 @@ def _edit_config_dialog():
     fpx, fpy = CONFIG_DIALOG_FRAME_PAD
     frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)
 
+    scroll, footer = tray_settings_scroll_and_footer(ctk, frame, theme)
+
     widgets = install_tray_config_form(
-        ctk, frame, theme, cfg, DEFAULT_CONFIG,
+        ctk, scroll, theme, cfg, DEFAULT_CONFIG,
         show_autostart=False,
     )
 
@@ -430,9 +434,17 @@ def _edit_config_dialog():
         root.destroy()
 
     install_tray_config_buttons(
-        ctk, frame, theme, on_save=on_save, on_cancel=on_cancel)
+        ctk, footer, theme, on_save=on_save, on_cancel=on_cancel)
 
-    root.mainloop()
+    try:
+        root.mainloop()
+    finally:
+        import tkinter as tk
+        try:
+            if root.winfo_exists():
+                root.destroy()
+        except tk.TclError:
+            pass
 
 
 def _on_open_logs(icon=None, item=None):
@@ -506,7 +518,15 @@ def _show_first_run():
     populate_first_run_window(
         ctk, root, theme, host=host, port=port, on_done=on_done)
 
-    root.mainloop()
+    try:
+        root.mainloop()
+    finally:
+        import tkinter as tk
+        try:
+            if root.winfo_exists():
+                root.destroy()
+        except tk.TclError:
+            pass
 
 
 def _has_ipv6_enabled() -> bool:
@@ -588,7 +608,7 @@ def run_tray():
 
     setup_logging(_config.get("verbose", False),
                   log_max_mb=_config.get("log_max_mb", DEFAULT_CONFIG["log_max_mb"]))
-    log.info("TG WS Proxy tray app starting")
+    log.info("TG WS Proxy версия %s, tray app starting", __version__)
     log.info("Config: %s", _config)
     log.info("Log file: %s", LOG_FILE)
 
