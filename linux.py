@@ -275,6 +275,7 @@ def _edit_config_dialog():
         cfg,
         DEFAULT_CONFIG,
         show_autostart=False,
+        proxy_state=_proxy_state,
     )
 
     def on_save():

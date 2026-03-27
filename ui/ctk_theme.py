@@ -50,6 +50,8 @@ class CtkTheme:
     field_border: str = "#d6d9dc"
     text_primary: str = "#000000"
     text_secondary: str = "#707579"
+    status_pill_bg: str = "#f4f6fa"
+    status_pill_border: str = "#e2e6ed"
     ui_font_family: str = "Sans"
     mono_font_family: str = "Monospace"
 

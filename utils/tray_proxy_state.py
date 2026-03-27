@@ -90,8 +90,6 @@ def build_tray_tooltip(
     port: int,
     state: ProxyRuntimeState,
 ) -> str:
-    from ui.tray_icons import BADGE_TOOLTIP_HINT
-
     snap = state.snapshot()
     phase = snap["phase"]
     addr = f"{host}:{port}"
@@ -99,12 +97,10 @@ def build_tray_tooltip(
 
     if phase == "listening" and snap["listening_since"] is not None:
         up = format_uptime_short(snap["listening_since"])
-        base = f"TG WS Proxy | {addr} | {label} | {up}"
-    elif phase == "error" and snap["detail"]:
+        return f"TG WS Proxy | {addr} | {label} | {up}"
+    if phase == "error" and snap["detail"]:
         short = snap["detail"]
         if len(short) > 80:
             short = short[:77] + "…"
-        base = f"TG WS Proxy | {addr} | {label}: {short}"
-    else:
-        base = f"TG WS Proxy | {addr} | {label}"
-    return f"{base}\n{BADGE_TOOLTIP_HINT}"
+        return f"TG WS Proxy | {addr} | {label}: {short}"
+    return f"TG WS Proxy | {addr} | {label}"

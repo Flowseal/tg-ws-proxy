@@ -394,6 +394,7 @@ def _edit_config_dialog():
         DEFAULT_CONFIG,
         show_autostart=_supports_autostart(),
         autostart_value=cfg.get("autostart", False),
+        proxy_state=_proxy_state,
     )
 
     def on_save():

@@ -12,6 +12,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import proxy.tg_ws_proxy as tg_ws_proxy
 from proxy import __version__
+from ui.tray_icons import badge_rgb_for_phase
+from utils.tray_proxy_state import format_uptime_short, phase_label_ru
 from utils.update_check import RELEASES_PAGE_URL, get_status
 
 from ui.ctk_theme import (
@@ -138,6 +140,7 @@ def install_tray_config_form(
     *,
     show_autostart: bool = False,
     autostart_value: bool = False,
+    proxy_state: Optional[Any] = None,
 ) -> TrayConfigFormWidgets:
     """Поля настроек прокси внутри уже созданного `frame`."""
     header = ctk.CTkFrame(frame, fg_color="transparent")
@@ -215,6 +218,67 @@ def install_tray_config_form(
     )
     port_entry.pack(anchor="w")
     attach_tooltip_to_widgets([port_lbl, port_entry, port_col], _TIP_PORT)
+
+    if proxy_state is not None:
+        stat_inner = _config_section(ctk, frame, theme, "Статус")
+        pill = ctk.CTkFrame(
+            stat_inner,
+            fg_color=theme.status_pill_bg,
+            corner_radius=12,
+            border_width=1,
+            border_color=theme.status_pill_border,
+        )
+        pill.pack(fill="x", pady=(2, 0))
+        row = ctk.CTkFrame(pill, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=12)
+        dot = ctk.CTkFrame(
+            row,
+            width=12,
+            height=12,
+            corner_radius=6,
+            fg_color="#eab308",
+        )
+        dot.pack(side="left", padx=(0, 12))
+        dot.pack_propagate(False)
+        text_col = ctk.CTkFrame(row, fg_color="transparent")
+        text_col.pack(side="left", fill="x", expand=True)
+        status_main = ctk.CTkLabel(
+            text_col,
+            text="",
+            font=(theme.ui_font_family, 14),
+            text_color=theme.text_primary,
+            anchor="w",
+        )
+        status_main.pack(side="left")
+        status_uptime = ctk.CTkLabel(
+            text_col,
+            text="",
+            font=(theme.ui_font_family, 13),
+            text_color=theme.text_secondary,
+            anchor="w",
+        )
+        status_uptime.pack(side="left")
+
+        def _mini_status_tick() -> None:
+            if not frame.winfo_exists():
+                return
+            try:
+                snap = proxy_state.snapshot()
+                phase = snap["phase"]
+                r, g, b = badge_rgb_for_phase(phase)
+                dot.configure(fg_color=f"#{r:02x}{g:02x}{b:02x}")
+                status_main.configure(text=phase_label_ru(phase))
+                ls = snap.get("listening_since")
+                if phase == "listening" and ls is not None:
+                    status_uptime.configure(text=f" · {format_uptime_short(ls)}")
+                else:
+                    status_uptime.configure(text="")
+            except Exception:
+                pass
+            if frame.winfo_exists():
+                frame.after(1000, _mini_status_tick)
+
+        _mini_status_tick()
 
     dc_inner = _config_section(ctk, frame, theme, "Датацентры Telegram (DC → IP)")
     dc_lbl = ctk.CTkLabel(
@@ -591,7 +655,7 @@ def populate_first_run_window(
         "порт занят — другой процесс или старый экземпляр; смените порт в настройках;",
         "IPv6 — трафик может идти мимо прокси; см. предупреждение при первом запуске;",
         "брандмауэр / антивирус — разрешите локальное прослушивание;",
-        "меню трея: «Статус» — без поиска по логам.",
+        "меню трея: «Статус и проверка TCP…» — без поиска по логам.",
     ):
         ctk.CTkLabel(
             frame,

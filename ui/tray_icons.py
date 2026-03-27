@@ -6,12 +6,6 @@ from typing import Any, List, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
 
-# Подсказка для tooltip (согласована с цветами бейджа)
-BADGE_TOOLTIP_HINT = (
-    "Бейдж: зелёный — работает, красный — ошибка, жёлтый — запуск/ожидание/остановка"
-)
-
-
 def _resample_lanczos() -> int:
     try:
         return Image.Resampling.LANCZOS  # type: ignore[attr-defined]
