@@ -1,206 +1,49 @@
+# TG WS Proxy (Android)
+
+**Локальный SOCKS5-прокси** для Telegram Android, который **ускоряет работу Telegram**, перенаправляя трафик через WebSocket-соединения.
+
+Это мобильный форк популярного SOCKS5/WS прокси, кардинально переработанный для удобного использования на смартфонах. 
+
 > [!CAUTION]
->
-> ### Реакция антивирусов
->
-> Windows Defender часто ошибочно помечает приложение как **Wacatac**.  
-> Если вы не можете скачать из-за блокировки, то:
->
-> 1) Попробуйте скачать версию win7 (она ничем не отличается в плане функционала)
-> 2) Отключите антивирус на время скачивания, добавьте файл в исключения и включите обратно  
->
-> **Всегда проверяйте, что скачиваете из интернета, тем более из непроверенных источников. Всегда лучше смотреть на детекты широко известных антивирусов на VirusTotal**
+> ### 🔴 ВАЖНО: Рекомендуемая настройка подключения
+> 
+> Для корректной работы и обхода блокировок провайдера настоятельно рекомендуется **сначала параллельно запустить VPN**.  
+> Если этого не сделать, вместо скоростного соединения по **WebSocket** будет происходить фоллбек (fallback) на обычное **TCP-соединение**, что в общем не гарантирует никаких преемуществ и работы в целом.
 
-# TG WS Proxy
+## 🌟 Что нового в Android-версии
 
-**Локальный SOCKS5-прокси** для Telegram Desktop, который **ускоряет работу Telegram**, перенаправляя трафик через WebSocket-соединения. Данные передаются в том же зашифрованном виде, а для работы не нужны сторонние сервера.
+Функции управления вынесены в красивый и удобный **Material 3** интерфейс (Jetpack Compose).
 
-<img width="529" height="487" alt="image" src="https://github.com/user-attachments/assets/6a4cf683-0df8-43af-86c1-0e8f08682b62" />
+- **Полноценный UI:** Настройка порта, пула датацентров и количества WebSocket соединений делается в 2 клика.
+- **Интеграция с Telegram:** Кнопка «Применить в телеграмм» автоматически настроит прокси через систему глубоких ссылок (`tg://socks`) для любого установленного клиента (AyuGram, Plus Messenger, NekoGram и др.).
+- **Стабильная работа в фоне:** Приложение использует «неубиваемый» `Foreground Service` и самоконтроль Wakelock'ов, чтобы Android не "душил" прокси в спящем режиме.
+- **Встроенный просмотрщик логов:** В реальном времени отображаются логии работы для диагностики.
+- **Динамические цвета и темы:** Поддержка светлой и темной тем, а также Material You (в Android 12+).
+
+![MyCollages](https://github.com/user-attachments/assets/4477809b-c793-4b81-ae13-83907849a0ab)
+
 
 ## Как это работает
 
 ```
-Telegram Desktop → SOCKS5 (127.0.0.1:1080) → TG WS Proxy → WSS → Telegram DC
+Telegram Android → SOCKS5 (по умолчанию 127.0.0.1:1080) → TG WS Proxy → WSS → Telegram DC
 ```
 
-1. Приложение поднимает локальный SOCKS5-прокси на `127.0.0.1:1080`
-2. Перехватывает подключения к IP-адресам Telegram
-3. Извлекает DC ID из MTProto obfuscation init-пакета
-4. Устанавливает WebSocket (TLS) соединение к соответствующему DC через домены Telegram
-5. Если WS недоступен (302 redirect) — автоматически переключается на прямое TCP-соединение
+1. Приложение поднимает локальный SOCKS5-прокси средствами нативного движка на языке **Go**.
+2. Перехватывает подключения к IP-адресам Telegram.
+3. Извлекает DC ID из MTProto-пакета и устанавливает защищенное WebSocket (TLS) соединение.
+4. Эффективно мультиплексирует трафик.
 
 ## 🚀 Быстрый старт
 
-### Windows
-
-Перейдите на [страницу релизов](https://github.com/Flowseal/tg-ws-proxy/releases) и скачайте **`TgWsProxy_windows.exe`**. Он собирается автоматически через [Github Actions](https://github.com/Flowseal/tg-ws-proxy/actions) из открытого исходного кода.
-
-При первом запуске откроется окно с инструкцией по подключению Telegram Desktop. Приложение сворачивается в системный трей.
-
-**Меню трея:**
-
-- **Открыть в Telegram** — автоматически настроить прокси через `tg://socks` ссылку
-- **Перезапустить прокси** — перезапуск без выхода из приложения
-- **Настройки...** — GUI-редактор конфигурации
-- **Открыть логи** — открыть файл логов
-- **Выход** — остановить прокси и закрыть приложение
-
-### macOS
-
-Перейдите на [страницу релизов](https://github.com/Flowseal/tg-ws-proxy/releases) и скачайте **`TgWsProxy_macos_universal.dmg`** — универсальная сборка для Apple Silicon и Intel.
-
-1. Открыть образ
-2. Перенести **TG WS Proxy.app** в папку **Applications**
-3. При первом запуске macOS может попросить подтвердить открытие: **Системные настройки → Конфиденциальность и безопасность → Всё равно открыть**
-
-### Linux
-
-Для Debian/Ubuntu скачайте со [страницы релизов](https://github.com/Flowseal/tg-ws-proxy/releases) пакет **`TgWsProxy_linux_amd64.deb`**.
-
-Для Arch и Arch-Based дистрибутивов подготовлены пакеты в AUR: [tg-ws-proxy-bin](https://aur.archlinux.org/packages/tg-ws-proxy-bin), [tg-ws-proxy-git](https://aur.archlinux.org/packages/tg-ws-proxy-git), [tg-ws-proxy-cli](https://aur.archlinux.org/packages/tg-ws-proxy-cli)
-
-```shell
-# Установка без AUR-helper
-git clone https://aur.archlinux.org/tg-ws-proxy-bin.git
-cd tg-ws-proxy-bin
-makepkg -si
-
-# При помощи AUR-helper
-paru -S tg-ws-proxy-bin
-
-# Если вы установили -cli пакет, то запуск осуществляется через systemctl, где 8888 это номер порта прокси:
-sudo systemctl start tg-ws-proxy-cli@8888
-```
-
-Для остальных дистрибутивов можно использовать **`TgWsProxy_linux_amd64`** (бинарный файл для x86_64).
-
-```bash
-chmod +x TgWsProxy_linux_amd64
-./TgWsProxy_linux_amd64
-```
-
-При первом запуске откроется окно с инструкцией. Приложение работает в системном трее (требуется AppIndicator).
-
-## Установка из исходников
-
-### Консольный proxy
-
-Для запуска только SOCKS5/WebSocket proxy без tray-интерфейса достаточно базовой установки:
-
-```bash
-pip install -e .
-tg-ws-proxy
-```
-
-### Windows 7/10+
-
-```bash
-pip install -e .
-tg-ws-proxy-tray-win
-```
-
-### macOS
-
-```bash
-pip install -e .
-tg-ws-proxy-tray-macos
-```
-
-### Linux
-
-```bash
-pip install -e .
-tg-ws-proxy-tray-linux
-```
-
-### Консольный режим из исходников
-
-```bash
-tg-ws-proxy [--port PORT] [--host HOST] [--dc-ip DC:IP ...] [-v]
-```
-
-**Аргументы:**
-
-| Аргумент | По умолчанию | Описание |
-|---|---|---|
-| `--port` | `1080` | Порт SOCKS5-прокси |
-| `--host` | `127.0.0.1` | Хост SOCKS5-прокси |
-| `--dc-ip` | `2:149.154.167.220`, `4:149.154.167.220` | Целевой IP для DC (можно указать несколько раз) |
-| `-v`, `--verbose` | выкл. | Подробное логирование (DEBUG) |
-
-**Примеры:**
-
-```bash
-# Стандартный запуск
-tg-ws-proxy
-
-# Другой порт и дополнительные DC
-tg-ws-proxy --port 9050 --dc-ip 1:149.154.175.205 --dc-ip 2:149.154.167.220
-
-# С подробным логированием
-tg-ws-proxy -v
-```
-
-## CLI-скрипты (pyproject.toml)
-
-CLI команды объявляются в `pyproject.toml` в секции `[project.scripts]` и должны указывать на `module:function`.
-
-Пример:
-
-```toml
-[project.scripts]
-tg-ws-proxy = "proxy.tg_ws_proxy:main"
-tg-ws-proxy-tray-win = "windows:main"
-tg-ws-proxy-tray-macos = "macos:main"
-tg-ws-proxy-tray-linux = "linux:main"
-```
-
-## Настройка Telegram Desktop
-
-### Автоматически
-
-ПКМ по иконке в трее → **«Открыть в Telegram»**
-
-### Вручную
-
-1. Telegram → **Настройки** → **Продвинутые настройки** → **Тип подключения** → **Прокси**
-2. Добавить прокси:
-   - **Тип:** SOCKS5
-   - **Сервер:** `127.0.0.1`
-   - **Порт:** `1080`
-   - **Логин/Пароль:** оставить пустыми
-
-## Конфигурация
-
-Tray-приложение хранит данные в:
-
-- **Windows:** `%APPDATA%/TgWsProxy`
-- **macOS:** `~/Library/Application Support/TgWsProxy`
-- **Linux:** `~/.config/TgWsProxy` (или `$XDG_CONFIG_HOME/TgWsProxy`)
-
-```json
-{
-  "port": 1080,
-  "dc_ip": [
-    "2:149.154.167.220",
-    "4:149.154.167.220"
-  ],
-  "verbose": false
-}
-```
-
-## Автоматическая сборка
-
-Проект содержит спецификации PyInstaller ([`packaging/windows.spec`](packaging/windows.spec), [`packaging/macos.spec`](packaging/macos.spec), [`packaging/linux.spec`](packaging/linux.spec)) и GitHub Actions workflow ([`.github/workflows/build.yml`](.github/workflows/build.yml)) для автоматической сборки.
-
-Минимально поддерживаемые версии ОС для текущих бинарных сборок:
-
-- Windows 10+ для `TgWsProxy_windows.exe`
-- Windows 7 (x64) для `TgWsProxy_windows_7_64bit.exe`
-- Windows 7 (x32) для `TgWsProxy_windows_7_32bit.exe`
-- Intel macOS 10.15+
-- Apple Silicon macOS 11.0+
-- Linux x86_64 (требуется AppIndicator для системного трея)
+1. Перейдите на **[страницу релизов]** и скачайте актуальный `APK`-файл.
+2. Установите приложение на ваш Android-смартфон.
+3. Откройте **TG WS Proxy**.
+4. Выберите требуемый пул IP-адресов.
+5. *(Рекомендуется)* **Включите VPN**.
+6. Нажмите **«Запустить прокси»** — появится уведомление о работе в фоновом режиме.
+7. Нажмите **«Применить в телеграмм»** — откроется клиент Telegram, останется только нажать «Подключить».
 
 ## Лицензия
 
-[MIT License](LICENSE)
+Этот форк распространяется под лицензией **GPLv3**. (Оригинальный код `tg-ws-proxy` доступен под MIT). Файл лицензии приложен к исходному коду.
