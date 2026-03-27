@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import datetime
 import webbrowser
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -318,8 +319,29 @@ def install_tray_config_form(
     upd_cb.pack(anchor="w", pady=(0, 6))
     attach_ctk_tooltip(upd_cb, _TIP_CHECK_UPDATES)
 
-    if st.get("error"):
-        upd_status = "Не удалось связаться с GitHub. Проверьте сеть."
+    ts = st.get("last_check_at")
+    ts_human = ""
+    if ts:
+        try:
+            ts_human = datetime.datetime.fromtimestamp(float(ts)).strftime(
+                "%d.%m.%Y %H:%M"
+            )
+        except (TypeError, ValueError, OSError):
+            ts_human = ""
+
+    if not check_updates_var.get():
+        upd_status = (
+            "Проверка обновлений отключена в конфиге — запросы к GitHub не выполняются."
+        )
+    elif st.get("error"):
+        net_hint = "ошибка сети или доступа к GitHub"
+        if ts_human:
+            upd_status = (
+                f"Последняя проверка: {ts_human} — {net_hint}.\n"
+                f"Детали: {st['error']}"
+            )
+        else:
+            upd_status = f"{net_hint}.\nДетали: {st['error']}"
     elif not st.get("checked"):
         upd_status = "Статус появится после фоновой проверки при запуске."
     elif st.get("has_update") and st.get("latest"):
@@ -334,6 +356,9 @@ def install_tray_config_form(
         )
     else:
         upd_status = "Установлена последняя известная версия с GitHub."
+
+    if check_updates_var.get() and ts_human and not st.get("error"):
+        upd_status = f"Последняя проверка: {ts_human}.\n{upd_status}"
 
     ctk.CTkLabel(
         upd_inner,
@@ -553,6 +578,29 @@ def populate_first_run_window(
                      font=(theme.ui_font_family, 13, weight),
                      text_color=theme.text_primary,
                      anchor="w", justify="left").pack(anchor="w", pady=1)
+
+    ctk.CTkFrame(frame, fg_color="transparent", height=12).pack()
+    ctk.CTkLabel(
+        frame,
+        text="Если не подключается:",
+        font=(theme.ui_font_family, 13, "bold"),
+        text_color=theme.text_primary,
+        anchor="w",
+    ).pack(anchor="w", pady=(0, 4))
+    for tip in (
+        "порт занят — другой процесс или старый экземпляр; смените порт в настройках;",
+        "IPv6 — трафик может идти мимо прокси; см. предупреждение при первом запуске;",
+        "брандмауэр / антивирус — разрешите локальное прослушивание;",
+        "меню трея: «Статус» — без поиска по логам.",
+    ):
+        ctk.CTkLabel(
+            frame,
+            text=f"• {tip}",
+            font=(theme.ui_font_family, 12),
+            text_color=theme.text_secondary,
+            anchor="w",
+            justify="left",
+        ).pack(anchor="w", pady=1)
 
     ctk.CTkFrame(frame, fg_color="transparent", height=16).pack()
 

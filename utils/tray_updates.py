@@ -38,6 +38,10 @@ def spawn_notify_update_async(
             if ask_open_release(str(ver), url):
                 webbrowser.open(url)
         except Exception as exc:
-            log.debug("Update check failed: %s", exc)
+            cfg = get_config()
+            if bool(cfg.get("verbose")):
+                log.info("Update check failed: %s", exc)
+            else:
+                log.debug("Update check failed: %s", exc)
 
     threading.Thread(target=_work, daemon=True, name="update-check").start()

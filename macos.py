@@ -27,7 +27,9 @@ except ImportError:
 
 import proxy.tg_ws_proxy as tg_ws_proxy
 from proxy import __version__
+from ui.tray_icons import apply_status_badge, normalize_tray_icon_image
 from utils.default_config import default_tray_config
+from utils.tray_diagnostics import format_status_tcp_report
 from utils.tray_io import load_tray_config, save_tray_config, setup_tray_logging
 from utils.tray_ipv6 import IPV6_WARN_BODY_MACOS, has_ipv6_enabled
 from utils.tray_lock import (
@@ -36,6 +38,7 @@ from utils.tray_lock import (
     make_same_process_checker,
 )
 from utils.tray_paths import APP_NAME, tray_paths_macos
+from utils.tray_proxy_state import ProxyRuntimeState
 from utils.tray_proxy_runner import ProxyThreadRunner
 from utils.tray_updates import spawn_notify_update_async
 
@@ -46,12 +49,16 @@ LOG_FILE = PATHS.log_file
 FIRST_RUN_MARKER = PATHS.first_run_marker
 IPV6_WARN_MARKER = PATHS.ipv6_warn_marker
 MENUBAR_ICON_PATH = APP_DIR / "menubar_icon.png"
+MENUBAR_LIVE_ICON = APP_DIR / "menubar_status.png"
 
 DEFAULT_CONFIG = default_tray_config()
 
 _app: Optional[object] = None
+_macos_tray_base: Optional[object] = None
+_last_macos_icon_phase: Optional[str] = None
 _config: dict = {}
 _exiting: bool = False
+_proxy_state = ProxyRuntimeState()
 
 log = logging.getLogger("tg-ws-tray")
 
@@ -115,7 +122,8 @@ _proxy_runner = ProxyThreadRunner(
     show_error=_show_error,
     join_timeout=2.0,
     warn_on_join_stuck=False,
-    treat_win_error_10048_as_port_in_use=False,
+    runtime_state=_proxy_state,
+    check_port_before_start=True,
 )
 
 
@@ -168,6 +176,59 @@ def _ensure_menubar_icon() -> None:
         img.save(str(MENUBAR_ICON_PATH), "PNG")
 
 
+def _macos_get_tray_base_image():
+    """RGBA 44×44 без бейджа (кэш)."""
+    global _macos_tray_base
+    if _macos_tray_base is not None:
+        return _macos_tray_base
+    if Image is None:
+        return None
+    _ensure_menubar_icon()
+    if MENUBAR_ICON_PATH.exists():
+        _macos_tray_base = normalize_tray_icon_image(
+            Image.open(str(MENUBAR_ICON_PATH)), size=44
+        )
+    else:
+        raw = _make_menubar_icon(44)
+        if raw is None:
+            return None
+        _macos_tray_base = normalize_tray_icon_image(raw, size=44)
+    return _macos_tray_base
+
+
+def _macos_write_badged_icon(phase: str) -> Optional[str]:
+    """PNG с бейджем для rumps; путь к файлу."""
+    base = _macos_get_tray_base_image()
+    if base is None:
+        return None
+    badged = apply_status_badge(base, phase)
+    _ensure_dirs()
+    badged.save(str(MENUBAR_LIVE_ICON), "PNG")
+    return str(MENUBAR_LIVE_ICON)
+
+
+def _macos_refresh_menubar_icon() -> None:
+    global _last_macos_icon_phase
+    if _app is None or _exiting:
+        return
+    try:
+        phase = _proxy_state.snapshot()["phase"]
+        if phase == _last_macos_icon_phase:
+            return
+        path = _macos_write_badged_icon(phase)
+        if path:
+            _app.icon = path
+            _last_macos_icon_phase = phase
+    except Exception:
+        pass
+
+
+def _macos_icon_refresh_loop() -> None:
+    while not _exiting:
+        _macos_refresh_menubar_icon()
+        time.sleep(2.0)
+
+
 def _ask_yes_no(text: str, title: str = "TG WS Proxy") -> bool:
     result = _ask_yes_no_close(text, title)
     return result is True
@@ -197,6 +258,15 @@ def _ask_yes_no_close(text: str, title: str = "TG WS Proxy") -> Optional[bool]:
     if result == "Нет":
         return False
     return None
+
+
+def _on_status_tcp_dialog(_=None):
+    host = _config.get("host", DEFAULT_CONFIG["host"])
+    port = int(_config.get("port", DEFAULT_CONFIG["port"]))
+    _show_info(
+        format_status_tcp_report(host, port, _proxy_state),
+        "TG WS Proxy — статус",
+    )
 
 
 def _on_open_in_telegram(_=None):
@@ -455,16 +525,22 @@ _TgWsProxyAppBase = rumps.App if rumps else object
 
 
 class TgWsProxyApp(_TgWsProxyAppBase):
-    def __init__(self):
+    def __init__(self, *, menubar_icon_path: Optional[str] = None):
         _ensure_menubar_icon()
-        icon_path = str(MENUBAR_ICON_PATH) if MENUBAR_ICON_PATH.exists() else None
+        icon_path = menubar_icon_path or (
+            str(MENUBAR_ICON_PATH) if MENUBAR_ICON_PATH.exists() else None
+        )
 
         host = _config.get("host", DEFAULT_CONFIG["host"])
-        port = _config.get("port", DEFAULT_CONFIG["port"])
+        port = int(_config.get("port", DEFAULT_CONFIG["port"]))
 
         self._open_tg_item = rumps.MenuItem(
             f"Открыть в Telegram ({host}:{port})",
             callback=_on_open_in_telegram,
+        )
+        self._status_tcp_item = rumps.MenuItem(
+            "Статус",
+            callback=_on_status_tcp_dialog,
         )
         self._restart_item = rumps.MenuItem(
             "Перезапустить прокси",
@@ -499,6 +575,8 @@ class TgWsProxyApp(_TgWsProxyAppBase):
             menu=[
                 self._open_tg_item,
                 None,
+                self._status_tcp_item,
+                None,
                 self._restart_item,
                 self._settings_item,
                 self._logs_item,
@@ -512,12 +590,12 @@ class TgWsProxyApp(_TgWsProxyAppBase):
 
     def update_menu_title(self):
         host = _config.get("host", DEFAULT_CONFIG["host"])
-        port = _config.get("port", DEFAULT_CONFIG["port"])
+        port = int(_config.get("port", DEFAULT_CONFIG["port"]))
         self._open_tg_item.title = f"Открыть в Telegram ({host}:{port})"
 
 
 def run_menubar():
-    global _app, _config
+    global _app, _config, _last_macos_icon_phase
 
     _config = load_config()
     save_config(_config)
@@ -553,7 +631,19 @@ def run_menubar():
     _show_first_run()
     _check_ipv6_warning()
 
-    _app = TgWsProxyApp()
+    phase0 = _proxy_state.snapshot()["phase"]
+    live_path = _macos_write_badged_icon(phase0)
+    _last_macos_icon_phase = phase0
+    _app = TgWsProxyApp(
+        menubar_icon_path=live_path
+        if live_path
+        else (str(MENUBAR_ICON_PATH) if MENUBAR_ICON_PATH.exists() else None),
+    )
+
+    threading.Thread(
+        target=_macos_icon_refresh_loop, daemon=True, name="macos-icon-refresh"
+    ).start()
+
     log.info("Menubar app running")
     _app.run()
 

@@ -29,15 +29,32 @@ def make_same_process_checker(
         except Exception:
             return False
 
+        frozen = bool(getattr(sys, "frozen", False))
+
         if script_marker is not None:
+            sm_lower = script_marker.lower()
             try:
                 for arg in proc.cmdline():
-                    if script_marker in arg:
+                    if sm_lower in arg.lower():
                         return True
             except Exception:
                 pass
+            # Тот же python.exe, маркер в строке cmdline (регистр пути на Windows)
+            if not frozen:
+                try:
+                    if proc.exe() and sys.executable:
+                        if os.path.normcase(os.path.abspath(proc.exe())) == os.path.normcase(
+                            os.path.abspath(sys.executable)
+                        ):
+                            try:
+                                joined = " ".join(proc.cmdline())
+                            except Exception:
+                                joined = ""
+                            if sm_lower in joined.lower():
+                                return True
+                except Exception:
+                    pass
 
-        frozen = bool(getattr(sys, "frozen", False))
         if frozen:
             return frozen_match(proc)
 
@@ -98,12 +115,44 @@ class SingleInstanceLock:
             except Exception:
                 meta = {}
 
+            if not psutil.pid_exists(pid):
+                f.unlink(missing_ok=True)
+                continue
+
             try:
                 proc = psutil.Process(pid)
+            except psutil.NoSuchProcess:
+                f.unlink(missing_ok=True)
+                continue
+            except Exception:
+                if self._log:
+                    self._log.debug("Lock %s: cannot open pid %s", f, pid, exc_info=True)
+                if psutil.pid_exists(pid):
+                    return False
+                f.unlink(missing_ok=True)
+                continue
+
+            try:
                 if self._same_process(meta, proc):
                     return False
             except Exception:
-                pass
+                if self._log:
+                    self._log.debug("same_process failed for pid %s", pid, exc_info=True)
+
+            # PID живой, но не распознали как наш экземпляр — не удаляем lock
+            # (раньше удаляли и второй процесс занимал порт → WinError 10013 и два трея).
+            try:
+                if proc.is_running():
+                    if self._log:
+                        self._log.warning(
+                            "Уже запущен другой процесс с lock %s (pid=%s); "
+                            "второй экземпляр не запускается.",
+                            f.name,
+                            pid,
+                        )
+                    return False
+            except Exception:
+                return False
 
             f.unlink(missing_ok=True)
 

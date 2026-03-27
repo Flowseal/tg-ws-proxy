@@ -32,8 +32,13 @@ from ui.ctk_theme import (
     main_content_frame,
 )
 from ui.tray_ctk import destroy_root_safely
-from ui.tray_icons import load_ico_or_synthesize
+from ui.tray_icons import (
+    apply_status_badge,
+    load_ico_or_synthesize,
+    normalize_tray_icon_image,
+)
 from utils.default_config import default_tray_config
+from utils.tray_diagnostics import format_status_tcp_report
 from utils.tray_io import load_tray_config, save_tray_config, setup_tray_logging
 from utils.tray_ipv6 import IPV6_WARN_BODY_LONG, has_ipv6_enabled
 from utils.tray_lock import (
@@ -42,6 +47,7 @@ from utils.tray_lock import (
     make_same_process_checker,
 )
 from utils.tray_paths import APP_NAME, tray_paths_linux
+from utils.tray_proxy_state import ProxyRuntimeState, build_tray_tooltip
 from utils.tray_proxy_runner import ProxyThreadRunner
 from utils.tray_updates import spawn_notify_update_async
 
@@ -57,6 +63,9 @@ DEFAULT_CONFIG = default_tray_config()
 _config: dict = {}
 _exiting: bool = False
 _tray_icon: Optional[object] = None
+_tray_base_icon: Optional[object] = None
+_last_tray_icon_phase: Optional[str] = None
+_proxy_state = ProxyRuntimeState()
 
 log = logging.getLogger("tg-ws-tray")
 
@@ -124,7 +133,8 @@ _proxy_runner = ProxyThreadRunner(
     show_error=_show_error,
     join_timeout=2.0,
     warn_on_join_stuck=False,
-    treat_win_error_10048_as_port_in_use=False,
+    runtime_state=_proxy_state,
+    check_port_before_start=True,
 )
 
 
@@ -171,6 +181,42 @@ def _maybe_notify_update_async() -> None:
         ),
         log=log,
     )
+
+
+def _on_status_tcp_dialog(icon=None, item=None):
+    host = _config.get("host", DEFAULT_CONFIG["host"])
+    port = int(_config.get("port", DEFAULT_CONFIG["port"]))
+    _show_info(
+        format_status_tcp_report(host, port, _proxy_state),
+        "TG WS Proxy — статус",
+    )
+
+
+def _tray_refresh_visuals() -> None:
+    global _last_tray_icon_phase
+    if _tray_icon is None or _exiting:
+        return
+    try:
+        _tray_icon.title = build_tray_tooltip(
+            host=_config.get("host", DEFAULT_CONFIG["host"]),
+            port=int(_config.get("port", DEFAULT_CONFIG["port"])),
+            state=_proxy_state,
+        )
+        phase = _proxy_state.snapshot()["phase"]
+        if _tray_base_icon is not None and phase != _last_tray_icon_phase:
+            _tray_icon.icon = apply_status_badge(_tray_base_icon, phase)
+            _last_tray_icon_phase = phase
+    except Exception:
+        pass
+
+
+def _start_tray_refresh_thread() -> None:
+    def loop() -> None:
+        while not _exiting:
+            _tray_refresh_visuals()
+            time.sleep(2.0)
+
+    threading.Thread(target=loop, daemon=True, name="tray-refresh").start()
 
 
 def _on_open_in_telegram(icon=None, item=None):
@@ -377,6 +423,8 @@ def _build_menu():
             default=True,
         ),
         pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Статус", _on_status_tcp_dialog),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem("Перезапустить прокси", _on_restart),
         pystray.MenuItem("Настройки...", _on_edit_config),
         pystray.MenuItem("Открыть логи", _on_open_logs),
@@ -386,7 +434,7 @@ def _build_menu():
 
 
 def run_tray():
-    global _tray_icon, _config
+    global _tray_icon, _config, _tray_base_icon, _last_tray_icon_phase
 
     _config = load_config()
     save_config(_config)
@@ -422,13 +470,19 @@ def run_tray():
     _show_first_run()
     _check_ipv6_warning()
 
-    icon_image = _load_icon()
+    raw_icon = _load_icon()
+    _tray_base_icon = normalize_tray_icon_image(raw_icon)
+    _phase0 = _proxy_state.snapshot()["phase"]
+    icon_image = apply_status_badge(_tray_base_icon, _phase0)
+    _last_tray_icon_phase = _phase0
     _tray_icon = pystray.Icon(
         APP_NAME,
         icon_image,
         "TG WS Proxy",
         menu=_build_menu(),
     )
+    _tray_refresh_visuals()
+    _start_tray_refresh_thread()
 
     log.info("Tray icon running")
     _tray_icon.run()
