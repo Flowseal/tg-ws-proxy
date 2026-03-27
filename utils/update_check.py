@@ -133,13 +133,18 @@ def fetch_latest_release(
         headers=headers,
         method="GET",
     )
-    with urlopen(req, timeout=timeout) as resp:
-        code = getattr(resp, "status", None) or resp.getcode()
-        new_etag = resp.headers.get("ETag")
-        if code == 304:
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            code = getattr(resp, "status", None) or resp.getcode()
+            new_etag = resp.headers.get("ETag")
+            raw = resp.read().decode("utf-8", errors="replace")
+            return json.loads(raw), new_etag, int(code)
+    except HTTPError as e:
+        if e.code == 304:
+            hdrs = e.headers
+            new_etag = hdrs.get("ETag") if hdrs else None
             return None, new_etag or etag, 304
-        raw = resp.read().decode("utf-8", errors="replace")
-        return json.loads(raw), new_etag, int(code)
+        raise
 
 
 def run_check(current_version: str) -> None:
