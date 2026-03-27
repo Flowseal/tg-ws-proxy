@@ -965,7 +965,6 @@ async def _handle_client(reader, writer):
         if dc is None and dst in _IP_TO_DC:
             dc, is_media = _IP_TO_DC.get(dst)
             if dc in _dc_opt:
-                # FIX: Negative DC for media connections, so the WS pool can distinguish them and use the correct domains.
                 init = _patch_init_dc(init, -dc if is_media else dc)
                 init_patched = True
 
@@ -1069,14 +1068,13 @@ async def _handle_client(reader, writer):
 
         splitter = None
 
-        # Fix: Let the Splitter be As Is turned off for the main PC stream (as Flowseal asked in PR #415),
-        # but STRICTLY turning it On for media-connections (is_media), so as the big files don't get fragmented by the TCP socket.
+        # Turning splitter on for mobile clients or media-connections, so as the big files don't get fragmented by the TCP socket.
         if proto is not None and (init_patched or is_media or proto != _PROTO_INTERMEDIATE):
             try:
                 splitter = _MsgSplitter(init, proto)
                 log.debug("[%s] MsgSplitter activated for proto 0x%08X", label, proto)
             except Exception:
-                 pass
+                pass
 
         # Send the buffered init packet
         await ws.send(init)
