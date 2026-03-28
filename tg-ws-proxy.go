@@ -29,7 +29,6 @@ import (
 	"io"
 	"log"
 	"math"
-	mrand "math/rand/v2"
 	"net"
 	"os"
 	"os/signal"
@@ -1815,65 +1814,23 @@ func runProxy(ctx context.Context, host string, port int, dcOptMap map[int]strin
 // Parse DC:IP list / CIDR pool
 // ---------------------------------------------------------------------------
 
-func randomIPFromCIDR(cidr string) (string, error) {
-	// If it's just an IP (no /), return it as-is
-	if !strings.Contains(cidr, "/") {
-		if ip := net.ParseIP(cidr); ip != nil {
-			return cidr, nil
-		}
-		return "", fmt.Errorf("invalid IP: %s", cidr)
-	}
-
-	ip, ipnet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return "", err
-	}
-	ip = ip.To4()
-	if ip == nil {
-		return "", fmt.Errorf("not ipv4")
-	}
-
-	start := binary.BigEndian.Uint32(ip)
-	mask := binary.BigEndian.Uint32(ipnet.Mask)
-
-	wildcard := ^mask
-	offset := uint32(1)
-	if wildcard > 1 {
-		offset = 1 + mrand.Uint32N(wildcard-1)
-	}
-
-	randIP := start + offset
-	res := make(net.IP, 4)
-	binary.BigEndian.PutUint32(res, randIP)
-	return res.String(), nil
-}
-
 func parseCIDRPool(cidrsStr string) (map[int]string, error) {
 	result := make(map[int]string)
-	ranges := strings.Split(cidrsStr, ",")
-	var validCIDRs []string
-	for _, r := range ranges {
-		r = strings.TrimSpace(r)
-		if r != "" {
-			validCIDRs = append(validCIDRs, r)
+	
+	pairs := strings.Split(cidrsStr, ",")
+	for _, pair := range pairs {
+		parts := strings.Split(pair, ":")
+		if len(parts) == 2 {
+			dcRaw := strings.TrimSpace(parts[0])
+			ipRaw := strings.TrimSpace(parts[1])
+			
+			dc, err := strconv.Atoi(dcRaw)
+			if err == nil && ipRaw != "" {
+				result[dc] = ipRaw
+			}
 		}
 	}
-	if len(validCIDRs) == 0 {
-		validCIDRs = []string{"149.154.167.220/32"}
-	}
-
-	dcs := []int{1, 2, 3, 4, 5, 203}
-	for _, dc := range dcs {
-		cidr := validCIDRs[mrand.IntN(len(validCIDRs))]
-		ipStr, err := randomIPFromCIDR(cidr)
-		if err == nil {
-			result[dc] = ipStr
-		} else if net.ParseIP(cidr) != nil {
-			result[dc] = cidr
-		} else {
-			result[dc] = "149.154.167.220"
-		}
-	}
+	
 	return result, nil
 }
 
