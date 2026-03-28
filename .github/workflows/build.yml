@@ -16,6 +16,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -329,7 +332,7 @@ jobs:
         working-directory: android
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Validate Android release signing secrets
         env:
@@ -349,9 +352,14 @@ jobs:
           distribution: temurin
           java-version: "17"
           cache: gradle
+          cache-dependency-path: |
+            android/settings.gradle.kts
+            android/build.gradle.kts
+            android/gradle.properties
+            android/app/build.gradle.kts
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -390,13 +398,19 @@ jobs:
           cp app/build/outputs/apk/legacy32/release/app-legacy32-release.apk \
             "app/build/outputs/apk/legacy32/release/$ANDROID_APK_LEGACY32_NAME"
 
+      - name: Stage Android release artifacts
+        run: |
+          mkdir -p dist
+          cp "app/build/outputs/apk/standard/release/$ANDROID_APK_STANDARD_NAME" "dist/$ANDROID_APK_STANDARD_NAME"
+          cp "app/build/outputs/apk/legacy32/release/$ANDROID_APK_LEGACY32_NAME" "dist/$ANDROID_APK_LEGACY32_NAME"
+
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: TgWsProxy-android-release
           path: |
-            android/app/build/outputs/apk/standard/release/${{ env.ANDROID_APK_STANDARD_NAME }}
-            android/app/build/outputs/apk/legacy32/release/${{ env.ANDROID_APK_LEGACY32_NAME }}
+            android/dist/${{ env.ANDROID_APK_STANDARD_NAME }}
+            android/dist/${{ env.ANDROID_APK_LEGACY32_NAME }}
 
   release:
     needs: [build-windows, build-win7, build-macos, build-linux, build-android]
@@ -410,7 +424,7 @@ jobs:
           merge-multiple: true
 
       - name: Download Android build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: TgWsProxy-android-release
           path: dist

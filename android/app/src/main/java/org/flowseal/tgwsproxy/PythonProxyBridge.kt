@@ -8,6 +8,7 @@ import org.json.JSONObject
 
 object PythonProxyBridge {
     private const val MODULE_NAME = "android_proxy_bridge"
+    private val pythonStartLock = Any()
 
     fun start(context: Context, config: NormalizedProxyConfig): String {
         val module = getModule(context)
@@ -54,6 +55,7 @@ object PythonProxyBridge {
             latestVersion = json.optString("latest").ifBlank { null },
             hasUpdate = json.optBoolean("has_update", false),
             aheadOfRelease = json.optBoolean("ahead_of_release", false),
+            checked = json.optBoolean("checked", false),
             htmlUrl = json.optString("html_url").ifBlank { null },
             error = json.optString("error").ifBlank { null },
         )
@@ -63,8 +65,19 @@ object PythonProxyBridge {
         getPython(context.applicationContext).getModule(MODULE_NAME)
 
     private fun getPython(context: Context): Python {
-        if (!Python.isStarted()) {
-            Python.start(AndroidPlatform(context))
+        if (Python.isStarted()) {
+            return Python.getInstance()
+        }
+        synchronized(pythonStartLock) {
+            if (!Python.isStarted()) {
+                try {
+                    Python.start(AndroidPlatform(context))
+                } catch (exc: IllegalStateException) {
+                    if (!Python.isStarted()) {
+                        throw exc
+                    }
+                }
+            }
         }
         return Python.getInstance()
     }
@@ -82,6 +95,7 @@ data class ProxyUpdateStatus(
     val latestVersion: String? = null,
     val hasUpdate: Boolean = false,
     val aheadOfRelease: Boolean = false,
+    val checked: Boolean = false,
     val htmlUrl: String? = null,
     val error: String? = null,
 )

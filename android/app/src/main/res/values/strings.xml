@@ -18,13 +18,13 @@
     <string name="system_check_background_restricted">Background restriction: enabled, Android may block long-running work.</string>
     <string name="system_check_oem_note">Some phones also require manual vendor settings such as Autostart, Lock in recents, or Unrestricted battery mode.</string>
     <string name="endpoint_section_label">Proxy endpoint</string>
-    <string name="routing_section_label">Routing</string>
     <string name="advanced_section_label">Advanced</string>
     <string name="actions_section_label">Actions</string>
     <string name="updates_label">Updates</string>
     <string name="updates_current_version_format">v%1$s</string>
     <string name="updates_check_label">Check for updates on launch</string>
-    <string name="updates_status_initial">Status will appear after background check.</string>
+    <string name="updates_status_initial">Checking GitHub release…</string>
+    <string name="updates_status_idle">Not checked yet</string>
     <string name="updates_status_disabled">Automatic update checks are disabled.</string>
     <string name="updates_status_latest">Installed version %1$s matches the latest GitHub release.</string>
     <string name="updates_status_newer">Installed version %1$s is newer than the latest GitHub release.</string>

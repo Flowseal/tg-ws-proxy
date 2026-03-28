@@ -8,6 +8,14 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+fun loadProxyVersionName(): String {
+    val versionFile = rootProject.projectDir.resolve("../proxy/__init__.py")
+    val match = Regex("""__version__\s*=\s*"([^"]+)"""")
+        .find(versionFile.readText())
+        ?: throw GradleException("Failed to parse proxy version from ${versionFile.absolutePath}")
+    return match.groupValues[1]
+}
+
 data class ReleaseSigningEnv(
     val keystoreFile: File,
     val storePassword: String,
@@ -51,12 +59,16 @@ val stagePythonSources by tasks.registering(Sync::class) {
     from(rootProject.projectDir.resolve("../proxy")) {
         into("proxy")
     }
+    from(rootProject.projectDir.resolve("../utils")) {
+        into("utils")
+    }
     into(stagedPythonSourcesDir)
 }
 val releaseSigningRequested = gradle.startParameter.taskNames.any {
     it.contains("release", ignoreCase = true)
 }
 val releaseSigningEnv = loadReleaseSigningEnv(releaseSigningRequested)
+val appVersionName = loadProxyVersionName()
 
 android {
     namespace = "org.flowseal.tgwsproxy"
@@ -67,7 +79,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
