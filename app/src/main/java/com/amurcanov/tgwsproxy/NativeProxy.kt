@@ -1,4 +1,4 @@
-package com.example.tgwsproxy
+package com.amurcanov.tgwsproxy
 
 import com.sun.jna.Library
 import com.sun.jna.Native

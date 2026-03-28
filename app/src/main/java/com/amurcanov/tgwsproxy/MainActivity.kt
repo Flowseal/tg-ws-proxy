@@ -1,4 +1,4 @@
-package com.example.tgwsproxy
+package com.amurcanov.tgwsproxy
 
 import android.Manifest
 import android.content.Context
@@ -42,6 +42,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -51,14 +56,7 @@ import kotlinx.coroutines.flow.update
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
-data class DataCenter(val name: String, val ips: String)
-
-val datacenters = listOf(
-    DataCenter("Нидерланды", "91.108.4.0/22,91.108.8.0/22,149.154.160.0/20"),
-    DataCenter("Финляндия", "91.105.192.0/23,185.76.151.0/24"),
-    DataCenter("Сингапур", "91.108.56.0/22,91.108.16.0/22"),
-    DataCenter("Россия", "91.108.12.0/22,91.108.20.0/22")
-)
+// DataCenters list removed
 
 val telegramApps = listOf(
     "org.telegram.messenger",
@@ -140,12 +138,16 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ProxyScreen(isDarkTheme: Boolean, onThemeChange: () -> Unit) {
     val context = LocalContext.current
+    val prefs = context.getSharedPreferences("ProxyPrefs", Context.MODE_PRIVATE)
     val isRunning by ProxyService.isRunning.collectAsStateWithLifecycle()
-    var selectedDc by remember { mutableStateOf<DataCenter?>(datacenters[0]) }
-    var showDcModal by remember { mutableStateOf(false) }
-    var portText by remember { mutableStateOf("1080") }
-    var selectedPoolSize by remember { mutableStateOf(4) }
+    var dc2Text by remember { mutableStateOf(prefs.getString("dc2", "149.154.167.220") ?: "149.154.167.220") }
+    var dc4Text by remember { mutableStateOf(prefs.getString("dc4", "149.154.167.220") ?: "149.154.167.220") }
+    var dc203Text by remember { mutableStateOf(prefs.getString("dc203", "149.154.167.220") ?: "149.154.167.220") }
+    var portText by remember { mutableStateOf(prefs.getString("port", "1080") ?: "1080") }
+    var selectedPoolSize by remember { mutableStateOf(prefs.getInt("pool", 4)) }
     var showLogs by rememberSaveable { mutableStateOf(true) }
+    var showInfoModal by remember { mutableStateOf(false) }
+    var showIpSetupModal by remember { mutableStateOf(false) }
 
     LaunchedEffect(showLogs) {
         if (showLogs) LogManager.startListening() else LogManager.stopListening()
@@ -157,15 +159,21 @@ fun ProxyScreen(isDarkTheme: Boolean, onThemeChange: () -> Unit) {
             Toast.makeText(context, "Неверный порт", Toast.LENGTH_SHORT).show()
             return@rememberUpdatedState
         }
-        if (selectedDc == null) {
-            Toast.makeText(context, "Выберите пул датацентров", Toast.LENGTH_SHORT).show()
+        val parsedIps = buildList {
+            if (dc2Text.isNotBlank()) add("2:${dc2Text.trim()}")
+            if (dc4Text.isNotBlank()) add("4:${dc4Text.trim()}")
+            if (dc203Text.isNotBlank()) add("203:${dc203Text.trim()}")
+        }.joinToString(",")
+
+        if (parsedIps.isEmpty()) {
+            Toast.makeText(context, "Впишите IP хотя бы для одного DC", Toast.LENGTH_SHORT).show()
             return@rememberUpdatedState
         }
         
         val startIntent = Intent(context, ProxyService::class.java).apply {
             action = ProxyService.ACTION_START
             putExtra(ProxyService.EXTRA_PORT, port)
-            putExtra(ProxyService.EXTRA_IPS, selectedDc!!.ips)
+            putExtra(ProxyService.EXTRA_IPS, parsedIps)
             putExtra(ProxyService.EXTRA_POOL_SIZE, selectedPoolSize)
         }
         ContextCompat.startForegroundService(context, startIntent)
@@ -189,6 +197,16 @@ fun ProxyScreen(isDarkTheme: Boolean, onThemeChange: () -> Unit) {
             TopAppBar(
                 title = { Text("Telegram WS Proxy", fontWeight = FontWeight.SemiBold) },
                 actions = {
+                    TextButton(
+                        onClick = { showInfoModal = true },
+                        colors = ButtonDefaults.textButtonColors(
+                            containerColor = Color.Transparent,
+                            contentColor = MaterialTheme.colorScheme.onSurface
+                        ),
+                        modifier = Modifier.padding(end = 12.dp)
+                    ) {
+                        Text("инфо", fontWeight = FontWeight.SemiBold, fontSize = 22.sp)
+                    }
                     IconButton(onClick = onThemeChange) {
                         Crossfade(targetState = isDarkTheme, animationSpec = tween(400), label = "themeAnim") { isDark ->
                             if (isDark) {
@@ -235,7 +253,10 @@ fun ProxyScreen(isDarkTheme: Boolean, onThemeChange: () -> Unit) {
                 // Proxy Port Input
                 OutlinedTextField(
                     value = portText,
-                    onValueChange = { portText = it },
+                    onValueChange = { 
+                        portText = it
+                        prefs.edit().putString("port", it).apply()
+                    },
                     label = { Text("Порт прокси") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     shape = RoundedCornerShape(24.dp),
@@ -249,18 +270,18 @@ fun ProxyScreen(isDarkTheme: Boolean, onThemeChange: () -> Unit) {
                     singleLine = true
                 )
 
-                // DC selection
+                // DC selection modal button
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 8.dp)
                         .clip(RoundedCornerShape(24.dp))
-                        .clickable { showDcModal = true }
+                        .clickable { showIpSetupModal = true }
                 ) {
                     OutlinedTextField(
-                        value = selectedDc?.name ?: "",
+                        value = "Настроить адреса",
                         onValueChange = {},
-                        label = { Text("Пул датацентров") },
+                        label = { Text("Настройка IP") },
                         enabled = false,
                         shape = RoundedCornerShape(24.dp),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -271,8 +292,6 @@ fun ProxyScreen(isDarkTheme: Boolean, onThemeChange: () -> Unit) {
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
-
-
 
                 // Pool size selector
                 Text(
@@ -290,7 +309,10 @@ fun ProxyScreen(isDarkTheme: Boolean, onThemeChange: () -> Unit) {
                     listOf(4, 6, 8).forEach { size ->
                         val isSelected = selectedPoolSize == size
                         FilledTonalButton(
-                            onClick = { selectedPoolSize = size },
+                            onClick = { 
+                                selectedPoolSize = size
+                                prefs.edit().putInt("pool", size).apply()
+                            },
                             enabled = !isRunning,
                             modifier = Modifier.weight(1f).height(48.dp),
                             shape = RoundedCornerShape(12.dp),
@@ -336,7 +358,7 @@ fun ProxyScreen(isDarkTheme: Boolean, onThemeChange: () -> Unit) {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Apply in Telegram Button
                 FilledTonalButton(
@@ -425,25 +447,63 @@ fun ProxyScreen(isDarkTheme: Boolean, onThemeChange: () -> Unit) {
         }
     }
 
-    if (showDcModal) {
-        DcSelectionDialog(
-            currentValue = selectedDc,
-            onDismiss = { showDcModal = false },
-            onSelect = { 
-                selectedDc = it
-                showDcModal = false 
-            }
+    if (showInfoModal) {
+        InfoDialog(onDismiss = { showInfoModal = false })
+    }
+
+    if (showIpSetupModal) {
+        IpSetupDialog(
+            dc2Text = dc2Text,
+            onDc2Change = { 
+                dc2Text = it
+                prefs.edit().putString("dc2", it).apply()
+            },
+            dc4Text = dc4Text,
+            onDc4Change = { 
+                dc4Text = it
+                prefs.edit().putString("dc4", it).apply()
+            },
+            dc203Text = dc203Text,
+            onDc203Change = { 
+                dc203Text = it
+                prefs.edit().putString("dc203", it).apply()
+            },
+            onDismiss = { showIpSetupModal = false }
         )
     }
 }
 
 @Composable
-fun DcSelectionDialog(
-    currentValue: DataCenter?,
-    onDismiss: () -> Unit,
-    onSelect: (DataCenter) -> Unit
+fun IpSetupDialog(
+    dc2Text: String, onDc2Change: (String) -> Unit,
+    dc4Text: String, onDc4Change: (String) -> Unit,
+    dc203Text: String, onDc203Change: (String) -> Unit,
+    onDismiss: () -> Unit
 ) {
-    val currentOnSelect by rememberUpdatedState(onSelect)
+    val onIpChange = { newValue: String, update: (String) -> Unit ->
+        if (newValue.all { it.isDigit() || it == '.' }) {
+            update(newValue)
+        }
+    }
+
+    @Composable
+    fun dcInput(label: String, value: String, update: (String) -> Unit) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = { onIpChange(it, update) },
+            label = { Text(label) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 8.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant
+            ),
+            singleLine = true
+        )
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -459,37 +519,139 @@ fun DcSelectionDialog(
                     modifier = Modifier.padding(bottom = 20.dp),
                     fontWeight = FontWeight.SemiBold
                 )
-                LazyColumn(
-                    modifier = Modifier.padding(bottom = 8.dp)
-                ) {
-                    items(datacenters) { dc ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable { currentOnSelect(dc) }
-                                .padding(vertical = 16.dp, horizontal = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = dc == currentValue,
-                                onClick = null
-                            )
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text(
-                                text = dc.name, 
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
+                
+                dcInput("DC2", dc2Text, onDc2Change)
+                dcInput("DC4", dc4Text, onDc4Change)
+                dcInput("DC203", dc203Text, onDc203Change)
                 
                 Spacer(modifier = Modifier.height(8.dp))
                 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = onDismiss) {
-                        Text("Отмена", style = MaterialTheme.typography.labelLarge)
+                        Text("Готово", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun InfoDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.widthIn(max = 400.dp).fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    text = "Версия 1.0.4",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                Text(
+                    text = "Что нового:",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                Text(
+                    text = "1. Убран выбор пула датацентров",
+                    color = Color(0xFFD32F2F),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+
+                Text(
+                    text = "2. Добавлена возможность ввода IP датацентров вручную",
+                    color = Color(0xFF388E3C),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+
+                Text(
+                    text = "3. При использовании IP адреса, указанного по умолчанию (149.154.167.220), вспомогательные средства (VPN и прочее) не требуются.",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                Divider(modifier = Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f))
+
+                val openLink = { url: String ->
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "Не удалось открыть ссылку", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text("Оригинальный автор tg-ws-proxy:", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = "→ Flowseal",
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 2.dp, start = 8.dp).clickable { openLink("https://github.com/Flowseal") }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text("Человек, благодаря кому вышла v1.0.4:", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = "→ IMDelewer",
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 2.dp, start = 8.dp).clickable { openLink("https://github.com/IMDelewer") }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = buildAnnotatedString {
+                        append("Ознакомиться с актуальным списком CIDR датацентров Telegram можно ")
+                        withStyle(style = SpanStyle(
+                            color = MaterialTheme.colorScheme.primary,
+                            textDecoration = TextDecoration.Underline
+                        )) {
+                            append("тут")
+                        }
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .clickable { openLink("https://core.telegram.org/resources/cidr.txt") }
+                        .padding(bottom = 16.dp)
+                )
+
+                Text(
+                    text = "Вероятнее всего, изменение IP адресов в графах DC может нарушить работу прокси без работающего VPN. " +
+                           "Не советую ничего менять без необходимости. Однако, если у вас наблюдаются проблемы в Telegram " +
+                           "при использовании адреса 149.154.167.220, вы можете заменить его на другие IP из актуальных списков. " +
+                           "Помните, что в таком случае вам может потребоваться включённый VPN — этот двойственный способ (Proxy + VPN) " +
+                           "зачастую решает проблемы соединения, если Telegram отказывается стабильно работать.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 16.sp
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Закрыть", style = MaterialTheme.typography.labelLarge)
                     }
                 }
             }
@@ -512,6 +674,10 @@ fun formatLogLine(raw: String): String {
     val errIdx = raw.indexOf("ERROR ")
     if (errIdx >= 0) {
         return "✖ " + raw.substring(errIdx + 6).trim()
+    }
+    val dbgIdx = raw.indexOf("DEBUG ")
+    if (dbgIdx >= 0) {
+        return "◦ " + raw.substring(dbgIdx + 6).trim()
     }
     // Fallback: try to find the message after ): 
     val msgIdx = raw.indexOf("): ")
@@ -553,6 +719,7 @@ fun openTelegram(context: Context, url: String) {
 object LogManager {
     val logs = MutableStateFlow<List<String>>(emptyList())
     private var job: Job? = null
+    private var logcatProcess: Process? = null
 
     fun startListening() {
         if (job?.isActive == true) return
@@ -561,25 +728,32 @@ object LogManager {
                 // Clear old logs just to avoid stale
                 Runtime.getRuntime().exec("logcat -c").waitFor()
                 val process = Runtime.getRuntime().exec(arrayOf("logcat", "-v", "time", "*:D"))
+                logcatProcess = process
                 val reader = BufferedReader(InputStreamReader(process.inputStream))
                 
                 val myPid = android.os.Process.myPid().toString()
                 while (isActive) {
                     val line = reader.readLine() ?: break
-                    if (line.contains(myPid) && (line.contains("INFO") || line.contains("WARN") || line.contains("ERROR"))) {
+                    if (line.contains(myPid) && (line.contains("INFO") || line.contains("WARN") || line.contains("ERROR") || line.contains("DEBUG"))) {
                         logs.update { current ->
                             val n = current + line
                             if (n.size > 30) n.takeLast(30) else n
                         }
                     }
                 }
-            } catch (e: Exception) {}
+            } catch (e: Exception) {
+            } finally {
+                logcatProcess?.destroy()
+                logcatProcess = null
+            }
         }
     }
 
     fun stopListening() {
         job?.cancel()
         job = null
+        logcatProcess?.destroy()
+        logcatProcess = null
         logs.value = emptyList()
     }
 }

@@ -1,4 +1,4 @@
-package com.example.tgwsproxy
+package com.amurcanov.tgwsproxy
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -22,8 +22,8 @@ class ProxyService : Service() {
     private var statsJob: Job? = null
 
     companion object {
-        const val ACTION_START = "com.example.tgwsproxy.START"
-        const val ACTION_STOP = "com.example.tgwsproxy.STOP"
+        const val ACTION_START = "com.amurcanov.tgwsproxy.START"
+        const val ACTION_STOP = "com.amurcanov.tgwsproxy.STOP"
         const val EXTRA_PORT = "EXTRA_PORT"
         const val EXTRA_IPS = "EXTRA_IPS"
         const val EXTRA_POOL_SIZE = "EXTRA_POOL_SIZE"
