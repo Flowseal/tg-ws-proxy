@@ -46,6 +46,19 @@ object PythonProxyBridge {
         )
     }
 
+    fun getUpdateStatus(context: Context, checkNow: Boolean = false): ProxyUpdateStatus {
+        val payload = getModule(context).callAttr("get_update_status_json", checkNow).toString()
+        val json = JSONObject(payload)
+        return ProxyUpdateStatus(
+            currentVersion = json.optString("current_version").ifBlank { "unknown" },
+            latestVersion = json.optString("latest").ifBlank { null },
+            hasUpdate = json.optBoolean("has_update", false),
+            aheadOfRelease = json.optBoolean("ahead_of_release", false),
+            htmlUrl = json.optString("html_url").ifBlank { null },
+            error = json.optString("error").ifBlank { null },
+        )
+    }
+
     private fun getModule(context: Context) =
         getPython(context.applicationContext).getModule(MODULE_NAME)
 
@@ -62,4 +75,13 @@ data class ProxyTrafficStats(
     val bytesDown: Long = 0L,
     val running: Boolean = false,
     val lastError: String? = null,
+)
+
+data class ProxyUpdateStatus(
+    val currentVersion: String = "unknown",
+    val latestVersion: String? = null,
+    val hasUpdate: Boolean = false,
+    val aheadOfRelease: Boolean = false,
+    val htmlUrl: String? = null,
+    val error: String? = null,
 )

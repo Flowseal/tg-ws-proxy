@@ -7,6 +7,7 @@ data class ProxyConfig(
     val logMaxMbText: String = formatDecimal(DEFAULT_LOG_MAX_MB),
     val bufferKbText: String = DEFAULT_BUFFER_KB.toString(),
     val poolSizeText: String = DEFAULT_POOL_SIZE.toString(),
+    val checkUpdates: Boolean = true,
     val verbose: Boolean = false,
 ) {
     fun validate(): ValidationResult {
@@ -78,6 +79,7 @@ data class ProxyConfig(
                 logMaxMb = logMaxMbValue,
                 bufferKb = bufferKbValue,
                 poolSize = poolSizeValue,
+                checkUpdates = checkUpdates,
                 verbose = verbose,
             )
         )
@@ -130,5 +132,6 @@ data class NormalizedProxyConfig(
     val logMaxMb: Double,
     val bufferKb: Int,
     val poolSize: Int,
+    val checkUpdates: Boolean,
     val verbose: Boolean,
 )

@@ -124,6 +124,38 @@ class AndroidProxyBridgeTests(unittest.TestCase):
         self.assertEqual(captured["log_max_mb"], 7.0)
         self.assertTrue(captured["verbose"])
 
+    def test_get_update_status_json_merges_python_update_state(self):
+        original_run_check = android_proxy_bridge.run_check
+        original_get_status = android_proxy_bridge.get_status
+        try:
+            captured = {}
+
+            def fake_run_check(version):
+                captured["run_check_version"] = version
+
+            def fake_get_status():
+                return {
+                    "latest": "1.3.1",
+                    "has_update": True,
+                    "ahead_of_release": False,
+                    "html_url": "https://example.com/release",
+                    "error": "",
+                }
+
+            android_proxy_bridge.run_check = fake_run_check
+            android_proxy_bridge.get_status = fake_get_status
+
+            result = json.loads(android_proxy_bridge.get_update_status_json(True))
+        finally:
+            android_proxy_bridge.run_check = original_run_check
+            android_proxy_bridge.get_status = original_get_status
+
+        self.assertEqual(captured["run_check_version"], android_proxy_bridge.__version__)
+        self.assertEqual(result["current_version"], android_proxy_bridge.__version__)
+        self.assertEqual(result["latest"], "1.3.1")
+        self.assertTrue(result["has_update"])
+        self.assertEqual(result["html_url"], "https://example.com/release")
+
 
 if __name__ == "__main__":
     unittest.main()

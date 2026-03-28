@@ -27,6 +27,7 @@ class ProxySettingsStore(context: Context) {
                 KEY_POOL_SIZE,
                 ProxyConfig.DEFAULT_POOL_SIZE,
             ).toString(),
+            checkUpdates = preferences.getBoolean(KEY_CHECK_UPDATES, true),
             verbose = preferences.getBoolean(KEY_VERBOSE, false),
         )
     }
@@ -39,6 +40,7 @@ class ProxySettingsStore(context: Context) {
             .putFloat(KEY_LOG_MAX_MB, config.logMaxMb.toFloat())
             .putInt(KEY_BUFFER_KB, config.bufferKb)
             .putInt(KEY_POOL_SIZE, config.poolSize)
+            .putBoolean(KEY_CHECK_UPDATES, config.checkUpdates)
             .putBoolean(KEY_VERBOSE, config.verbose)
             .apply()
     }
@@ -51,6 +53,7 @@ class ProxySettingsStore(context: Context) {
         private const val KEY_LOG_MAX_MB = "log_max_mb"
         private const val KEY_BUFFER_KB = "buf_kb"
         private const val KEY_POOL_SIZE = "pool_size"
+        private const val KEY_CHECK_UPDATES = "check_updates"
         private const val KEY_VERBOSE = "verbose"
     }
 }

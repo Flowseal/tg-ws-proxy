@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from proxy.app_runtime import ProxyAppRuntime
+from proxy import __version__
 import proxy.tg_ws_proxy as tg_ws_proxy
+from utils.update_check import RELEASES_PAGE_URL, get_status, run_check
 
 
 _RUNTIME_LOCK = threading.RLock()
@@ -124,4 +126,24 @@ def get_runtime_stats_json() -> str:
     payload = dict(tg_ws_proxy.get_stats_snapshot())
     payload["running"] = running
     payload["last_error"] = _LAST_ERROR
+    return json.dumps(payload)
+
+
+def get_update_status_json(check_now: bool = False) -> str:
+    payload = {
+        "current_version": __version__,
+        "latest": "",
+        "has_update": False,
+        "ahead_of_release": False,
+        "html_url": RELEASES_PAGE_URL,
+        "error": "",
+    }
+    try:
+        if check_now:
+            run_check(__version__)
+        payload.update(get_status())
+        payload["current_version"] = __version__
+        payload["html_url"] = payload.get("html_url") or RELEASES_PAGE_URL
+    except Exception as exc:
+        payload["error"] = str(exc)
     return json.dumps(payload)
