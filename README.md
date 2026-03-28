@@ -82,6 +82,23 @@ chmod +x TgWsProxy_linux_amd64
 
 При первом запуске откроется окно с инструкцией. Приложение работает в системном трее (требуется AppIndicator).
 
+### Android
+
+Перейдите на [страницу релизов](https://github.com/Flowseal/tg-ws-proxy/releases) и скачайте подписанный APK вида **`tg-ws-proxy-android-vX.Y.Z.apk`**.
+
+После установки:
+
+- откройте приложение
+- проверьте `Android background limits`
+- при необходимости отключите battery optimization и снимите background restrictions
+- нажмите **Start Service**
+- нажмите **Open in Telegram**
+
+Что важно для стабильной работы на Android:
+
+- разрешите уведомления
+- отключите battery optimization для приложения
+
 ## Установка из исходников
 
 ### Консольный proxy
@@ -118,6 +135,58 @@ tg-ws-proxy-tray-linux
 
 ```bash
 tg-ws-proxy [--port PORT] [--host HOST] [--dc-ip DC:IP ...] [-v]
+```
+
+### Android debug APK
+
+Требуются JDK 17, Android SDK и Gradle. Локальная debug-сборка:
+
+```bash
+./android/build-local-debug.sh assembleStandardDebug
+```
+
+Результат:
+
+```text
+android/app/build/outputs/apk/standard/debug/app-standard-debug.apk
+```
+
+Legacy32 debug-сборка:
+
+```bash
+./android/build-local-debug.sh assembleLegacy32Debug
+```
+
+Результат:
+
+```text
+android/app/build/outputs/apk/legacy32/debug/app-legacy32-debug.apk
+```
+
+### Android signed release APK
+
+Для локальной release-сборки нужен keystore и переменные окружения:
+
+```bash
+export ANDROID_KEYSTORE_FILE=/path/to/tg-ws-proxy-release.keystore
+export ANDROID_KEYSTORE_PASSWORD=...
+export ANDROID_KEY_ALIAS=tg-ws-proxy
+export ANDROID_KEY_PASSWORD=...
+```
+
+Сборка:
+
+```bash
+cd android
+./build-local-debug.sh assembleStandardRelease
+./build-local-debug.sh assembleLegacy32Release
+```
+
+Результат:
+
+```text
+android/app/build/outputs/apk/standard/release/app-standard-release.apk
+android/app/build/outputs/apk/legacy32/release/app-legacy32-release.apk
 ```
 
 **Аргументы:**
@@ -171,6 +240,26 @@ tg-ws-proxy-tray-linux = "linux:main"
    - **Порт:** `1080`
    - **Логин/Пароль:** оставить пустыми
 
+## Настройка Telegram Android
+
+### Автоматически
+
+В приложении нажмите **Open in Telegram** после запуска foreground service.
+
+### Вручную
+
+1. Telegram → **Настройки** → **Данные и память** → **Настройки прокси**
+2. Добавить прокси:
+   - **Тип:** SOCKS5
+   - **Сервер:** `127.0.0.1`
+   - **Порт:** `1080`
+   - **Логин/Пароль:** оставить пустыми
+
+Важно:
+
+- сначала должен быть запущен foreground service
+- если Telegram был уже открыт, иногда проще закрыть и открыть его заново после запуска прокси
+
 ## Конфигурация
 
 Tray-приложение хранит данные в:
@@ -210,6 +299,17 @@ Tray-приложение хранит данные в:
 - Apple Silicon macOS 11.0+
 - Linux x86_64 (требуется AppIndicator для системного трея)
 
+Android-артефакты:
+
+- `tg-ws-proxy-android-vX.Y.Z.apk`
+- `tg-ws-proxy-android-vX.Y.Z-legacy32.apk`
+
+Для signed Android release в GitHub Actions нужны secrets:
+
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
 ## Лицензия
 
 [MIT License](LICENSE)

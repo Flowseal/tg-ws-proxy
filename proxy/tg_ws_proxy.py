@@ -13,7 +13,8 @@ import struct
 import sys
 import time
 from typing import Dict, List, Optional, Set, Tuple
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+from proxy.crypto_backend import create_aes_ctr_transform
 
 
 DEFAULT_PORT = 1080
@@ -389,31 +390,28 @@ def _is_http_transport(data: bytes) -> bool:
             data[:5] == b'HEAD ' or data[:8] == b'OPTIONS ')
 
 
-def _dc_from_init(data: bytes):
+def _dc_from_init(data: bytes, *, return_proto: bool = False):
     try:
-        cipher = Cipher(algorithms.AES(data[8:40]), modes.CTR(data[40:56]))
-        encryptor = cipher.encryptor()
-        keystream = encryptor.update(_ZERO_64)
-        plain = (int.from_bytes(data[56:64], 'big') ^
-                 int.from_bytes(keystream[56:64], 'big')).to_bytes(8, 'big')
-        
-        proto, dc_raw = _st_Ih.unpack(plain[:6])
-        
+        key = bytes(data[8:40])
+        iv = bytes(data[40:56])
+        encryptor = create_aes_ctr_transform(key, iv)
+        keystream = encryptor.update(b'\x00' * 64) + encryptor.finalize()
+        plain = bytes(a ^ b for a, b in zip(data[56:64], keystream[56:64]))
+        proto = struct.unpack('<I', plain[0:4])[0]
+        dc_raw = struct.unpack('<h', plain[4:6])[0]
         log.debug("dc_from_init: proto=0x%08X dc_raw=%d plain=%s",
                   proto, dc_raw, plain.hex())
-        
         if proto in _VALID_PROTOS:
             dc = abs(dc_raw)
             if 1 <= dc <= 5 or dc == 203:
-                return dc, (dc_raw < 0), proto
-            # IMPORTANT: If the protocol is valid, but dc_id is invalid (Android),
-            # we must return the proto so that the Splitter knows the protocol type
-            # and can split packets correctly, even if DC extraction failed.
-            return None, False, proto
+                return (
+                    (dc, (dc_raw < 0), proto)
+                    if return_proto else (dc, (dc_raw < 0))
+                )
+            return (None, False, proto) if return_proto else (None, False)
     except Exception as exc:
         log.debug("DC extraction failed: %s", exc)
-        
-    return None, False, None
+    return (None, False, None) if return_proto else (None, False)
 
 def _patch_init_dc(data: bytes, dc: int) -> bytes:
     """
@@ -427,9 +425,10 @@ def _patch_init_dc(data: bytes, dc: int) -> bytes:
 
     new_dc = struct.pack('<h', dc)
     try:
-        cipher = Cipher(algorithms.AES(data[8:40]), modes.CTR(data[40:56]))
-        enc = cipher.encryptor()
-        ks = enc.update(_ZERO_64)
+        key_raw = bytes(data[8:40])
+        iv = bytes(data[40:56])
+        enc = create_aes_ctr_transform(key_raw, iv)
+        ks = enc.update(b'\x00' * 64) + enc.finalize()
         patched = bytearray(data[:64])
         patched[60] = ks[60] ^ new_dc[0]
         patched[61] = ks[61] ^ new_dc[1]
@@ -453,11 +452,13 @@ class _MsgSplitter:
 
     __slots__ = ('_dec', '_proto', '_cipher_buf', '_plain_buf', '_disabled')
 
-    def __init__(self, init_data: bytes, proto: int):
-        cipher = Cipher(algorithms.AES(init_data[8:40]),
-                        modes.CTR(init_data[40:56]))
-        self._dec = cipher.encryptor()
-        self._dec.update(_ZERO_64)  # skip init packet
+    def __init__(self, init_data: bytes, proto: Optional[int] = None):
+        if proto is None:
+            _, _, proto = _dc_from_init(init_data, return_proto=True)
+        key_raw = bytes(init_data[8:40])
+        iv = bytes(init_data[40:56])
+        self._dec = create_aes_ctr_transform(key_raw, iv)
+        self._dec.update(b'\x00' * 64)  # skip init packet
         self._proto = proto
         self._cipher_buf = bytearray()
         self._plain_buf = bytearray()
@@ -574,6 +575,21 @@ class Stats:
 
 
 _stats = Stats()
+
+
+def reset_stats() -> None:
+    global _stats
+    _stats = Stats()
+
+
+def get_stats_snapshot() -> Dict[str, int]:
+    return {
+        "bytes_up": _stats.bytes_up,
+        "bytes_down": _stats.bytes_down,
+        "connections_total": _stats.connections_total,
+        "connections_ws": _stats.connections_ws,
+        "connections_tcp_fallback": _stats.connections_tcp_fallback,
+    }
 
 
 class _WsPool:
