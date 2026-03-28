@@ -1,0 +1,9 @@
+# Нормализация окончаний строк: LF в индексе (кроссплатформенные диффы).
+* text=auto
+
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

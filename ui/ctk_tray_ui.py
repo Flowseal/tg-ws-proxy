@@ -5,12 +5,15 @@
 
 from __future__ import annotations
 
+import datetime
 import webbrowser
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import proxy.tg_ws_proxy as tg_ws_proxy
 from proxy import __version__
+from ui.tray_icons import badge_rgb_for_phase
+from utils.tray_proxy_state import format_uptime_short, phase_label_ru
 from utils.update_check import RELEASES_PAGE_URL, get_status
 
 from ui.ctk_theme import (
@@ -51,7 +54,7 @@ _TIP_LOG_MB = (
 )
 _TIP_AUTOSTART = (
     "Запускать TG WS Proxy при входе в Windows. "
-    "Если вы переместите программу в другую папку, автозапуск сбросится"
+    "Если переместить программу в другую папку, автозапуск сбросится"
 )
 _TIP_CHECK_UPDATES = (
     "При запуске проверять наличие обновлений"
@@ -137,6 +140,7 @@ def install_tray_config_form(
     *,
     show_autostart: bool = False,
     autostart_value: bool = False,
+    proxy_state: Optional[Any] = None,
 ) -> TrayConfigFormWidgets:
     """Поля настроек прокси внутри уже созданного `frame`."""
     header = ctk.CTkFrame(frame, fg_color="transparent")
@@ -214,6 +218,67 @@ def install_tray_config_form(
     )
     port_entry.pack(anchor="w")
     attach_tooltip_to_widgets([port_lbl, port_entry, port_col], _TIP_PORT)
+
+    if proxy_state is not None:
+        stat_inner = _config_section(ctk, frame, theme, "Статус")
+        pill = ctk.CTkFrame(
+            stat_inner,
+            fg_color=theme.status_pill_bg,
+            corner_radius=12,
+            border_width=1,
+            border_color=theme.status_pill_border,
+        )
+        pill.pack(fill="x", pady=(2, 0))
+        row = ctk.CTkFrame(pill, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=12)
+        dot = ctk.CTkFrame(
+            row,
+            width=12,
+            height=12,
+            corner_radius=6,
+            fg_color="#eab308",
+        )
+        dot.pack(side="left", padx=(0, 12))
+        dot.pack_propagate(False)
+        text_col = ctk.CTkFrame(row, fg_color="transparent")
+        text_col.pack(side="left", fill="x", expand=True)
+        status_main = ctk.CTkLabel(
+            text_col,
+            text="",
+            font=(theme.ui_font_family, 14),
+            text_color=theme.text_primary,
+            anchor="w",
+        )
+        status_main.pack(side="left")
+        status_uptime = ctk.CTkLabel(
+            text_col,
+            text="",
+            font=(theme.ui_font_family, 13),
+            text_color=theme.text_secondary,
+            anchor="w",
+        )
+        status_uptime.pack(side="left")
+
+        def _mini_status_tick() -> None:
+            if not frame.winfo_exists():
+                return
+            try:
+                snap = proxy_state.snapshot()
+                phase = snap["phase"]
+                r, g, b = badge_rgb_for_phase(phase)
+                dot.configure(fg_color=f"#{r:02x}{g:02x}{b:02x}")
+                status_main.configure(text=phase_label_ru(phase))
+                ls = snap.get("listening_since")
+                if phase == "listening" and ls is not None:
+                    status_uptime.configure(text=f" · {format_uptime_short(ls)}")
+                else:
+                    status_uptime.configure(text="")
+            except Exception:
+                pass
+            if frame.winfo_exists():
+                frame.after(1000, _mini_status_tick)
+
+        _mini_status_tick()
 
     dc_inner = _config_section(ctk, frame, theme, "Датацентры Telegram (DC → IP)")
     dc_lbl = ctk.CTkLabel(
@@ -318,8 +383,29 @@ def install_tray_config_form(
     upd_cb.pack(anchor="w", pady=(0, 6))
     attach_ctk_tooltip(upd_cb, _TIP_CHECK_UPDATES)
 
-    if st.get("error"):
-        upd_status = "Не удалось связаться с GitHub. Проверьте сеть."
+    ts = st.get("last_check_at")
+    ts_human = ""
+    if ts:
+        try:
+            ts_human = datetime.datetime.fromtimestamp(float(ts)).strftime(
+                "%d.%m.%Y %H:%M"
+            )
+        except (TypeError, ValueError, OSError):
+            ts_human = ""
+
+    if not check_updates_var.get():
+        upd_status = (
+            "Проверка обновлений отключена в конфиге — запросы к GitHub не выполняются."
+        )
+    elif st.get("error"):
+        net_hint = "ошибка сети или доступа к GitHub"
+        if ts_human:
+            upd_status = (
+                f"Последняя проверка: {ts_human} — {net_hint}.\n"
+                f"Детали: {st['error']}"
+            )
+        else:
+            upd_status = f"{net_hint}.\nДетали: {st['error']}"
     elif not st.get("checked"):
         upd_status = "Статус появится после фоновой проверки при запуске."
     elif st.get("has_update") and st.get("latest"):
@@ -334,6 +420,9 @@ def install_tray_config_form(
         )
     else:
         upd_status = "Установлена последняя известная версия с GitHub."
+
+    if check_updates_var.get() and ts_human and not st.get("error"):
+        upd_status = f"Последняя проверка: {ts_human}.\n{upd_status}"
 
     ctk.CTkLabel(
         upd_inner,
@@ -553,6 +642,29 @@ def populate_first_run_window(
                      font=(theme.ui_font_family, 13, weight),
                      text_color=theme.text_primary,
                      anchor="w", justify="left").pack(anchor="w", pady=1)
+
+    ctk.CTkFrame(frame, fg_color="transparent", height=12).pack()
+    ctk.CTkLabel(
+        frame,
+        text="Если не подключается:",
+        font=(theme.ui_font_family, 13, "bold"),
+        text_color=theme.text_primary,
+        anchor="w",
+    ).pack(anchor="w", pady=(0, 4))
+    for tip in (
+        "порт занят — другой процесс или старый экземпляр; смените порт в настройках;",
+        "IPv6 — трафик может идти мимо прокси; см. предупреждение при первом запуске;",
+        "брандмауэр / антивирус — разрешите локальное прослушивание;",
+        "меню трея: «Статус и проверка TCP…» — без поиска по логам.",
+    ):
+        ctk.CTkLabel(
+            frame,
+            text=f"• {tip}",
+            font=(theme.ui_font_family, 12),
+            text_color=theme.text_secondary,
+            anchor="w",
+            justify="left",
+        ).pack(anchor="w", pady=1)
 
     ctk.CTkFrame(frame, fg_color="transparent", height=16).pack()
 

@@ -12,7 +12,7 @@ import ssl
 import struct
 import sys
 import time
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 
@@ -1119,7 +1119,8 @@ _server_stop_event = None
 
 async def _run(port: int, dc_opt: Dict[int, Optional[str]],
                stop_event: Optional[asyncio.Event] = None,
-               host: str = '127.0.0.1'):
+               host: str = '127.0.0.1',
+               on_listening: Optional[Callable[[], None]] = None):
     global _dc_opt, _server_instance, _server_stop_event
     _dc_opt = dc_opt
     _server_stop_event = stop_event
@@ -1127,6 +1128,12 @@ async def _run(port: int, dc_opt: Dict[int, Optional[str]],
     server = await asyncio.start_server(
         _handle_client, host, port)
     _server_instance = server
+
+    if on_listening is not None:
+        try:
+            on_listening()
+        except Exception:
+            pass
 
     for sock in server.sockets:
         try:

@@ -30,6 +30,7 @@ _state: Dict[str, Any] = {
     "latest": None,
     "html_url": None,
     "error": None,
+    "last_check_at": None,  # time.time() после последнего завершения run_check
 }
 
 
@@ -153,6 +154,9 @@ def run_check(current_version: str) -> None:
     _state["checked"] = True
     _state["error"] = None
 
+    def _touch_last_check() -> None:
+        _state["last_check_at"] = time.time()
+
     cache_path = _cache_file()
     cache = _load_cache(cache_path)
     now = time.time()
@@ -162,6 +166,7 @@ def run_check(current_version: str) -> None:
         tag = (cache.get("tag_name") or "").strip()
         if tag:
             _apply_release_tag(tag, cache.get("html_url") or "", current_version)
+            _touch_last_check()
             return
         err = cache.get("last_error")
         _state["error"] = (
@@ -171,6 +176,7 @@ def run_check(current_version: str) -> None:
         _state["ahead_of_release"] = False
         _state["latest"] = None
         _state["html_url"] = RELEASES_PAGE_URL
+        _touch_last_check()
         return
 
     etag = (cache.get("etag") or "").strip() or None
@@ -184,6 +190,7 @@ def run_check(current_version: str) -> None:
             if new_etag:
                 cache["etag"] = new_etag
             _save_cache(cache_path, cache)
+            _touch_last_check()
             return
 
         assert data is not None
@@ -202,6 +209,7 @@ def run_check(current_version: str) -> None:
         cache["html_url"] = html_url
         cache.pop("last_error", None)
         _save_cache(cache_path, cache)
+        _touch_last_check()
     except (HTTPError, URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError) as e:
         cache["last_attempt_at"] = now
         msg = str(e)
@@ -216,6 +224,7 @@ def run_check(current_version: str) -> None:
         _state["ahead_of_release"] = False
         _state["latest"] = None
         _state["html_url"] = RELEASES_PAGE_URL
+        _touch_last_check()
 
 
 def get_status() -> Dict[str, Any]:

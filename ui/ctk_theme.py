@@ -35,7 +35,7 @@ def _install_tkinter_variable_del_guard() -> None:
 # Размеры и отступы (единые для диалогов настроек и первого запуска)
 CONFIG_DIALOG_SIZE: Tuple[int, int] = (460, 560)
 CONFIG_DIALOG_FRAME_PAD: Tuple[int, int] = (20, 14)
-FIRST_RUN_SIZE: Tuple[int, int] = (520, 440)
+FIRST_RUN_SIZE: Tuple[int, int] = (520, 520)
 FIRST_RUN_FRAME_PAD: Tuple[int, int] = (28, 24)
 
 
@@ -50,6 +50,8 @@ class CtkTheme:
     field_border: str = "#d6d9dc"
     text_primary: str = "#000000"
     text_secondary: str = "#707579"
+    status_pill_bg: str = "#f4f6fa"
+    status_pill_border: str = "#e2e6ed"
     ui_font_family: str = "Sans"
     mono_font_family: str = "Monospace"
 
