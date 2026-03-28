@@ -121,6 +121,22 @@ prefetch_chaquopy_runtime() {
   done
 }
 
+cleanup_stale_build_state() {
+  local stale_dirs=(
+    "$ROOT_DIR/app/build/python/env"
+    "$ROOT_DIR/app/build/intermediates/project_dex_archive"
+    "$ROOT_DIR/app/build/intermediates/desugar_graph"
+    "$ROOT_DIR/app/build/tmp/kotlin-classes"
+    "$ROOT_DIR/app/build/snapshot/kotlin"
+  )
+
+  for stale_dir in "${stale_dirs[@]}"; do
+    if [[ -d "$stale_dir" ]]; then
+      rm -rf "$stale_dir"
+    fi
+  done
+}
+
 prefetch_chaquopy_runtime
 
 for attempt in $(seq 1 "$ATTEMPTS"); do
@@ -130,6 +146,7 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
   fi
 
   if [[ "$attempt" -lt "$ATTEMPTS" ]]; then
+    cleanup_stale_build_state
     echo "Build failed, retrying in ${SLEEP_SECONDS}s..."
     sleep "$SLEEP_SECONDS"
   fi

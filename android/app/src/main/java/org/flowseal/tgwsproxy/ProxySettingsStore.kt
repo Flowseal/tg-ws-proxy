@@ -27,7 +27,7 @@ class ProxySettingsStore(context: Context) {
                 KEY_POOL_SIZE,
                 ProxyConfig.DEFAULT_POOL_SIZE,
             ).toString(),
-            checkUpdates = preferences.getBoolean(KEY_CHECK_UPDATES, true),
+            checkUpdates = preferences.getBoolean(KEY_CHECK_UPDATES, false),
             verbose = preferences.getBoolean(KEY_VERBOSE, false),
         )
     }

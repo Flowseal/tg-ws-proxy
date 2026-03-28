@@ -8,7 +8,9 @@ from typing import Iterable, Optional
 from proxy.app_runtime import ProxyAppRuntime
 from proxy import __version__
 import proxy.tg_ws_proxy as tg_ws_proxy
-from utils.update_check import RELEASES_PAGE_URL, get_status, run_check
+
+
+RELEASES_PAGE_URL = "https://github.com/Flowseal/tg-ws-proxy/releases/latest"
 
 
 _RUNTIME_LOCK = threading.RLock()
@@ -129,21 +131,30 @@ def get_runtime_stats_json() -> str:
     return json.dumps(payload)
 
 
+def _load_update_check():
+    from utils import update_check
+    return update_check
+
+
 def get_update_status_json(check_now: bool = False) -> str:
     payload = {
         "current_version": __version__,
         "latest": "",
         "has_update": False,
         "ahead_of_release": False,
+        "checked": False,
         "html_url": RELEASES_PAGE_URL,
         "error": "",
     }
     try:
+        update_check = _load_update_check()
         if check_now:
-            run_check(__version__)
-        payload.update(get_status())
+            update_check.run_check(__version__)
+        payload.update(update_check.get_status())
         payload["current_version"] = __version__
-        payload["html_url"] = payload.get("html_url") or RELEASES_PAGE_URL
+        payload["latest"] = payload.get("latest") or ""
+        payload["html_url"] = payload.get("html_url") or update_check.RELEASES_PAGE_URL
+        payload["error"] = payload.get("error") or ""
     except Exception as exc:
         payload["error"] = str(exc)
     return json.dumps(payload)

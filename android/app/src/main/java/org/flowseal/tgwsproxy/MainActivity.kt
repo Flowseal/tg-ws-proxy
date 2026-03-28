@@ -63,7 +63,12 @@ class MainActivity : AppCompatActivity() {
 
         val config = settingsStore.load()
         renderConfig(config)
-        refreshUpdateStatus(checkNow = config.checkUpdates)
+        if (config.checkUpdates) {
+            refreshUpdateStatus(checkNow = true)
+        } else {
+            currentUpdateStatus = null
+            renderUpdateStatus(null, false)
+        }
         requestNotificationPermissionIfNeeded()
         observeServiceState()
         renderSystemStatus()
@@ -88,7 +93,12 @@ class MainActivity : AppCompatActivity() {
         if (showMessage) {
             Snackbar.make(binding.root, R.string.settings_saved, Snackbar.LENGTH_SHORT).show()
         }
-        refreshUpdateStatus(checkNow = config.checkUpdates)
+        if (config.checkUpdates) {
+            refreshUpdateStatus(checkNow = true)
+        } else {
+            currentUpdateStatus = null
+            renderUpdateStatus(null, false)
+        }
         return config
     }
 
@@ -141,7 +151,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onOpenReleasePageClicked() {
-        val url = currentUpdateStatus?.htmlUrl ?: "https://github.com/Dark-Avery/tg-ws-proxy/releases/latest"
+        val url = currentUpdateStatus?.htmlUrl ?: "https://github.com/Flowseal/tg-ws-proxy/releases/latest"
         val opened = runCatching {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }.isSuccess
@@ -152,8 +162,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshUpdateStatus(checkNow: Boolean) {
         lifecycleScope.launch {
-            val status = withContext(Dispatchers.IO) {
-                PythonProxyBridge.getUpdateStatus(this@MainActivity, checkNow)
+            val status = runCatching {
+                withContext(Dispatchers.IO) {
+                    PythonProxyBridge.getUpdateStatus(this@MainActivity, checkNow)
+                }
+            }.getOrElse { exc ->
+                ProxyUpdateStatus(
+                    currentVersion = "unknown",
+                    error = exc.message ?: exc.javaClass.simpleName,
+                )
             }
             currentUpdateStatus = status
             renderUpdateStatus(status, binding.checkUpdatesSwitch.isChecked)
@@ -161,7 +178,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderUpdateStatus(status: ProxyUpdateStatus?, checkUpdatesEnabled: Boolean) {
-        val currentVersion = status?.currentVersion ?: "unknown"
+        val currentVersion = status?.currentVersion?.takeIf { it.isNotBlank() } ?: currentAppVersionName()
         binding.currentVersionValue.text = getString(
             R.string.updates_current_version_format,
             currentVersion,
@@ -175,6 +192,9 @@ class MainActivity : AppCompatActivity() {
             }
             !status.error.isNullOrBlank() -> {
                 getString(R.string.updates_status_error, status.error)
+            }
+            !status.checked -> {
+                getString(R.string.updates_status_idle)
             }
             status.hasUpdate && !status.latestVersion.isNullOrBlank() -> {
                 getString(
@@ -190,6 +210,13 @@ class MainActivity : AppCompatActivity() {
                 getString(R.string.updates_status_latest, status.currentVersion)
             }
         }
+    }
+
+    private fun currentAppVersionName(): String {
+        return runCatching {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, 0).versionName
+        }.getOrNull().orEmpty().ifBlank { "unknown" }
     }
 
     private fun observeServiceState() {
