@@ -31,13 +31,16 @@ FIRST_RUN_FRAME_PAD: Tuple[int, int] = (28, 24)
 
 @dataclass(frozen=True)
 class CtkTheme:
-    tg_blue: str = "#3390ec"
-    tg_blue_hover: str = "#2b7cd4"
-    bg: str = "#ffffff"
-    field_bg: str = "#f0f2f5"
-    field_border: str = "#d6d9dc"
-    text_primary: str = "#000000"
-    text_secondary: str = "#707579"
+    tg_blue: tuple = ("#3390ec", "#3390ec")
+    tg_blue_hover: tuple = ("#2b7cd4", "#2b7cd4")
+
+    bg: tuple = ("#ffffff", "#1e1e1e")
+    field_bg: tuple = ("#f0f2f5", "#2b2b2b")
+    field_border: tuple = ("#d6d9dc", "#3a3a3a")
+
+    text_primary: tuple = ("#000000", "#ffffff")
+    text_secondary: tuple = ("#707579", "#aaaaaa")
+
     ui_font_family: str = "Sans"
     mono_font_family: str = "Monospace"
 
@@ -49,9 +52,8 @@ def ctk_theme_for_platform() -> CtkTheme:
 
 
 def apply_ctk_appearance(ctk: Any) -> None:
-    ctk.set_appearance_mode("light")
+    ctk.set_appearance_mode("auto")
     ctk.set_default_color_theme("blue")
-
 
 def center_ctk_geometry(root: Any, width: int, height: int) -> None:
     sw = root.winfo_screenwidth()
