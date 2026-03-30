@@ -36,10 +36,12 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY proxy ./proxy
 COPY README.md LICENSE ./
+COPY docker/entrypoint.sh ./docker/entrypoint.sh
+RUN sed -i 's/\r$//' ./docker/entrypoint.sh && chmod +x ./docker/entrypoint.sh
 
 USER app
 
 EXPOSE 1443/tcp
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/bin/sh", "-lc", "set -eu; args=\"--host ${TG_WS_PROXY_HOST} --port ${TG_WS_PROXY_PORT}\"; for dc in ${TG_WS_PROXY_DC_IPS}; do args=\"$args --dc-ip $dc\"; done; exec python -u proxy/tg_ws_proxy.py $args \"$@\"", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/docker/entrypoint.sh"]
 CMD []
