@@ -158,8 +158,9 @@ class ProxyAppRuntime:
             loop.run_until_complete(self.run_proxy(stop_event=stop_ev))
         except Exception as exc:
             self.log.error("Proxy thread crashed: %s", exc)
-            if ("10048" in str(exc) or
-                    "Address already in use" in str(exc)):
+            exc_text = str(exc)
+            if ("10048" in exc_text or
+                    "address already in use" in exc_text.lower()):
                 self._emit_error(
                     "Не удалось запустить прокси:\n"
                     "Порт уже используется другим приложением.\n\n"

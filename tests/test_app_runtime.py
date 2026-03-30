@@ -133,6 +133,34 @@ class ProxyAppRuntimeTests(unittest.TestCase):
 
             self.assertEqual(errors, ["proxy boom"])
 
+    def test_run_proxy_thread_reports_port_in_use_case_insensitively(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            errors = []
+
+            async def fake_run_proxy(stop_event=None):
+                raise RuntimeError(
+                    "[Errno 98] error while attempting to bind on address "
+                    "('127.0.0.1', 1443): address already in use"
+                )
+
+            runtime = ProxyAppRuntime(
+                Path(tmpdir),
+                on_error=errors.append,
+                run_proxy=fake_run_proxy,
+            )
+
+            runtime._run_proxy_thread(1443, {2: "149.154.167.220"}, "127.0.0.1")
+
+            self.assertEqual(
+                errors,
+                [
+                    "Не удалось запустить прокси:\n"
+                    "Порт уже используется другим приложением.\n\n"
+                    "Закройте приложение, использующее этот порт, "
+                    "или измените порт в настройках прокси и перезапустите."
+                ],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
