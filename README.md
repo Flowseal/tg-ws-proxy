@@ -83,6 +83,23 @@ chmod +x TgWsProxy_linux_amd64
 
 При первом запуске откроется окно с инструкцией. Приложение работает в системном трее (требуется AppIndicator).
 
+### Android
+
+Перейдите на [страницу релизов](https://github.com/Flowseal/tg-ws-proxy/releases) и скачайте подписанный APK вида **`tg-ws-proxy-android-vX.Y.Z.apk`**.
+
+После установки:
+
+- откройте приложение
+- проверьте `Android background limits`
+- при необходимости отключите battery optimization и снимите background restrictions
+- нажмите **Start Service**
+- нажмите **Open in Telegram**
+
+Что важно для стабильной работы на Android:
+
+- разрешите уведомления
+- отключите battery optimization для приложения
+
 ## Установка из исходников
 
 ### Консольный proxy
@@ -119,6 +136,20 @@ tg-ws-proxy-tray-linux
 
 ```bash
 tg-ws-proxy [--port PORT] [--host HOST] [--dc-ip DC:IP ...] [-v]
+```
+
+### Android debug APK
+
+Требуются JDK 17, Android SDK и Gradle. Локальная debug-сборка:
+
+```bash
+./android/build-local-debug.sh assembleStandardDebug
+```
+
+Результат:
+
+```text
+android/app/build/outputs/apk/standard/debug/app-standard-debug.apk
 ```
 
 **Аргументы:**
@@ -178,6 +209,26 @@ tg-ws-proxy-tray-linux = "linux:main"
    - **Порт:** `1443` (или переопределенный вами)
    - **Secret:** из настроек или логов
 
+## Настройка Telegram Android
+
+### Автоматически
+
+В приложении нажмите **Open in Telegram** после запуска foreground service.
+
+### Вручную
+
+1. Telegram → **Настройки** → **Данные и память** → **Настройки прокси**
+2. Добавить прокси:
+   - **Тип:** MTProto
+   - **Сервер:** `127.0.0.1`
+   - **Порт:** `1443`
+   - **Secret:** из настроек приложения
+
+Важно:
+
+- сначала должен быть запущен foreground service
+- если Telegram был уже открыт, иногда проще закрыть и открыть его заново после запуска прокси
+
 ## Конфигурация
 
 Tray-приложение хранит данные в:
@@ -217,7 +268,6 @@ Tray-приложение хранит данные в:
 - Intel macOS 10.15+
 - Apple Silicon macOS 11.0+
 - Linux x86_64 (требуется AppIndicator для системного трея)
-
 ## Лицензия
 
 [MIT License](LICENSE)

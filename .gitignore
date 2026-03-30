@@ -16,6 +16,18 @@ build/
 .idea/
 *.swp
 *.swo
+.gradle/
+.gradle-local/
+android/.gradle-local/
+android/.m2-chaquopy*/
+local.properties
+android/.idea/
+android/build/
+android/app/build/
+android/app/build
+android/*.jks
+*.keystore
+android/*.keystore.properties
 
 # OS
 Thumbs.db

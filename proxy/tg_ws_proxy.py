@@ -17,7 +17,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from proxy.crypto_backend import create_aes_ctr_transform
 
 
 @dataclass
@@ -332,9 +332,10 @@ def _try_handshake(handshake: bytes, secret: bytes) -> Optional[Tuple[int, bool,
     dec_key = hashlib.sha256(dec_prekey + secret).digest()
 
     dec_iv_int = int.from_bytes(dec_iv, 'big')
-    decryptor = Cipher(
-        algorithms.AES(dec_key), modes.CTR(dec_iv_int.to_bytes(16, 'big'))
-    ).encryptor()
+    decryptor = create_aes_ctr_transform(
+        dec_key,
+        dec_iv_int.to_bytes(16, 'big'),
+    )
     decrypted = decryptor.update(handshake)
 
     proto_tag = decrypted[PROTO_TAG_POS:PROTO_TAG_POS + 4]
@@ -367,9 +368,7 @@ def _generate_relay_init(proto_tag: bytes, dc_idx: int) -> bytes:
     enc_key = rnd_bytes[SKIP_LEN:SKIP_LEN + PREKEY_LEN]
     enc_iv = rnd_bytes[SKIP_LEN + PREKEY_LEN:SKIP_LEN + PREKEY_LEN + IV_LEN]
 
-    encryptor = Cipher(
-        algorithms.AES(enc_key), modes.CTR(enc_iv)
-    ).encryptor()
+    encryptor = create_aes_ctr_transform(enc_key, enc_iv)
 
     dc_bytes = struct.pack('<h', dc_idx)
     tail_plain = proto_tag + dc_bytes + os.urandom(2)
@@ -393,9 +392,10 @@ class _MsgSplitter:
     __slots__ = ('_dec', '_proto', '_cipher_buf', '_plain_buf', '_disabled')
 
     def __init__(self, relay_init: bytes, proto_int: int):
-        cipher = Cipher(algorithms.AES(relay_init[8:40]),
-                        modes.CTR(relay_init[40:56]))
-        self._dec = cipher.encryptor()
+        self._dec = create_aes_ctr_transform(
+            relay_init[8:40],
+            relay_init[40:56],
+        )
         self._dec.update(ZERO_64)
         self._proto = proto_int
         self._cipher_buf = bytearray()
@@ -493,6 +493,7 @@ class Stats:
         self.bytes_down = 0
         self.pool_hits = 0
         self.pool_misses = 0
+        self.last_transport_route: Optional[str] = None
 
     def summary(self) -> str:
         pool_total = self.pool_hits + self.pool_misses
@@ -511,12 +512,34 @@ class Stats:
 _stats = Stats()
 
 
+def reset_stats() -> None:
+    global _stats
+    _stats = Stats()
+
+
+def get_stats_snapshot() -> Dict[str, object]:
+    return {
+        "connections_total": _stats.connections_total,
+        "connections_active": _stats.connections_active,
+        "connections_ws": _stats.connections_ws,
+        "connections_tcp_fallback": _stats.connections_tcp_fallback,
+        "connections_bad": _stats.connections_bad,
+        "ws_errors": _stats.ws_errors,
+        "bytes_up": _stats.bytes_up,
+        "bytes_down": _stats.bytes_down,
+        "pool_hits": _stats.pool_hits,
+        "pool_misses": _stats.pool_misses,
+        "last_transport_route": _stats.last_transport_route,
+    }
+
+
 class _WsPool:
     WS_POOL_MAX_AGE = 120.0
     
     def __init__(self):
         self._idle: Dict[Tuple[int, bool], deque] = {}
         self._refilling: Set[Tuple[int, bool]] = set()
+        self._refill_tasks: Dict[Tuple[int, bool], asyncio.Task] = {}
 
     async def get(self, dc: int, is_media: bool,
                   target_ip: str, domains: List[str]
@@ -549,10 +572,13 @@ class _WsPool:
         if key in self._refilling:
             return
         self._refilling.add(key)
-        asyncio.create_task(self._refill(key, target_ip, domains))
+        task = asyncio.create_task(self._refill(key, target_ip, domains))
+        self._refill_tasks[key] = task
+        task.add_done_callback(lambda _t, refill_key=key: self._refill_tasks.pop(refill_key, None))
 
     async def _refill(self, key, target_ip, domains):
         dc, is_media = key
+        tasks: List[asyncio.Task] = []
         try:
             bucket = self._idle.setdefault(key, deque())
             needed = proxy_config.pool_size - len(bucket)
@@ -566,10 +592,19 @@ class _WsPool:
                     ws = await t
                     if ws:
                         bucket.append((ws, time.monotonic()))
+                except asyncio.CancelledError:
+                    raise
                 except Exception:
                     pass
             log.debug("WS pool refilled DC%d%s: %d ready",
                       dc, 'm' if is_media else '', len(bucket))
+        except asyncio.CancelledError:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         finally:
             self._refilling.discard(key)
 
@@ -602,6 +637,29 @@ class _WsPool:
                 domains = _ws_domains(dc, is_media)
                 self._schedule_refill((dc, is_media), target_ip, domains)
         log.info("WS pool warmup started for %d DC(s)", len(dc_redirects))
+
+    async def close(self):
+        refill_tasks = list(self._refill_tasks.values())
+        self._refill_tasks.clear()
+        for task in refill_tasks:
+            if not task.done():
+                task.cancel()
+        if refill_tasks:
+            await asyncio.gather(*refill_tasks, return_exceptions=True)
+
+        idle_sockets = []
+        for bucket in self._idle.values():
+            while bucket:
+                ws, _created = bucket.popleft()
+                idle_sockets.append(ws)
+        self._idle.clear()
+        self._refilling.clear()
+
+        if idle_sockets:
+            await asyncio.gather(
+                *(self._quiet_close(ws) for ws in idle_sockets),
+                return_exceptions=True,
+            )
 
 _ws_pool = _WsPool()
 
@@ -769,6 +827,7 @@ async def _tcp_fallback(reader, writer, dst, port, relay_init, label,
         return False
 
     _stats.connections_tcp_fallback += 1
+    _stats.last_transport_route = "tcp_fallback"
     rw.write(relay_init)
     await rw.drain()
     await _bridge_tcp_reencrypt(reader, writer, rr, rw, label,
@@ -838,12 +897,8 @@ async def _handle_client(reader, writer, secret: bytes):
             clt_enc_prekey_iv[:PREKEY_LEN] + secret).digest()
         clt_enc_iv = clt_enc_prekey_iv[PREKEY_LEN:]
 
-        clt_decryptor = Cipher(
-            algorithms.AES(clt_dec_key), modes.CTR(clt_dec_iv)
-        ).encryptor()
-        clt_encryptor = Cipher(
-            algorithms.AES(clt_enc_key), modes.CTR(clt_enc_iv)
-        ).encryptor()
+        clt_decryptor = create_aes_ctr_transform(clt_dec_key, clt_dec_iv)
+        clt_encryptor = create_aes_ctr_transform(clt_enc_key, clt_enc_iv)
 
         # fast-forward client decryptor past the 64-byte init
         clt_decryptor.update(ZERO_64)
@@ -858,12 +913,8 @@ async def _handle_client(reader, writer, secret: bytes):
         relay_dec_key = relay_dec_prekey_iv[:KEY_LEN]
         relay_dec_iv = relay_dec_prekey_iv[KEY_LEN:]
 
-        tg_encryptor = Cipher(
-            algorithms.AES(relay_enc_key), modes.CTR(relay_enc_iv)
-        ).encryptor()
-        tg_decryptor = Cipher(
-            algorithms.AES(relay_dec_key), modes.CTR(relay_dec_iv)
-        ).encryptor()
+        tg_encryptor = create_aes_ctr_transform(relay_enc_key, relay_enc_iv)
+        tg_decryptor = create_aes_ctr_transform(relay_dec_key, relay_dec_iv)
         
         tg_encryptor.update(ZERO_64)
 
@@ -965,6 +1016,7 @@ async def _handle_client(reader, writer, secret: bytes):
 
         dc_fail_until.pop(dc_key, None)
         _stats.connections_ws += 1
+        _stats.last_transport_route = "telegram_ws_direct"
 
         splitter = None
         try:
@@ -1087,6 +1139,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
             else:
                 await server.serve_forever()
     finally:
+        await _ws_pool.close()
         log_stats_task.cancel()
         try:
             await log_stats_task
