@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_BUILD_DIR="$ROOT_DIR/app/build"
 
 if [[ -z "${GRADLE_USER_HOME:-}" ]]; then
   if [[ -d "$HOME/.gradle" && -w "$HOME/.gradle" ]]; then
@@ -46,6 +47,34 @@ SLEEP_SECONDS="${SLEEP_SECONDS:-15}"
 TASK="${1:-assembleStandardDebug}"
 LOCAL_CHAQUOPY_REPO="${LOCAL_CHAQUOPY_REPO:-$ROOT_DIR/.m2-chaquopy}"
 CHAQUOPY_MAVEN_BASE="${CHAQUOPY_MAVEN_BASE:-https://repo.maven.apache.org/maven2}"
+
+running_on_wsl_windows_mount() {
+  [[ -n "${WSL_DISTRO_NAME:-}" && "$ROOT_DIR" == /mnt/* ]]
+}
+
+prepare_wsl_build_dir() {
+  if ! running_on_wsl_windows_mount; then
+    return 0
+  fi
+
+  local cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/tg-ws-proxy-android-build"
+  local project_key
+  project_key="$(printf '%s' "$ROOT_DIR" | sha256sum | cut -d' ' -f1)"
+  local linux_build_dir="$cache_root/$project_key/app-build"
+
+  mkdir -p "$cache_root"
+  mkdir -p "$linux_build_dir"
+
+  if [[ -L "$APP_BUILD_DIR" ]]; then
+    return 0
+  fi
+
+  if [[ -e "$APP_BUILD_DIR" ]]; then
+    rm -rf "$APP_BUILD_DIR"
+  fi
+
+  ln -s "$linux_build_dir" "$APP_BUILD_DIR"
+}
 
 task_uses_legacy32() {
   [[ "$TASK" =~ [Ll]egacy32 ]]
@@ -123,11 +152,11 @@ prefetch_chaquopy_runtime() {
 
 cleanup_stale_build_state() {
   local stale_dirs=(
-    "$ROOT_DIR/app/build/python/env"
-    "$ROOT_DIR/app/build/intermediates/project_dex_archive"
-    "$ROOT_DIR/app/build/intermediates/desugar_graph"
-    "$ROOT_DIR/app/build/tmp/kotlin-classes"
-    "$ROOT_DIR/app/build/snapshot/kotlin"
+    "$APP_BUILD_DIR/python/env"
+    "$APP_BUILD_DIR/intermediates/project_dex_archive"
+    "$APP_BUILD_DIR/intermediates/desugar_graph"
+    "$APP_BUILD_DIR/tmp/kotlin-classes"
+    "$APP_BUILD_DIR/snapshot/kotlin"
   )
 
   for stale_dir in "${stale_dirs[@]}"; do
@@ -138,6 +167,7 @@ cleanup_stale_build_state() {
 }
 
 prefetch_chaquopy_runtime
+prepare_wsl_build_dir
 
 for attempt in $(seq 1 "$ATTEMPTS"); do
   echo "==> Android build attempt $attempt/$ATTEMPTS ($TASK)"
