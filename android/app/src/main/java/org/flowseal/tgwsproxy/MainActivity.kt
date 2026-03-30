@@ -128,6 +128,7 @@ class MainActivity : AppCompatActivity() {
     private fun renderConfig(config: ProxyConfig) {
         binding.hostInput.setText(config.host)
         binding.portInput.setText(config.portText)
+        binding.secretInput.setText(config.secretText)
         binding.dcIpInput.setText(config.dcIpText)
         binding.logMaxMbInput.setText(config.logMaxMbText)
         binding.bufferKbInput.setText(config.bufferKbText)
@@ -141,6 +142,7 @@ class MainActivity : AppCompatActivity() {
         return ProxyConfig(
             host = binding.hostInput.text?.toString().orEmpty(),
             portText = binding.portInput.text?.toString().orEmpty(),
+            secretText = binding.secretInput.text?.toString().orEmpty(),
             dcIpText = binding.dcIpInput.text?.toString().orEmpty(),
             logMaxMbText = binding.logMaxMbInput.text?.toString().orEmpty(),
             bufferKbText = binding.bufferKbInput.text?.toString().orEmpty(),

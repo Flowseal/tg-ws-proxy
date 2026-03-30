@@ -17,6 +17,7 @@ object PythonProxyBridge {
             File(context.filesDir, "tg-ws-proxy").absolutePath,
             config.host,
             config.port,
+            config.secret,
             config.dcIpList,
             config.logMaxMb,
             config.bufferKb,

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">TG WS Proxy</string>
-    <string name="subtitle">Android app for the local Telegram SOCKS5 proxy.</string>
+    <string name="subtitle">Android app for the local Telegram MTProto proxy.</string>
     <string name="status_label">Foreground service</string>
     <string name="status_starting">Starting</string>
     <string name="status_running">Running</string>
@@ -33,6 +33,7 @@
     <string name="updates_open_release_button">Open Release Page</string>
     <string name="host_hint">Proxy host</string>
     <string name="port_hint">Proxy port</string>
+    <string name="secret_hint">MTProto secret (32 hex characters)</string>
     <string name="dc_ip_hint">DC to IP mappings (one DC:IP per line)</string>
     <string name="log_max_mb_hint">Max log size before rotation (MB)</string>
     <string name="buffer_kb_hint">Socket buffer size (KB)</string>
@@ -51,12 +52,12 @@
     <string name="settings_saved">Settings saved</string>
     <string name="service_start_requested">Foreground service start requested</string>
     <string name="service_restart_requested">Foreground service restart requested</string>
-    <string name="telegram_not_found">Telegram app was not found for tg://socks.</string>
+    <string name="telegram_not_found">Telegram app was not found for tg://proxy.</string>
     <string name="notification_title">TG WS Proxy</string>
     <string name="notification_channel_name">Proxy service</string>
     <string name="notification_channel_description">Keeps the Telegram proxy service alive in the foreground.</string>
-    <string name="notification_starting">SOCKS5 %1$s:%2$d • starting embedded Python</string>
-    <string name="notification_running">SOCKS5 %1$s:%2$d • proxy active</string>
+    <string name="notification_starting">MTProto %1$s:%2$d • starting embedded Python</string>
+    <string name="notification_running">MTProto %1$s:%2$d • proxy active</string>
     <string name="notification_endpoint">%1$s:%2$d</string>
     <string name="notification_details">DC mappings: %1$d\nTraffic: ↑ %2$s/s ↓ %3$s/s\nTransferred: ↑ %4$s ↓ %5$s</string>
     <string name="notification_action_stop">Stop</string>

@@ -1,8 +1,11 @@
 package org.flowseal.tgwsproxy
 
+import java.security.SecureRandom
+
 data class ProxyConfig(
     val host: String = DEFAULT_HOST,
     val portText: String = DEFAULT_PORT.toString(),
+    val secretText: String = DEFAULT_SECRET,
     val dcIpText: String = DEFAULT_DC_IP_LINES.joinToString("\n"),
     val logMaxMbText: String = formatDecimal(DEFAULT_LOG_MAX_MB),
     val bufferKbText: String = DEFAULT_BUFFER_KB.toString(),
@@ -20,6 +23,13 @@ data class ProxyConfig(
             ?: return ValidationResult(errorMessage = "Порт должен быть числом.")
         if (portValue !in 1..65535) {
             return ValidationResult(errorMessage = "Порт должен быть в диапазоне 1-65535.")
+        }
+
+        val secretValue = secretText.trim().lowercase()
+        if (secretValue.length != 32 || !secretValue.all { it in "0123456789abcdef" }) {
+            return ValidationResult(
+                errorMessage = "MTProto secret должен содержать ровно 32 hex-символа."
+            )
         }
 
         val lines = dcIpText
@@ -75,6 +85,7 @@ data class ProxyConfig(
             normalized = NormalizedProxyConfig(
                 host = hostValue,
                 port = portValue,
+                secret = secretValue,
                 dcIpList = lines,
                 logMaxMb = logMaxMbValue,
                 bufferKb = bufferKbValue,
@@ -87,10 +98,11 @@ data class ProxyConfig(
 
     companion object {
         const val DEFAULT_HOST = "127.0.0.1"
-        const val DEFAULT_PORT = 1080
+        const val DEFAULT_PORT = 1443
         const val DEFAULT_LOG_MAX_MB = 5.0
         const val DEFAULT_BUFFER_KB = 256
         const val DEFAULT_POOL_SIZE = 4
+        val DEFAULT_SECRET = generateSecret()
         val DEFAULT_DC_IP_LINES = listOf(
             "2:149.154.167.220",
             "4:149.154.167.220",
@@ -102,6 +114,12 @@ data class ProxyConfig(
             } else {
                 value.toString()
             }
+        }
+
+        private fun generateSecret(): String {
+            val bytes = ByteArray(16)
+            SecureRandom().nextBytes(bytes)
+            return bytes.joinToString(separator = "") { "%02x".format(it) }
         }
 
         private fun isIpv4Address(value: String): Boolean {
@@ -128,6 +146,7 @@ data class ValidationResult(
 data class NormalizedProxyConfig(
     val host: String,
     val port: Int,
+    val secret: String,
     val dcIpList: List<String>,
     val logMaxMb: Double,
     val bufferKb: Int,

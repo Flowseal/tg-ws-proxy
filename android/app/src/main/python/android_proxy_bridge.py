@@ -44,7 +44,7 @@ def _normalize_dc_ip_list(dc_ip_list: Iterable[object]) -> list[str]:
     return [str(item).strip() for item in values if str(item).strip()]
 
 
-def start_proxy(app_dir: str, host: str, port: int,
+def start_proxy(app_dir: str, host: str, port: int, secret: str,
                 dc_ip_list: Iterable[object], log_max_mb: float = 5.0,
                 buf_kb: int = 256, pool_size: int = 4,
                 verbose: bool = False) -> str:
@@ -70,6 +70,7 @@ def start_proxy(app_dir: str, host: str, port: int,
         config = {
             "host": host,
             "port": int(port),
+            "secret": str(secret).strip(),
             "dc_ip": _normalize_dc_ip_list(dc_ip_list),
             "log_max_mb": float(log_max_mb),
             "buf_kb": int(buf_kb),

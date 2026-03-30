@@ -8,7 +8,7 @@ import android.net.Uri
 object TelegramProxyIntent {
     fun open(context: Context, config: NormalizedProxyConfig): Boolean {
         val uri = Uri.parse(
-            "tg://socks?server=${Uri.encode(config.host)}&port=${config.port}"
+            "tg://proxy?server=${Uri.encode(config.host)}&port=${config.port}&secret=dd${Uri.encode(config.secret)}"
         )
         val intent = Intent(Intent.ACTION_VIEW, uri)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

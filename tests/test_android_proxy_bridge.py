@@ -107,7 +107,8 @@ class AndroidProxyBridgeTests(unittest.TestCase):
             log_path = android_proxy_bridge.start_proxy(
                 "/tmp/app",
                 "127.0.0.1",
-                1080,
+                1443,
+                "0123456789abcdef0123456789abcdef",
                 ["2:149.154.167.220"],
                 7.0,
                 512,
@@ -118,6 +119,7 @@ class AndroidProxyBridgeTests(unittest.TestCase):
             android_proxy_bridge.ProxyAppRuntime = original_runtime
 
         self.assertEqual(log_path, "/tmp/proxy.log")
+        self.assertEqual(captured["config"]["secret"], "0123456789abcdef0123456789abcdef")
         self.assertEqual(captured["config"]["log_max_mb"], 7.0)
         self.assertEqual(captured["config"]["buf_kb"], 512)
         self.assertEqual(captured["config"]["pool_size"], 6)
