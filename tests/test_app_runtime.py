@@ -116,6 +116,23 @@ class ProxyAppRuntimeTests(unittest.TestCase):
             self.assertFalse(started)
             self.assertEqual(errors, ["Ошибка конфигурации:\nbad dc mapping"])
 
+    def test_run_proxy_thread_reports_generic_runtime_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            errors = []
+
+            async def fake_run_proxy(stop_event=None):
+                raise RuntimeError("proxy boom")
+
+            runtime = ProxyAppRuntime(
+                Path(tmpdir),
+                on_error=errors.append,
+                run_proxy=fake_run_proxy,
+            )
+
+            runtime._run_proxy_thread(1443, {2: "149.154.167.220"}, "127.0.0.1")
+
+            self.assertEqual(errors, ["proxy boom"])
+
 
 if __name__ == "__main__":
     unittest.main()

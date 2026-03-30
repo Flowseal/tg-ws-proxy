@@ -13,8 +13,11 @@ class UpdateCheckTests(unittest.TestCase):
         update_check._state.update(self._orig_state)
 
     def test_apply_release_tag_marks_update_available(self):
+        version_parts = [int(part) for part in __version__.split(".")]
+        version_parts[-1] += 1
+        next_version = ".".join(str(part) for part in version_parts)
         update_check._apply_release_tag(
-            tag="v1.3.1",
+            tag=f"v{next_version}",
             html_url="https://example.com/release",
             current_version=__version__,
         )
@@ -22,7 +25,7 @@ class UpdateCheckTests(unittest.TestCase):
         status = update_check.get_status()
         self.assertTrue(status["has_update"])
         self.assertFalse(status["ahead_of_release"])
-        self.assertEqual(status["latest"], "1.3.1")
+        self.assertEqual(status["latest"], next_version)
         self.assertEqual(status["html_url"], "https://example.com/release")
 
     def test_apply_release_tag_marks_ahead_of_release(self):

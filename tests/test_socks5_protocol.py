@@ -1,128 +1,61 @@
-import asyncio
-import socket
+import hashlib
+import struct
 import unittest
-from unittest.mock import patch
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-from proxy.tg_ws_proxy import _handle_client, _socks5_reply
-
-
-class _FakeTransport:
-    def get_extra_info(self, name):
-        return None
-
-    def get_write_buffer_size(self):
-        return 0
+from proxy.tg_ws_proxy import (
+    PROTO_TAG_ABRIDGED,
+    PROTO_TAG_INTERMEDIATE,
+    _generate_relay_init,
+    _try_handshake,
+)
 
 
-class _FakeReader:
-    def __init__(self, payload: bytes):
-        self._payload = payload
-        self._offset = 0
-
-    async def readexactly(self, n: int) -> bytes:
-        end = self._offset + n
-        if end > len(self._payload):
-            partial = self._payload[self._offset:]
-            self._offset = len(self._payload)
-            raise asyncio.IncompleteReadError(partial, n)
-        chunk = self._payload[self._offset:end]
-        self._offset = end
-        return chunk
+KEY = bytes(range(32))
+IV = bytes(range(16))
+SECRET = bytes.fromhex("0123456789abcdef0123456789abcdef")
 
 
-class _FakeWriter:
-    def __init__(self):
-        self.transport = _FakeTransport()
-        self.writes = []
-        self.closed = False
-        self.close_calls = 0
-
-    def get_extra_info(self, name):
-        if name == "peername":
-            return ("127.0.0.1", 50000)
-        return None
-
-    def write(self, data: bytes):
-        self.writes.append(data)
-
-    async def drain(self):
-        return None
-
-    def close(self):
-        self.closed = True
-        self.close_calls += 1
-
-    async def wait_closed(self):
-        return None
+def _xor(left: bytes, right: bytes) -> bytes:
+    return bytes(a ^ b for a, b in zip(left, right))
 
 
-def _ipv4_connect_request(ip: str, port: int, cmd: int = 1) -> bytes:
-    return bytes([0x05, cmd, 0x00, 0x01]) + socket.inet_aton(ip) + port.to_bytes(2, "big")
+def _build_client_handshake(dc_raw: int, proto_tag: bytes) -> bytes:
+    packet = bytearray(64)
+    packet[8:40] = KEY
+    packet[40:56] = IV
+
+    dec_key = hashlib.sha256(KEY + SECRET).digest()
+    decryptor = Cipher(algorithms.AES(dec_key), modes.CTR(IV)).encryptor()
+    keystream = decryptor.update(b"\x00" * 64)
+
+    plain_tail = proto_tag + struct.pack("<h", dc_raw) + b"\x00\x00"
+    packet[56:64] = _xor(plain_tail, keystream[56:64])
+    return bytes(packet)
 
 
-def _domain_connect_request(domain: str, port: int, cmd: int = 1) -> bytes:
-    encoded = domain.encode("utf-8")
-    return (
-        bytes([0x05, cmd, 0x00, 0x03, len(encoded)])
-        + encoded
-        + port.to_bytes(2, "big")
-    )
+class MtProtoProtocolTests(unittest.TestCase):
+    def test_try_handshake_accepts_abridged_proto(self):
+        handshake = _build_client_handshake(2, PROTO_TAG_ABRIDGED)
 
+        result = _try_handshake(handshake, SECRET)
 
-def _ipv6_connect_request(ip: str, port: int) -> bytes:
-    return (
-        bytes([0x05, 0x01, 0x00, 0x04])
-        + socket.inet_pton(socket.AF_INET6, ip)
-        + port.to_bytes(2, "big")
-    )
+        self.assertIsNotNone(result)
+        self.assertEqual(result[:3], (2, False, PROTO_TAG_ABRIDGED))
 
+    def test_try_handshake_accepts_intermediate_proto(self):
+        handshake = _build_client_handshake(-4, PROTO_TAG_INTERMEDIATE)
 
-class Socks5ProtocolTests(unittest.IsolatedAsyncioTestCase):
-    async def test_rejects_non_socks5_greeting(self):
-        reader = _FakeReader(b"\x04\x01")
-        writer = _FakeWriter()
+        result = _try_handshake(handshake, SECRET)
 
-        await _handle_client(reader, writer)
+        self.assertIsNotNone(result)
+        self.assertEqual(result[:3], (4, True, PROTO_TAG_INTERMEDIATE))
 
-        self.assertEqual(writer.writes, [])
-        self.assertTrue(writer.closed)
+    def test_generate_relay_init_produces_handshake_sized_packet(self):
+        relay_init = _generate_relay_init(PROTO_TAG_ABRIDGED, -2)
 
-    async def test_rejects_unsupported_command(self):
-        reader = _FakeReader(b"\x05\x01\x00" + _ipv4_connect_request("1.1.1.1", 443, cmd=2))
-        writer = _FakeWriter()
-
-        await _handle_client(reader, writer)
-
-        self.assertEqual(writer.writes, [b"\x05\x00", _socks5_reply(0x07)])
-        self.assertTrue(writer.closed)
-
-    async def test_rejects_unsupported_address_type(self):
-        reader = _FakeReader(b"\x05\x01\x00" + b"\x05\x01\x00\x02")
-        writer = _FakeWriter()
-
-        await _handle_client(reader, writer)
-
-        self.assertEqual(writer.writes, [b"\x05\x00", _socks5_reply(0x08)])
-        self.assertTrue(writer.closed)
-
-    async def test_rejects_ipv6_destinations(self):
-        reader = _FakeReader(b"\x05\x01\x00" + _ipv6_connect_request("2001:db8::1", 443))
-        writer = _FakeWriter()
-
-        await _handle_client(reader, writer)
-
-        self.assertEqual(writer.writes, [b"\x05\x00", _socks5_reply(0x05)])
-        self.assertTrue(writer.closed)
-
-    async def test_passthrough_connect_failure_returns_error(self):
-        reader = _FakeReader(b"\x05\x01\x00" + _domain_connect_request("example.com", 443))
-        writer = _FakeWriter()
-
-        with patch("proxy.tg_ws_proxy.asyncio.open_connection", side_effect=OSError("boom")):
-            await _handle_client(reader, writer)
-
-        self.assertEqual(writer.writes, [b"\x05\x00", _socks5_reply(0x05)])
-        self.assertTrue(writer.closed)
+        self.assertEqual(len(relay_init), 64)
+        self.assertEqual(relay_init[0], relay_init[0] & 0xFF)
 
 
 if __name__ == "__main__":

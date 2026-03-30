@@ -493,6 +493,7 @@ class Stats:
         self.bytes_down = 0
         self.pool_hits = 0
         self.pool_misses = 0
+        self.last_transport_route: Optional[str] = None
 
     def summary(self) -> str:
         pool_total = self.pool_hits + self.pool_misses
@@ -509,6 +510,27 @@ class Stats:
                 f"down={_human_bytes(self.bytes_down)}")
 
 _stats = Stats()
+
+
+def reset_stats() -> None:
+    global _stats
+    _stats = Stats()
+
+
+def get_stats_snapshot() -> Dict[str, object]:
+    return {
+        "connections_total": _stats.connections_total,
+        "connections_active": _stats.connections_active,
+        "connections_ws": _stats.connections_ws,
+        "connections_tcp_fallback": _stats.connections_tcp_fallback,
+        "connections_bad": _stats.connections_bad,
+        "ws_errors": _stats.ws_errors,
+        "bytes_up": _stats.bytes_up,
+        "bytes_down": _stats.bytes_down,
+        "pool_hits": _stats.pool_hits,
+        "pool_misses": _stats.pool_misses,
+        "last_transport_route": _stats.last_transport_route,
+    }
 
 
 class _WsPool:
@@ -769,6 +791,7 @@ async def _tcp_fallback(reader, writer, dst, port, relay_init, label,
         return False
 
     _stats.connections_tcp_fallback += 1
+    _stats.last_transport_route = "tcp_fallback"
     rw.write(relay_init)
     await rw.drain()
     await _bridge_tcp_reencrypt(reader, writer, rr, rw, label,
@@ -965,6 +988,7 @@ async def _handle_client(reader, writer, secret: bytes):
 
         dc_fail_until.pop(dc_key, None)
         _stats.connections_ws += 1
+        _stats.last_transport_route = "telegram_ws_direct"
 
         splitter = None
         try:
