@@ -1,8 +1,3 @@
-"""
-Общая светлая тема и фабрика окон CustomTkinter для tray-приложений (Windows / Linux).
-Цвета и отступы задаются в одном месте — правки темы не дублируются по платформам.
-"""
-
 from __future__ import annotations
 
 import sys
@@ -13,11 +8,7 @@ from typing import Any, Callable, Optional, Tuple
 _tk_variable_del_guard_installed = False
 
 
-def _install_tkinter_variable_del_guard() -> None:
-    """
-    Убирает «Exception ignored» при выходе процесса: Tcl уже разрушен, а GC ещё
-    вызывает Variable.__del__ (StringVar и т.д.) — напр. окно CTk в фоновом потоке.
-    """
+def install_tkinter_variable_del_guard() -> None:
     global _tk_variable_del_guard_installed
     if _tk_variable_del_guard_installed:
         return
@@ -32,24 +23,24 @@ def _install_tkinter_variable_del_guard() -> None:
     tkinter.Variable.__del__ = _safe_variable_del  # type: ignore[assignment]
     _tk_variable_del_guard_installed = True
 
-# Размеры и отступы (единые для диалогов настроек и первого запуска)
 CONFIG_DIALOG_SIZE: Tuple[int, int] = (460, 560)
 CONFIG_DIALOG_FRAME_PAD: Tuple[int, int] = (20, 14)
-FIRST_RUN_SIZE: Tuple[int, int] = (520, 440)
+FIRST_RUN_SIZE: Tuple[int, int] = (520, 480)
 FIRST_RUN_FRAME_PAD: Tuple[int, int] = (28, 24)
 
 
 @dataclass(frozen=True)
 class CtkTheme:
-    """Палитра Telegram-style и семейства шрифтов для UI и моноширинного текста."""
+    tg_blue: tuple = ("#3390ec", "#3390ec")
+    tg_blue_hover: tuple = ("#2b7cd4", "#2b7cd4")
 
-    tg_blue: str = "#3390ec"
-    tg_blue_hover: str = "#2b7cd4"
-    bg: str = "#ffffff"
-    field_bg: str = "#f0f2f5"
-    field_border: str = "#d6d9dc"
-    text_primary: str = "#000000"
-    text_secondary: str = "#707579"
+    bg: tuple = ("#ffffff", "#1e1e1e")
+    field_bg: tuple = ("#f0f2f5", "#2b2b2b")
+    field_border: tuple = ("#d6d9dc", "#3a3a3a")
+
+    text_primary: tuple = ("#000000", "#ffffff")
+    text_secondary: tuple = ("#707579", "#aaaaaa")
+
     ui_font_family: str = "Sans"
     mono_font_family: str = "Monospace"
 
@@ -61,9 +52,8 @@ def ctk_theme_for_platform() -> CtkTheme:
 
 
 def apply_ctk_appearance(ctk: Any) -> None:
-    ctk.set_appearance_mode("light")
+    ctk.set_appearance_mode("auto")
     ctk.set_default_color_theme("blue")
-
 
 def center_ctk_geometry(root: Any, width: int, height: int) -> None:
     sw = root.winfo_screenwidth()
@@ -71,7 +61,7 @@ def center_ctk_geometry(root: Any, width: int, height: int) -> None:
     root.geometry(f"{width}x{height}+{(sw - width) // 2}+{(sh - height) // 2}")
 
 
-def create_ctk_root(
+def create_ctk_toplevel(
     ctk: Any,
     *,
     title: str,
@@ -81,21 +71,27 @@ def create_ctk_root(
     topmost: bool = True,
     after_create: Optional[Callable[[Any], None]] = None,
 ) -> Any:
-    """
-    Создаёт CTk: глобальная тема, заголовок, без ресайза, по центру экрана, фон из палитры.
-    after_create — опционально: установка иконки окна (различается по ОС).
-    """
-    _install_tkinter_variable_del_guard()
-    apply_ctk_appearance(ctk)
-    root = ctk.CTk()
+    root = ctk.CTkToplevel()
     root.title(title)
     root.resizable(False, False)
-    if topmost:
-        root.attributes("-topmost", True)
     center_ctk_geometry(root, width, height)
     root.configure(fg_color=theme.bg)
+    if topmost:
+        root.attributes("-topmost", True)
+    root.lift()
+    root.focus_force()
     if after_create:
-        after_create(root)
+        _after_id = root.after(300, lambda: after_create(root))
+        _orig_destroy = root.destroy
+
+        def _safe_destroy():
+            try:
+                root.after_cancel(_after_id)
+            except Exception:
+                pass
+            _orig_destroy()
+
+        root.destroy = _safe_destroy
     return root
 
 

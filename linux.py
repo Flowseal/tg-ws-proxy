@@ -1,241 +1,44 @@
 from __future__ import annotations
 
-import json
-import logging
-import logging.handlers
 import os
 import subprocess
 import sys
 import threading
-import webbrowser
 import time
-from pathlib import Path
 from typing import Optional
 
 import customtkinter as ctk
-import psutil
 import pyperclip
 import pystray
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageTk
 
 import proxy.tg_ws_proxy as tg_ws_proxy
-from proxy.app_runtime import ProxyAppRuntime
-from proxy import __version__
-from utils.default_config import default_tray_config
+
+from utils.tray_common import (
+    APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, LOG_FILE,
+    acquire_lock, bootstrap, check_ipv6_warning, ctk_run_dialog,
+    ensure_ctk_thread, ensure_dirs, load_config, load_icon, log,
+    maybe_notify_update, quit_ctk, release_lock, restart_proxy,
+    save_config, start_proxy, stop_proxy, tg_proxy_url,
+)
 from ui.ctk_tray_ui import (
-    install_tray_config_buttons,
-    install_tray_config_form,
-    populate_first_run_window,
-    tray_settings_scroll_and_footer,
+    install_tray_config_buttons, install_tray_config_form,
+    populate_first_run_window, tray_settings_scroll_and_footer,
     validate_config_form,
 )
 from ui.ctk_theme import (
-    CONFIG_DIALOG_FRAME_PAD,
-    CONFIG_DIALOG_SIZE,
-    FIRST_RUN_SIZE,
-    create_ctk_root,
-    ctk_theme_for_platform,
-    main_content_frame,
+    CONFIG_DIALOG_FRAME_PAD, CONFIG_DIALOG_SIZE, FIRST_RUN_SIZE,
+    create_ctk_toplevel, ctk_theme_for_platform, main_content_frame,
 )
-
-APP_NAME = "TgWsProxy"
-APP_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP_NAME
-CONFIG_FILE = APP_DIR / "config.json"
-LOG_FILE = APP_DIR / "proxy.log"
-FIRST_RUN_MARKER = APP_DIR / ".first_run_done"
-IPV6_WARN_MARKER = APP_DIR / ".ipv6_warned"
-
-
-DEFAULT_CONFIG = default_tray_config()
-
 
 _tray_icon: Optional[object] = None
 _config: dict = {}
-_exiting: bool = False
-_lock_file_path: Optional[Path] = None
+_exiting = False
 
-log = logging.getLogger("tg-ws-tray")
-_runtime = ProxyAppRuntime(
-    APP_DIR,
-    default_config=DEFAULT_CONFIG,
-    logger_name="tg-ws-tray",
-    on_error=lambda text: _show_error(text),
-)
-CONFIG_FILE = _runtime.config_file
-LOG_FILE = _runtime.log_file
+# dialogs (tkinter messagebox)
 
 
-def _same_process(lock_meta: dict, proc: psutil.Process) -> bool:
-    try:
-        lock_ct = float(lock_meta.get("create_time", 0.0))
-        proc_ct = float(proc.create_time())
-        if lock_ct > 0 and abs(lock_ct - proc_ct) > 1.0:
-            return False
-    except Exception:
-        return False
-
-    try:
-        cmdline = proc.cmdline()
-        for arg in cmdline:
-            if "linux.py" in arg:
-                return True
-    except Exception:
-        pass
-
-    frozen = bool(getattr(sys, "frozen", False))
-    if frozen:
-        return APP_NAME.lower() in proc.name().lower()
-
-    return False
-
-
-def _release_lock():
-    global _lock_file_path
-    if not _lock_file_path:
-        return
-    try:
-        _lock_file_path.unlink(missing_ok=True)
-    except Exception:
-        pass
-    _lock_file_path = None
-
-
-def _acquire_lock() -> bool:
-    global _lock_file_path
-    _ensure_dirs()
-    lock_files = list(APP_DIR.glob("*.lock"))
-
-    for f in lock_files:
-        pid = None
-        meta: dict = {}
-
-        try:
-            pid = int(f.stem)
-        except Exception:
-            f.unlink(missing_ok=True)
-            continue
-
-        try:
-            raw = f.read_text(encoding="utf-8").strip()
-            if raw:
-                meta = json.loads(raw)
-        except Exception:
-            meta = {}
-
-        try:
-            proc = psutil.Process(pid)
-            if _same_process(meta, proc):
-                return False
-        except Exception:
-            pass
-
-        f.unlink(missing_ok=True)
-
-    lock_file = APP_DIR / f"{os.getpid()}.lock"
-    try:
-        proc = psutil.Process(os.getpid())
-        payload = {
-            "create_time": proc.create_time(),
-        }
-        lock_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    except Exception:
-        lock_file.touch()
-
-    _lock_file_path = lock_file
-    return True
-
-
-def _ensure_dirs():
-    _runtime.ensure_dirs()
-
-
-def load_config() -> dict:
-    return _runtime.load_config()
-
-
-def save_config(cfg: dict):
-    _runtime.save_config(cfg)
-
-
-def setup_logging(verbose: bool = False, log_max_mb: float = 5):
-    _runtime.setup_logging(verbose, log_max_mb=log_max_mb)
-
-
-def _make_icon_image(size: int = 64):
-    if Image is None:
-        raise RuntimeError("Pillow is required for tray icon")
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-
-    margin = 2
-    draw.ellipse(
-        [margin, margin, size - margin, size - margin], fill=(0, 136, 204, 255)
-    )
-
-    try:
-        font = ImageFont.truetype(
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            size=int(size * 0.55),
-        )
-    except Exception:
-        try:
-            font = ImageFont.truetype(
-                "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf", size=int(size * 0.55)
-            )
-        except Exception:
-            font = ImageFont.load_default()
-    bbox = draw.textbbox((0, 0), "T", font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    tx = (size - tw) // 2 - bbox[0]
-    ty = (size - th) // 2 - bbox[1]
-    draw.text((tx, ty), "T", fill=(255, 255, 255, 255), font=font)
-
-    return img
-
-
-def _load_icon():
-    icon_path = Path(__file__).parent / "icon.ico"
-    if icon_path.exists() and Image:
-        try:
-            return Image.open(str(icon_path))
-        except Exception:
-            pass
-    return _make_icon_image()
-
-
-def start_proxy():
-    _runtime.start_proxy(_config)
-
-
-def stop_proxy():
-    _runtime.stop_proxy()
-
-
-def restart_proxy():
-    _runtime.restart_proxy()
-
-
-def _show_error(text: str, title: str = "TG WS Proxy — Ошибка"):
-    import tkinter as _tk
-    from tkinter import messagebox as _mb
-
-    root = _tk.Tk()
-    root.withdraw()
-    _mb.showerror(title, text, parent=root)
-    root.destroy()
-
-
-def _show_info(text: str, title: str = "TG WS Proxy"):
-    import tkinter as _tk
-    from tkinter import messagebox as _mb
-
-    root = _tk.Tk()
-    root.withdraw()
-    _mb.showinfo(title, text, parent=root)
-    root.destroy()
-
-
-def _ask_yes_no_dialog(text: str, title: str = "TG WS Proxy") -> bool:
+def _msgbox(kind: str, text: str, title: str, **kw):
     import tkinter as _tk
     from tkinter import messagebox as _mb
 
@@ -245,273 +48,189 @@ def _ask_yes_no_dialog(text: str, title: str = "TG WS Proxy") -> bool:
         root.attributes("-topmost", True)
     except Exception:
         pass
-    r = _mb.askyesno(title, text, parent=root)
+    result = getattr(_mb, kind)(title, text, parent=root, **kw)
     root.destroy()
-    return bool(r)
+    return result
 
 
-def _maybe_notify_update_async():
-    def _work():
-        time.sleep(1.5)
-        if _exiting:
-            return
-        if not _config.get("check_updates", True):
-            return
-        try:
-            from utils.update_check import RELEASES_PAGE_URL, get_status, run_check
-            run_check(__version__)
-            st = get_status()
-            if not st.get("has_update"):
-                return
-            url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
-            ver = st.get("latest") or "?"
-            text = (
-                f"Доступна новая версия: {ver}\n\n"
-                f"Открыть страницу релиза в браузере?"
-            )
-            if _ask_yes_no_dialog(text, "TG WS Proxy — обновление"):
-                webbrowser.open(url)
-        except Exception as exc:
-            log.debug("Update check failed: %s", exc)
-
-    threading.Thread(target=_work, daemon=True, name="update-check").start()
+def _show_error(text: str, title: str = "TG WS Proxy — Ошибка") -> None:
+    _msgbox("showerror", text, title)
 
 
-def _on_open_in_telegram(icon=None, item=None):
-    host = _config.get("host", DEFAULT_CONFIG["host"])
-    port = _config.get("port", DEFAULT_CONFIG["port"])
-    url = f"tg://socks?server={host}&port={port}"
+def _show_info(text: str, title: str = "TG WS Proxy") -> None:
+    _msgbox("showinfo", text, title)
+
+
+def _ask_yes_no(text: str, title: str = "TG WS Proxy") -> bool:
+    return bool(_msgbox("askyesno", text, title))
+
+
+def _apply_window_icon(root) -> None:
+    icon_img = load_icon()
+    if icon_img:
+        root._ctk_icon_photo = ImageTk.PhotoImage(icon_img.resize((64, 64)))
+        root.iconphoto(False, root._ctk_icon_photo)
+
+
+# tray callbacks
+
+
+def _on_open_in_telegram(icon=None, item=None) -> None:
+    url = tg_proxy_url(_config)
     log.info("Copying %s", url)
-
     try:
         pyperclip.copy(url)
         _show_info(
-            f"Ссылка скопирована в буфер обмена, отправьте её в Telegram и нажмите по ней ЛКМ:\n{url}",
-            "TG WS Proxy",
+            f"Ссылка скопирована в буфер обмена, отправьте её в Telegram и нажмите по ней ЛКМ:\n{url}"
         )
     except Exception as exc:
         log.error("Clipboard copy failed: %s", exc)
         _show_error(f"Не удалось скопировать ссылку:\n{exc}")
 
 
-def _on_restart(icon=None, item=None):
-    threading.Thread(target=restart_proxy, daemon=True).start()
+def _on_copy_link(icon=None, item=None) -> None:
+    url = tg_proxy_url(_config)
+    log.info("Copying link: %s", url)
+    try:
+        pyperclip.copy(url)
+    except Exception as exc:
+        log.error("Clipboard copy failed: %s", exc)
+        _show_error(f"Не удалось скопировать ссылку:\n{exc}")
 
 
-def _on_edit_config(icon=None, item=None):
+def _on_restart(icon=None, item=None) -> None:
+    threading.Thread(
+        target=lambda: restart_proxy(_config, _show_error), daemon=True
+    ).start()
+
+
+def _on_edit_config(icon=None, item=None) -> None:
     threading.Thread(target=_edit_config_dialog, daemon=True).start()
 
 
-def _edit_config_dialog():
-    if ctk is None:
-        _show_error("customtkinter не установлен.")
-        return
-
-    cfg = dict(_config)
-
-    theme = ctk_theme_for_platform()
-    w, h = CONFIG_DIALOG_SIZE
-
-    root = create_ctk_root(
-        ctk,
-        title="TG WS Proxy — Настройки",
-        width=w,
-        height=h,
-        theme=theme,
-        after_create=_apply_linux_ctk_window_icon,
-    )
-
-    fpx, fpy = CONFIG_DIALOG_FRAME_PAD
-    frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)
-
-    scroll, footer = tray_settings_scroll_and_footer(ctk, frame, theme)
-
-    widgets = install_tray_config_form(
-        ctk, scroll, theme, cfg, DEFAULT_CONFIG,
-        show_autostart=False,
-    )
-
-    def on_save():
-        merged = validate_config_form(
-            widgets, DEFAULT_CONFIG, include_autostart=False)
-        if isinstance(merged, str):
-            _show_error(merged)
-            return
-
-        new_cfg = merged
-        save_config(new_cfg)
-        _config.update(new_cfg)
-        log.info("Config saved: %s", new_cfg)
-
-        _tray_icon.menu = _build_menu()
-
-        from tkinter import messagebox
-
-        if messagebox.askyesno(
-            "Перезапустить?",
-            "Настройки сохранены.\n\nПерезапустить прокси сейчас?",
-            parent=root,
-        ):
-            root.destroy()
-            restart_proxy()
-        else:
-            root.destroy()
-
-    def on_cancel():
-        root.destroy()
-
-    install_tray_config_buttons(
-        ctk, footer, theme, on_save=on_save, on_cancel=on_cancel)
-
-    try:
-        root.mainloop()
-    finally:
-        import tkinter as tk
-        try:
-            if root.winfo_exists():
-                root.destroy()
-        except tk.TclError:
-            pass
-
-
-def _on_open_logs(icon=None, item=None):
+def _on_open_logs(icon=None, item=None) -> None:
     log.info("Opening log file: %s", LOG_FILE)
     if LOG_FILE.exists():
-        env = os.environ.copy()
-        env.pop("VIRTUAL_ENV", None)
-        env.pop("PYTHONPATH", None)
-        env.pop("PYTHONHOME", None)
-
+        env = {k: v for k, v in os.environ.items() if k not in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME")}
         subprocess.Popen(
-            ["xdg-open", str(LOG_FILE)],
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
+            ["xdg-open", str(LOG_FILE)], env=env,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, start_new_session=True,
         )
     else:
-        _show_info("Файл логов ещё не создан.", "TG WS Proxy")
+        _show_info("Файл логов ещё не создан.")
 
 
-def _on_exit(icon=None, item=None):
+def _on_exit(icon=None, item=None) -> None:
     global _exiting
     if _exiting:
         os._exit(0)
         return
     _exiting = True
     log.info("User requested exit")
-
-    def _force_exit():
-        time.sleep(3)
-        os._exit(0)
-
-    threading.Thread(target=_force_exit, daemon=True, name="force-exit").start()
-
+    quit_ctk()
+    threading.Thread(target=lambda: (time.sleep(3), os._exit(0)), daemon=True, name="force-exit").start()
     if icon:
         icon.stop()
 
 
-def _show_first_run():
-    _ensure_dirs()
+# settings dialog
+
+
+def _edit_config_dialog() -> None:
+    if not ensure_ctk_thread(ctk):
+        _show_error("customtkinter не установлен.")
+        return
+
+    cfg = dict(_config)
+
+    def _build(done: threading.Event) -> None:
+        theme = ctk_theme_for_platform()
+        w, h = CONFIG_DIALOG_SIZE
+        root = create_ctk_toplevel(
+            ctk, title="TG WS Proxy — Настройки", width=w, height=h, theme=theme,
+            after_create=_apply_window_icon,
+        )
+        fpx, fpy = CONFIG_DIALOG_FRAME_PAD
+        frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)
+        scroll, footer = tray_settings_scroll_and_footer(ctk, frame, theme)
+        widgets = install_tray_config_form(ctk, scroll, theme, cfg, DEFAULT_CONFIG, show_autostart=False)
+
+        def _finish() -> None:
+            root.destroy()
+            done.set()
+
+        def on_save() -> None:
+            from tkinter import messagebox
+            merged = validate_config_form(widgets, DEFAULT_CONFIG, include_autostart=False)
+            if isinstance(merged, str):
+                messagebox.showerror("TG WS Proxy — Ошибка", merged, parent=root)
+                return
+            save_config(merged)
+            _config.update(merged)
+            log.info("Config saved: %s", merged)
+            _tray_icon.menu = _build_menu()
+
+            do_restart = messagebox.askyesno(
+                "Перезапустить?",
+                "Настройки сохранены.\n\nПерезапустить прокси сейчас?",
+                parent=root,
+            )
+            _finish()
+            if do_restart:
+                threading.Thread(target=lambda: restart_proxy(_config, _show_error), daemon=True).start()
+
+        root.protocol("WM_DELETE_WINDOW", _finish)
+        install_tray_config_buttons(ctk, footer, theme, on_save=on_save, on_cancel=_finish)
+
+    ctk_run_dialog(_build)
+
+
+# first run
+
+
+def _show_first_run() -> None:
+    ensure_dirs()
     if FIRST_RUN_MARKER.exists():
+        return
+    if not ensure_ctk_thread(ctk):
+        FIRST_RUN_MARKER.touch()
         return
 
     host = _config.get("host", DEFAULT_CONFIG["host"])
     port = _config.get("port", DEFAULT_CONFIG["port"])
+    secret = _config.get("secret", DEFAULT_CONFIG["secret"])
 
-    if ctk is None:
-        FIRST_RUN_MARKER.touch()
-        return
+    def _build(done: threading.Event) -> None:
+        theme = ctk_theme_for_platform()
+        w, h = FIRST_RUN_SIZE
+        root = create_ctk_toplevel(
+            ctk, title="TG WS Proxy", width=w, height=h, theme=theme,
+            after_create=_apply_window_icon,
+        )
 
-    theme = ctk_theme_for_platform()
-    w, h = FIRST_RUN_SIZE
+        def on_done(open_tg: bool) -> None:
+            FIRST_RUN_MARKER.touch()
+            root.destroy()
+            done.set()
+            if open_tg:
+                _on_open_in_telegram()
 
-    root = create_ctk_root(
-        ctk,
-        title="TG WS Proxy",
-        width=w,
-        height=h,
-        theme=theme,
-        after_create=_apply_linux_ctk_window_icon,
-    )
+        populate_first_run_window(ctk, root, theme, host=host, port=port, secret=secret, on_done=on_done)
 
-    def on_done(open_tg: bool):
-        FIRST_RUN_MARKER.touch()
-        root.destroy()
-        if open_tg:
-            _on_open_in_telegram()
-
-    populate_first_run_window(
-        ctk, root, theme, host=host, port=port, on_done=on_done)
-
-    try:
-        root.mainloop()
-    finally:
-        import tkinter as tk
-        try:
-            if root.winfo_exists():
-                root.destroy()
-        except tk.TclError:
-            pass
+    ctk_run_dialog(_build)
 
 
-def _has_ipv6_enabled() -> bool:
-    import socket as _sock
-
-    try:
-        addrs = _sock.getaddrinfo(_sock.gethostname(), None, _sock.AF_INET6)
-        for addr in addrs:
-            ip = addr[4][0]
-            if ip and not ip.startswith("::1") and not ip.startswith("fe80::1"):
-                return True
-    except Exception:
-        pass
-    try:
-        s = _sock.socket(_sock.AF_INET6, _sock.SOCK_STREAM)
-        s.bind(("::1", 0))
-        s.close()
-        return True
-    except Exception:
-        return False
-
-
-def _check_ipv6_warning():
-    _ensure_dirs()
-    if IPV6_WARN_MARKER.exists():
-        return
-    if not _has_ipv6_enabled():
-        return
-
-    IPV6_WARN_MARKER.touch()
-
-    threading.Thread(target=_show_ipv6_dialog, daemon=True).start()
-
-
-def _show_ipv6_dialog():
-    _show_info(
-        "На вашем компьютере включена поддержка подключения по IPv6.\n\n"
-        "Telegram может пытаться подключаться через IPv6, "
-        "что не поддерживается и может привести к ошибкам.\n\n"
-        "Если прокси не работает или в логах присутствуют ошибки, "
-        "связанные с попытками подключения по IPv6 - "
-        "попробуйте отключить в настройках прокси Telegram попытку соединения "
-        "по IPv6. Если данная мера не помогает, попробуйте отключить IPv6 "
-        "в системе.\n\n"
-        "Это предупреждение будет показано только один раз.",
-        "TG WS Proxy",
-    )
+# tray menu
 
 
 def _build_menu():
-    if pystray is None:
-        return None
     host = _config.get("host", DEFAULT_CONFIG["host"])
     port = _config.get("port", DEFAULT_CONFIG["port"])
+    link_host = tg_ws_proxy.get_link_host(host)
     return pystray.Menu(
-        pystray.MenuItem(
-            f"Открыть в Telegram ({host}:{port})", _on_open_in_telegram, default=True
-        ),
+        pystray.MenuItem(f"Открыть в Telegram ({link_host}:{port})", _on_open_in_telegram, default=True),
+        pystray.MenuItem("Скопировать ссылку", _on_copy_link),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Перезапустить прокси", _on_restart),
         pystray.MenuItem("Настройки...", _on_edit_config),
@@ -521,21 +240,18 @@ def _build_menu():
     )
 
 
-def run_tray():
+# entry point
+
+
+def run_tray() -> None:
     global _tray_icon, _config
 
-    _config = _runtime.prepare()
-    _runtime.reset_log_file()
-
-    setup_logging(_config.get("verbose", False),
-                  log_max_mb=_config.get("log_max_mb", DEFAULT_CONFIG["log_max_mb"]))
-    log.info("TG WS Proxy версия %s, tray app starting", __version__)
-    log.info("Config: %s", _config)
-    log.info("Log file: %s", LOG_FILE)
+    _config = load_config()
+    bootstrap(_config)
 
     if pystray is None or Image is None:
         log.error("pystray or Pillow not installed; running in console mode")
-        start_proxy()
+        start_proxy(_config, _show_error)
         try:
             while True:
                 time.sleep(1)
@@ -543,16 +259,12 @@ def run_tray():
             stop_proxy()
         return
 
-    start_proxy()
-
-    _maybe_notify_update_async()
-
+    start_proxy(_config, _show_error)
+    maybe_notify_update(_config, lambda: _exiting, _ask_yes_no)
     _show_first_run()
-    _check_ipv6_warning()
+    check_ipv6_warning(_show_info)
 
-    icon_image = _load_icon()
-    _tray_icon = pystray.Icon(APP_NAME, icon_image, "TG WS Proxy", menu=_build_menu())
-
+    _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
     log.info("Tray icon running")
     _tray_icon.run()
 
@@ -560,15 +272,14 @@ def run_tray():
     log.info("Tray app exited")
 
 
-def main():
-    if not _acquire_lock():
+def main() -> None:
+    if not acquire_lock("linux.py"):
         _show_info("Приложение уже запущено.", os.path.basename(sys.argv[0]))
         return
-
     try:
         run_tray()
     finally:
-        _release_lock()
+        release_lock()
 
 
 if __name__ == "__main__":

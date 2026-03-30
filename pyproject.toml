@@ -22,7 +22,7 @@ keywords = [
     "proxy",
     "bypass",
     "websocket",
-    "socks5",
+    "mtproto",
 ]
 classifiers = [
   "Development Status :: 5 - Production/Stable",

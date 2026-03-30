@@ -306,7 +306,7 @@ jobs:
           Maintainer: Flowseal
           Depends: libgtk-3-0, libayatana-appindicator3-1, python3-tk
           Description: Telegram Desktop WebSocket Bridge Proxy
-           SOCKS5/WebSocket bridge proxy for Telegram Desktop with tray UI.
+           MTProto/WebSocket bridge proxy for Telegram Desktop with tray UI.
           EOF
 
           dpkg-deb --build --root-owner-group \
