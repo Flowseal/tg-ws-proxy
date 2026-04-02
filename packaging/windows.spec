@@ -7,13 +7,21 @@ block_cipher = None
 
 # customtkinter ships JSON themes + assets that must be bundled
 import customtkinter
+import setuptools
+
 ctk_path = os.path.dirname(customtkinter.__file__)
+# pkg_resources (pyi_rth_pkgres) prepends setuptools/_vendor to sys.path and
+# imports jaraco.* from there; frozen builds need the tree on disk.
+_vendor = os.path.join(os.path.dirname(setuptools.__file__), '_vendor')
+_bundle_datas = [(ctk_path, 'customtkinter/')]
+if os.path.isdir(_vendor):
+    _bundle_datas.append((_vendor, os.path.join('setuptools', '_vendor')))
 
 a = Analysis(
     [os.path.join(os.path.dirname(SPEC), os.pardir, 'windows.py')],
     pathex=[],
     binaries=[],
-    datas=[(ctk_path, 'customtkinter/')],
+    datas=_bundle_datas,
     hiddenimports=[
         'pystray._win32',
         'PIL._tkinter_finder',
@@ -22,6 +30,7 @@ a = Analysis(
         'cryptography.hazmat.primitives.ciphers.algorithms',
         'cryptography.hazmat.primitives.ciphers.modes',
         'cryptography.hazmat.backends.openssl',
+        'platformdirs',
     ],
     hookspath=[],
     hooksconfig={},

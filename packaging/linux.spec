@@ -10,7 +10,13 @@ block_cipher = None
 
 # customtkinter ships JSON themes + assets that must be bundled
 import customtkinter
+import setuptools
+
 ctk_path = os.path.dirname(customtkinter.__file__)
+_vendor = os.path.join(os.path.dirname(setuptools.__file__), '_vendor')
+_setuptools_vendor = (
+    [(_vendor, os.path.join('setuptools', '_vendor'))]
+    if os.path.isdir(_vendor) else [])
 
 # Collect gi (PyGObject) submodules and data so pystray._appindicator works
 gi_hiddenimports = collect_submodules('gi')
@@ -26,7 +32,7 @@ a = Analysis(
     [os.path.join(os.path.dirname(SPEC), os.pardir, 'linux.py')],
     pathex=[],
     binaries=[],
-    datas=[(ctk_path, 'customtkinter/')] + gi_datas + typelib_datas,
+    datas=[(ctk_path, 'customtkinter/')] + _setuptools_vendor + gi_datas + typelib_datas,
     hiddenimports=[
         'pystray._appindicator',
         'PIL._tkinter_finder',
@@ -35,6 +41,7 @@ a = Analysis(
         'cryptography.hazmat.primitives.ciphers.algorithms',
         'cryptography.hazmat.primitives.ciphers.modes',
         'cryptography.hazmat.backends.openssl',
+        'platformdirs',
         'gi',
         '_gi',
         'gi.repository.GLib',
