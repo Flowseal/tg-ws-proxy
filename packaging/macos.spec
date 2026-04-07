@@ -5,11 +5,18 @@ import os
 
 block_cipher = None
 
+import setuptools
+
+_vendor = os.path.join(os.path.dirname(setuptools.__file__), '_vendor')
+_macos_datas = (
+    [(_vendor, os.path.join('setuptools', '_vendor'))]
+    if os.path.isdir(_vendor) else [])
+
 a = Analysis(
     [os.path.join(os.path.dirname(SPEC), os.pardir, 'macos.py')],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=_macos_datas,
     hiddenimports=[
         'rumps',
         'objc',
@@ -21,6 +28,7 @@ a = Analysis(
         'cryptography.hazmat.primitives.ciphers.algorithms',
         'cryptography.hazmat.primitives.ciphers.modes',
         'cryptography.hazmat.backends.openssl',
+        'platformdirs',
     ],
     hookspath=[],
     hooksconfig={},
