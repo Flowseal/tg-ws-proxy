@@ -17,6 +17,9 @@ _TRAY_DEFAULTS_COMMON: Dict[str, Any] = {
     "log_max_mb": 5,
     "buf_kb": 256,
     "pool_size": 4,
+    "cfproxy": True,
+    "cfproxy_priority": True,
+    "cfproxy_domain": "pclead.co.uk",
 }
 
 

@@ -392,6 +392,27 @@ def _edit_config_dialog() -> None:
                 except ValueError:
                     pass
 
+    cfproxy = _ask_yes_no_close("Включить Cloudflare Proxy (CfProxy)?")
+    if cfproxy is None:
+        return
+
+    cfproxy_priority = True
+    if cfproxy:
+        cfproxy_priority_result = _ask_yes_no_close("Приоритет CfProxy (пробовать раньше прямого TCP)?")
+        if cfproxy_priority_result is None:
+            return
+        cfproxy_priority = cfproxy_priority_result
+
+    cfproxy_domain = _osascript_input(
+        "Домен CF-прокси:\n"
+        "DNS записи kws1-kws5,kws203 должны указывать на IP датацентров Telegram через Cloudflare.\n"
+        "pclead.co.uk готовый настроенный домен. Подробнее про настройку читайте в репозитории - docs/CfProxy.md",
+        cfg.get("cfproxy_domain", DEFAULT_CONFIG.get("cfproxy_domain", "pclead.co.uk")),
+    )
+    if cfproxy_domain is None:
+        return
+    cfproxy_domain = cfproxy_domain.strip()
+
     new_cfg = {
         "host": host,
         "port": port,
@@ -402,6 +423,9 @@ def _edit_config_dialog() -> None:
         "pool_size": adv.get("pool_size", cfg.get("pool_size", DEFAULT_CONFIG["pool_size"])),
         "log_max_mb": adv.get("log_max_mb", cfg.get("log_max_mb", DEFAULT_CONFIG["log_max_mb"])),
         "check_updates": cfg.get("check_updates", True),
+        "cfproxy": cfproxy,
+        "cfproxy_priority": cfproxy_priority,
+        "cfproxy_domain": cfproxy_domain or DEFAULT_CONFIG.get("cfproxy_domain", "pclead.co.uk"),
     }
     save_config(new_cfg)
     log.info("Config saved: %s", new_cfg)

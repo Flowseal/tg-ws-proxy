@@ -27,8 +27,9 @@ _TIP_PORT = (
 _TIP_SECRET = "Секретный ключ для авторизации клиентов"
 _TIP_DC = (
     "Соответствие номера датацентра Telegram (DC) и IP-адреса сервера.\n"
-    "Каждая строка: «номер:IP», например 2:149.154.167.220. "
-    "Прокси по этим правилам направляет трафик к нужным серверам Telegram"
+    "Каждая строка: «номер:IP», например 4:149.154.167.220. "
+    "Прокси по этим правилам направляет трафик к нужным серверам Telegram\n\n"
+    "Если у вас не работают медиа и работает CF-прокси, то попробуйте убрать строку 2:149.154.167.220"
 )
 _TIP_VERBOSE = (
     "Если включено, в файл логов пишется больше подробностей — "
@@ -50,8 +51,99 @@ _TIP_AUTOSTART = (
     "Если вы переместите программу в другую папку, автозапуск сбросится"
 )
 _TIP_CHECK_UPDATES = "При запуске проверять наличие обновлений"
+_TIP_CFPROXY = (
+    "Использовать Cloudflare прокси для недоступных датацентров"
+)
+_TIP_CFPROXY_PRIORITY = (
+    "Пробовать CF-прокси раньше прямого TCP-подключения"
+)
+_TIP_CFPROXY_DOMAIN = (
+    "Домен, проксируемый через Cloudflare, для WS-подключения"
+)
 _TIP_SAVE = "Сохранить настройки"
 _TIP_CANCEL = "Закрыть окно без сохранения изменений"
+
+_CFPROXY_HELP_URL = "https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md"
+_CFPROXY_TEST_DCS = [1, 2, 3, 4, 5, 203]
+
+
+def _run_cfproxy_connectivity_test(domain: str) -> dict:
+    import base64
+    import ssl
+    import socket as _socket
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    results = {}
+    for dc in _CFPROXY_TEST_DCS:
+        host = f"kws{dc}.{domain}"
+        try:
+            with _socket.create_connection((host, 443), timeout=5) as raw:
+                with ctx.wrap_socket(raw, server_hostname=host) as ssock:
+                    ws_key = base64.b64encode(os.urandom(16)).decode()
+                    req = (
+                        f"GET /apiws HTTP/1.1\r\n"
+                        f"Host: {host}\r\n"
+                        f"Upgrade: websocket\r\n"
+                        f"Connection: Upgrade\r\n"
+                        f"Sec-WebSocket-Key: {ws_key}\r\n"
+                        f"Sec-WebSocket-Version: 13\r\n"
+                        f"Sec-WebSocket-Protocol: binary\r\n"
+                        f"\r\n"
+                    ).encode()
+                    ssock.sendall(req)
+                    ssock.settimeout(5)
+                    buf = b""
+                    while b"\r\n\r\n" not in buf:
+                        chunk = ssock.recv(512)
+                        if not chunk:
+                            break
+                        buf += chunk
+                    first = buf.decode("utf-8", errors="replace").split("\r\n")[0]
+                    if "101" in first:
+                        results[dc] = True
+                    else:
+                        results[dc] = first or "нет ответа"
+                    ssock.close()
+                raw.close()
+        except _socket.timeout:
+            results[dc] = "таймаут"
+        except OSError as exc:
+            msg = str(exc)
+            results[dc] = msg[:60] if len(msg) > 60 else msg
+    return results
+
+
+def _cfproxy_show_test_results(domain: str, results: dict) -> None:
+    import tkinter as _tk
+    from tkinter import messagebox as _mb
+
+    ok = [dc for dc, v in results.items() if v is True]
+    fail = [(dc, v) for dc, v in results.items() if v is not True]
+    if len(ok) == len(_CFPROXY_TEST_DCS):
+        title = "CF-прокси: всё работает"
+        msg = f"\u2713 Все {len(_CFPROXY_TEST_DCS)} серверов доступны через {domain}."
+    elif not ok:
+        title = "CF-прокси: недоступен"
+        msg = f"\u2717 Ни один сервер не отвечает через {domain}.\n\nОшибки:\n"
+        msg += "\n".join(f"  kws{dc}: {v}" for dc, v in fail)
+    else:
+        title = "CF-прокси: частично работает"
+        msg = (
+            f"Домен: {domain}\n\n"
+            f"\u2713 Работают: {', '.join(f'kws{dc}' for dc in ok)}\n\n"
+            f"\u2717 Недоступны:\n"
+            + "\n".join(f"  kws{dc}: {v}" for dc, v in fail)
+        )
+    root = _tk.Tk()
+    root.withdraw()
+    try:
+        root.attributes("-topmost", True)
+    except Exception:
+        pass
+    _mb.showinfo(title, msg, parent=root)
+    root.destroy()
 
 _INNER_W = 396
 
@@ -155,6 +247,9 @@ class TrayConfigFormWidgets:
     adv_keys: Tuple[str, ...]
     autostart_var: Optional[Any]
     check_updates_var: Optional[Any]
+    cfproxy_var: Optional[Any] = None
+    cfproxy_priority_var: Optional[Any] = None
+    cfproxy_domain_var: Optional[Any] = None
 
 
 def install_tray_config_form(
@@ -232,6 +327,76 @@ def install_tray_config_form(
     dc_textbox.pack(fill="x")
     dc_textbox.insert("1.0", "\n".join(cfg.get("dc_ip", default_config["dc_ip"])))
     attach_tooltip_to_widgets([dc_lbl, dc_textbox], _TIP_DC)
+
+    cf_inner = _config_section(ctk, frame, theme, "Cloudflare Proxy")
+
+    cf_row = ctk.CTkFrame(cf_inner, fg_color="transparent")
+    cf_row.pack(fill="x", pady=(0, 6))
+
+    cfproxy_var = ctk.BooleanVar(
+        value=cfg.get("cfproxy", default_config.get("cfproxy", True))
+    )
+    cf_cb = _checkbox(ctk, cf_row, theme, "Включить CF-прокси", cfproxy_var)
+    cf_cb.pack(side="left", padx=(0, 16))
+    attach_ctk_tooltip(cf_cb, _TIP_CFPROXY)
+
+    cfproxy_priority_var = ctk.BooleanVar(
+        value=cfg.get("cfproxy_priority", default_config.get("cfproxy_priority", True))
+    )
+    cf_prio_cb = _checkbox(ctk, cf_row, theme, "Приоритет CF-прокси", cfproxy_priority_var)
+    cf_prio_cb.pack(side="left")
+    attach_ctk_tooltip(cf_prio_cb, _TIP_CFPROXY_PRIORITY)
+
+    cf_domain_row = ctk.CTkFrame(cf_inner, fg_color="transparent")
+    cf_domain_row.pack(fill="x")
+
+    cf_domain_col, cfproxy_domain_var = _labeled_entry(
+        ctk, cf_domain_row, theme, "Домен",
+        cfg.get("cfproxy_domain", default_config.get("cfproxy_domain", "pclead.co.uk")),
+        tip=_TIP_CFPROXY_DOMAIN, width=160, pack_fill=True,
+    )
+    cf_domain_col.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+    _cf_test_btn = [None]
+
+    def _on_cf_test():
+        domain = cfproxy_domain_var.get().strip()
+        if not domain:
+            return
+        btn = _cf_test_btn[0]
+        if btn:
+            btn.configure(text="...", state="disabled")
+        import threading as _threading
+        def _worker():
+            res = _run_cfproxy_connectivity_test(domain)
+            if btn:
+                btn.after(0, lambda: btn.configure(text="Тест", state="normal"))
+                btn.after(0, lambda: _cfproxy_show_test_results(domain, res))
+        _threading.Thread(target=_worker, daemon=True).start()
+
+    cf_test_col = ctk.CTkFrame(cf_domain_row, fg_color="transparent")
+    cf_test_col.pack(side="left", anchor="s", padx=(0, 6))
+    ctk.CTkLabel(cf_test_col, text="", font=(theme.ui_font_family, 12)).pack(pady=(0, 2))
+    _cf_test_widget = ctk.CTkButton(
+        cf_test_col, text="Тест", width=56, height=36,
+        font=(theme.ui_font_family, 13), corner_radius=10,
+        fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
+        text_color="#ffffff", border_width=1, border_color=theme.field_border,
+        command=_on_cf_test,
+    )
+    _cf_test_widget.pack()
+    _cf_test_btn[0] = _cf_test_widget
+
+    cf_help_col = ctk.CTkFrame(cf_domain_row, fg_color="transparent")
+    cf_help_col.pack(side="left", anchor="s")
+    ctk.CTkLabel(cf_help_col, text="", font=(theme.ui_font_family, 12)).pack(pady=(0, 2))
+    ctk.CTkButton(
+        cf_help_col, text="?", width=36, height=36,
+        font=(theme.ui_font_family, 18), corner_radius=10,
+        fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
+        text_color="#ffffff", border_width=1, border_color=theme.field_border,
+        command=lambda: webbrowser.open(_CFPROXY_HELP_URL),
+    ).pack()
 
     log_inner = _config_section(ctk, frame, theme, "Логи и производительность")
 
@@ -321,6 +486,9 @@ def install_tray_config_form(
         dc_textbox=dc_textbox, verbose_var=verbose_var,
         adv_entries=adv_entries, adv_keys=adv_keys,
         autostart_var=autostart_var, check_updates_var=check_updates_var,
+        cfproxy_var=cfproxy_var,
+        cfproxy_priority_var=cfproxy_priority_var,
+        cfproxy_domain_var=cfproxy_domain_var,
     )
 
 
@@ -363,9 +531,9 @@ def validate_config_form(
         return "Порт должен быть числом 1-65535"
 
     lines = [
-        l.strip()
-        for l in widgets.dc_textbox.get("1.0", "end").strip().splitlines()
-        if l.strip()
+        line.strip()
+        for line in widgets.dc_textbox.get("1.0", "end").strip().splitlines()
+        if line.strip()
     ]
     try:
         tg_ws_proxy.parse_dc_ip_list(lines)
@@ -397,6 +565,14 @@ def validate_config_form(
     merge_adv_from_form(widgets, new_cfg, default_config)
     if widgets.check_updates_var is not None:
         new_cfg["check_updates"] = bool(widgets.check_updates_var.get())
+    if widgets.cfproxy_var is not None:
+        new_cfg["cfproxy"] = bool(widgets.cfproxy_var.get())
+    if widgets.cfproxy_priority_var is not None:
+        new_cfg["cfproxy_priority"] = bool(widgets.cfproxy_priority_var.get())
+    if widgets.cfproxy_domain_var is not None:
+        domain = widgets.cfproxy_domain_var.get().strip()
+        if domain:
+            new_cfg["cfproxy_domain"] = domain
     return new_cfg
 
 

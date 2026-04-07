@@ -264,6 +264,9 @@ def apply_proxy_config(cfg: dict) -> bool:
     pc.dc_redirects = dc_redirects
     pc.buffer_size = max(4, cfg.get("buf_kb", DEFAULT_CONFIG["buf_kb"])) * 1024
     pc.pool_size = max(0, cfg.get("pool_size", DEFAULT_CONFIG["pool_size"]))
+    pc.fallback_cfproxy = cfg.get("cfproxy", DEFAULT_CONFIG["cfproxy"])
+    pc.fallback_cfproxy_priority = cfg.get("cfproxy_priority", DEFAULT_CONFIG["cfproxy_priority"])
+    pc.fallback_cfproxy_domain = cfg.get("cfproxy_domain", DEFAULT_CONFIG["cfproxy_domain"])
     return True
 
 
