@@ -29,6 +29,11 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
+      - name: Setup MSVC 14.40 toolset
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          toolset: 14.40
+
       - name: Install dependencies
         run: pip install .
 
@@ -41,7 +46,8 @@ jobs:
       - name: Build EXE with PyInstaller
         run: pyinstaller packaging/windows.spec --noconfirm
 
-      - name: Strip Rich PE header to avoid false AV detections
+      - name: Strip Rich PE header
+        shell: bash
         run: |
           python -c "
           import struct, pathlib
@@ -93,7 +99,8 @@ jobs:
       - name: Build EXE with PyInstaller
         run: pyinstaller packaging/windows.spec --noconfirm
 
-      - name: Strip Rich PE header to avoid false AV detections
+      - name: Strip Rich PE header
+        shell: bash
         run: |
           python -c "
           import struct, pathlib

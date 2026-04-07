@@ -34,6 +34,7 @@ a = Analysis(
 )
 
 icon_path = os.path.join(os.path.dirname(SPEC), os.pardir, 'icon.ico')
+version_path = os.path.join(os.path.dirname(SPEC), 'version_info.txt')
 if os.path.exists(icon_path):
     a.datas += [('icon.ico', icon_path, 'DATA')]
 
@@ -60,4 +61,5 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=icon_path if os.path.exists(icon_path) else None,
+    version=version_path if os.path.exists(version_path) else None,
 )
