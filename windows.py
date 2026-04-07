@@ -32,6 +32,10 @@ except ImportError:
 
 import proxy.tg_ws_proxy as tg_ws_proxy
 
+from utils.win32_theme import (
+    is_windows_dark_theme, 
+    apply_windows_dark_theme,
+)
 from utils.tray_common import (
     APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, IS_FROZEN, LOG_FILE,
     acquire_lock, bootstrap, check_ipv6_warning, ctk_run_dialog,
@@ -316,6 +320,10 @@ def run_tray() -> None:
     global _tray_icon, _config
 
     _config = load_config()
+
+    if is_windows_dark_theme:
+        apply_windows_dark_theme()
+
     bootstrap(_config)
 
     if pystray is None or Image is None or ctk is None:

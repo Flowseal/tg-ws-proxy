@@ -458,7 +458,3 @@ def bootstrap(cfg: dict) -> None:
     log.info("TG WS Proxy версия %s starting", __version__)
     log.info("Config: %s", cfg)
     log.info("Log file: %s", LOG_FILE)
-
-    from .win32_theme import is_windows_dark_theme, apply_windows_dark_theme
-    if is_windows_dark_theme:
-        apply_windows_dark_theme()
