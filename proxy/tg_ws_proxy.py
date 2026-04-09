@@ -516,6 +516,16 @@ class Stats:
 _stats = Stats()
 
 
+def reset_runtime_state() -> None:
+    global _dc_opt, _stats, _server_instance, _server_stop_event
+    _dc_opt = {}
+    _ws_blacklist.clear()
+    _dc_fail_until.clear()
+    _stats = Stats()
+    _server_instance = None
+    _server_stop_event = None
+
+
 class _WsPool:
     WS_POOL_MAX_AGE = 120.0
     
@@ -611,6 +621,17 @@ class _WsPool:
     def reset(self):
         self._idle.clear()
         self._refilling.clear()
+
+    async def close_all(self):
+        tasks = []
+        for bucket in self._idle.values():
+            while bucket:
+                ws, _created = bucket.popleft()
+                tasks.append(asyncio.create_task(self._quiet_close(ws)))
+        self._idle.clear()
+        self._refilling.clear()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 _ws_pool = _WsPool()
 
@@ -1194,6 +1215,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
             await log_stats_task
         except asyncio.CancelledError:
             pass
+        await _ws_pool.close_all()
     _server_instance = None
 
 

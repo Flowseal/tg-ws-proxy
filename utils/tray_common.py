@@ -287,6 +287,7 @@ def start_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
 
     pc = tg_ws_proxy.proxy_config
     log.info("Starting proxy on %s:%d ...", pc.host, pc.port)
+    tg_ws_proxy.reset_runtime_state()
     _proxy_thread = threading.Thread(
         target=_run_proxy_thread, args=(on_error,), daemon=True, name="proxy"
     )
