@@ -13,7 +13,6 @@ import pystray
 from PIL import Image, ImageTk
 
 import proxy.tg_ws_proxy as tg_ws_proxy
-
 from utils.tray_common import (
     APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, LOG_FILE,
     acquire_lock, bootstrap, check_ipv6_warning, ctk_run_dialog,
@@ -21,6 +20,7 @@ from utils.tray_common import (
     maybe_notify_update, quit_ctk, release_lock, restart_proxy,
     save_config, start_proxy, stop_proxy, tg_proxy_url,
 )
+from utils.resume_watchdog import ResumeWatchdog
 from ui.ctk_tray_ui import (
     install_tray_config_buttons, install_tray_config_form,
     populate_first_run_window, tray_settings_scroll_and_footer,
@@ -32,6 +32,7 @@ from ui.ctk_theme import (
 )
 
 _tray_icon: Optional[object] = None
+_resume_watchdog: Optional[ResumeWatchdog] = None
 _config: dict = {}
 _exiting = False
 
@@ -63,6 +64,21 @@ def _show_info(text: str, title: str = "TG WS Proxy") -> None:
 
 def _ask_yes_no(text: str, title: str = "TG WS Proxy") -> bool:
     return bool(_msgbox("askyesno", text, title))
+
+
+def _start_resume_watchdog():
+    global _resume_watchdog
+    if _resume_watchdog is None:
+        _resume_watchdog = ResumeWatchdog(
+            lambda: restart_proxy(_config, _show_error),
+            log,
+        )
+    _resume_watchdog.start()
+
+
+def _stop_resume_watchdog():
+    if _resume_watchdog is not None:
+        _resume_watchdog.stop()
 
 
 def _apply_window_icon(root) -> None:
@@ -257,19 +273,25 @@ def run_tray() -> None:
                 time.sleep(1)
         except KeyboardInterrupt:
             stop_proxy()
+        finally:
+            _stop_resume_watchdog()
         return
 
-    start_proxy(_config, _show_error)
-    maybe_notify_update(_config, lambda: _exiting, _ask_yes_no)
-    _show_first_run()
-    check_ipv6_warning(_show_info)
+    _start_resume_watchdog()
+    try:
+        start_proxy(_config, _show_error)
+        maybe_notify_update(_config, lambda: _exiting, _ask_yes_no)
+        _show_first_run()
+        check_ipv6_warning(_show_info)
 
-    _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
-    log.info("Tray icon running")
-    _tray_icon.run()
+        _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
 
-    stop_proxy()
-    log.info("Tray app exited")
+        log.info("Tray icon running")
+        _tray_icon.run()
+    finally:
+        stop_proxy()
+        _stop_resume_watchdog()
+        log.info("Tray app exited")
 
 
 def main() -> None:

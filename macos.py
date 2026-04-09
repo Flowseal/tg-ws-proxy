@@ -26,6 +26,7 @@ except ImportError:
 
 import proxy.tg_ws_proxy as tg_ws_proxy
 from proxy import __version__
+from utils.resume_watchdog import ResumeWatchdog
 
 from utils.tray_common import (
     APP_DIR, APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, IPV6_WARN_MARKER,
@@ -38,6 +39,7 @@ MENUBAR_ICON_PATH = APP_DIR / "menubar_icon.png"
 _proxy_thread: Optional[threading.Thread] = None
 _async_stop: Optional[object] = None
 _app: Optional[object] = None
+_resume_watchdog: Optional[ResumeWatchdog] = None
 _config: dict = {}
 _exiting: bool = False
 
@@ -178,6 +180,7 @@ def _start_proxy() -> None:
         return
     pc = tg_ws_proxy.proxy_config
     log.info("Starting proxy on %s:%d ...", pc.host, pc.port)
+    tg_ws_proxy.reset_runtime_state()
     _proxy_thread = threading.Thread(target=_run_proxy_thread, daemon=True, name="proxy")
     _proxy_thread.start()
 
@@ -198,6 +201,18 @@ def _restart_proxy() -> None:
     _stop_proxy()
     time.sleep(0.3)
     _start_proxy()
+
+
+def _start_resume_watchdog():
+    global _resume_watchdog
+    if _resume_watchdog is None:
+        _resume_watchdog = ResumeWatchdog(_restart_proxy, log)
+    _resume_watchdog.start()
+
+
+def _stop_resume_watchdog():
+    if _resume_watchdog is not None:
+        _resume_watchdog.stop()
 
 
 # menu callbacks
@@ -595,19 +610,24 @@ def run_menubar() -> None:
                 time.sleep(1)
         except KeyboardInterrupt:
             _stop_proxy()
+        finally:
+            _stop_resume_watchdog()
         return
 
-    _start_proxy()
-    _maybe_notify_update_async()
-    _show_first_run()
-    _check_ipv6_warning()
+    _start_resume_watchdog()
+    try:
+        _start_proxy()
+        _maybe_notify_update_async()
+        _show_first_run()
+        _check_ipv6_warning()
 
-    _app = TgWsProxyApp()
-    log.info("Menubar app running")
-    _app.run()
-
-    _stop_proxy()
-    log.info("Menubar app exited")
+        _app = TgWsProxyApp()
+        log.info("Menubar app running")
+        _app.run()
+    finally:
+        _stop_proxy()
+        _stop_resume_watchdog()
+        log.info("Menubar app exited")
 
 
 def main() -> None:
