@@ -67,6 +67,8 @@ class MsgSplitter:
             if packet_len is None:
                 break
             if packet_len <= 0:
+                log.warning("MsgSplitter: unrecognised packet length, "
+                            "disabling splitting for this session")
                 parts.append(bytes(self._cipher_buf))
                 self._cipher_buf.clear()
                 self._plain_buf.clear()
