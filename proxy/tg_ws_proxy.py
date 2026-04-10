@@ -34,7 +34,8 @@ log = logging.getLogger('tg-mtproto-proxy')
 
 DC_FAIL_COOLDOWN = 30.0
 WS_FAIL_TIMEOUT = 2.0
-ws_blacklist: Set[Tuple[int, bool]] = set()
+WS_BLACKLIST_TTL = 600.0
+ws_blacklist: Dict[str, float] = {}  # dc_key -> expiry monotonic time
 dc_fail_until: Dict[Tuple[int, bool], float] = {}
 
 
@@ -294,14 +295,17 @@ async def _handle_client(reader, writer, secret: bytes):
         dc_key = f'{dc}{"m" if is_media else ""}'
         media_tag = " media" if is_media else ""
 
+        now = time.monotonic()
+
         # Fallback if DC not in config or WS blacklisted for this DC/is_media
-        if dc not in proxy_config.dc_redirects or dc_key in ws_blacklist:
+        blacklisted_until = ws_blacklist.get(dc_key, 0)
+        if dc not in proxy_config.dc_redirects or now < blacklisted_until:
             if dc not in proxy_config.dc_redirects:
                 log.info("[%s] DC%d not in config -> fallback",
                          label, dc)
             else:
-                log.info("[%s] DC%d%s WS blacklisted -> fallback",
-                         label, dc, media_tag)
+                log.info("[%s] DC%d%s WS blacklisted -> fallback (%.0fs remaining)",
+                         label, dc, media_tag, blacklisted_until - now)
             splitter = None
             try:
                 splitter = MsgSplitter(relay_init, proto_int)
@@ -316,7 +320,6 @@ async def _handle_client(reader, writer, secret: bytes):
                             label, dc, media_tag)
             return
 
-        now = time.monotonic()
         fail_until = dc_fail_until.get(dc_key, 0)
         ws_timeout = WS_FAIL_TIMEOUT if now < fail_until else 10.0
 
@@ -362,9 +365,9 @@ async def _handle_client(reader, writer, secret: bytes):
         # WS failed -> fallback
         if ws is None:
             if ws_failed_redirect and all_redirects:
-                ws_blacklist.add(dc_key)
-                log.warning("[%s] DC%d%s blacklisted for WS (all 302)",
-                            label, dc, media_tag)
+                ws_blacklist[dc_key] = now + WS_BLACKLIST_TTL
+                log.warning("[%s] DC%d%s blacklisted for WS (all 302), retry in %.0fs",
+                            label, dc, media_tag, WS_BLACKLIST_TTL)
             elif ws_failed_redirect:
                 dc_fail_until[dc_key] = now + DC_FAIL_COOLDOWN
             else:
@@ -386,6 +389,7 @@ async def _handle_client(reader, writer, secret: bytes):
                          label, dc, media_tag)
             return
 
+        ws_blacklist.pop(dc_key, None)
         dc_fail_until.pop(dc_key, None)
         stats.connections_ws += 1
 
