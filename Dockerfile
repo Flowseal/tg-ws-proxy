@@ -33,7 +33,7 @@ RUN apt-get update \
     && useradd --system --gid app --create-home --home-dir /home/app app
 
 WORKDIR /app
-COPY --from=builder --chown=app:app /opt/venv /opt/venv
+COPY --from=builder /opt/venv /opt/venv
 COPY proxy ./proxy
 COPY README.md LICENSE ./
 
