@@ -27,6 +27,10 @@ class ProxyService : Service() {
         const val EXTRA_PORT = "EXTRA_PORT"
         const val EXTRA_IPS = "EXTRA_IPS"
         const val EXTRA_POOL_SIZE = "EXTRA_POOL_SIZE"
+        const val EXTRA_CFPROXY_ENABLED = "EXTRA_CFPROXY_ENABLED"
+        const val EXTRA_CFPROXY_PRIORITY = "EXTRA_CFPROXY_PRIORITY"
+        const val EXTRA_CFPROXY_DOMAIN = "EXTRA_CFPROXY_DOMAIN"
+        const val EXTRA_SECRET_KEY = "EXTRA_SECRET_KEY"
         
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "ProxyServiceChannel"
@@ -43,10 +47,15 @@ class ProxyService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
+                LogManager.clearLogs()
                 val port = intent.getIntExtra(EXTRA_PORT, 8080)
                 val ips = intent.getStringExtra(EXTRA_IPS) ?: ""
                 val poolSize = intent.getIntExtra(EXTRA_POOL_SIZE, 4)
-                startProxy(port, ips, poolSize)
+                val cfEnabled = intent.getBooleanExtra(EXTRA_CFPROXY_ENABLED, true)
+                val cfPriority = intent.getBooleanExtra(EXTRA_CFPROXY_PRIORITY, true)
+                val cfDomain = intent.getStringExtra(EXTRA_CFPROXY_DOMAIN) ?: ""
+                val secretKey = intent.getStringExtra(EXTRA_SECRET_KEY) ?: ""
+                startProxy(port, ips, poolSize, cfEnabled, cfPriority, cfDomain, secretKey)
             }
             ACTION_STOP -> {
                 stopProxy()
@@ -55,7 +64,9 @@ class ProxyService : Service() {
         return START_STICKY
     }
 
-    private fun startProxy(port: Int, ips: String, poolSize: Int = 4) {
+    private fun startProxy(port: Int, ips: String, poolSize: Int = 4,
+                           cfEnabled: Boolean = true, cfPriority: Boolean = true,
+                           cfDomain: String = "", secretKey: String = "") {
         if (_isRunning.value) return
         
         val notification = createNotification("Запуск прокси...")
@@ -69,6 +80,8 @@ class ProxyService : Service() {
         
         Thread {
             NativeProxy.setPoolSize(poolSize)
+            NativeProxy.setCfProxyConfig(cfEnabled, cfPriority, cfDomain)
+            NativeProxy.setSecret(secretKey)
             NativeProxy.startProxy("127.0.0.1", port, ips, 1)
         }.start()
 

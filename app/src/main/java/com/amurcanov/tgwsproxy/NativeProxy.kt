@@ -12,6 +12,8 @@ interface ProxyLibrary : Library {
     fun StartProxy(host: String, port: Int, dcIps: String, verbose: Int): Int
     fun StopProxy(): Int
     fun SetPoolSize(size: Int)
+    fun SetCfProxyConfig(enabled: Int, priority: Int, userDomain: String)
+    fun SetSecret(secret: String)
     fun GetStats(): Pointer?
     fun FreeString(p: Pointer)
 }
@@ -25,6 +27,16 @@ object NativeProxy {
     }
     fun setPoolSize(size: Int) {
         ProxyLibrary.INSTANCE.SetPoolSize(size)
+    }
+    fun setCfProxyConfig(enabled: Boolean, priority: Boolean, userDomain: String) {
+        ProxyLibrary.INSTANCE.SetCfProxyConfig(
+            if (enabled) 1 else 0,
+            if (priority) 1 else 0,
+            userDomain
+        )
+    }
+    fun setSecret(secret: String) {
+        ProxyLibrary.INSTANCE.SetSecret(secret)
     }
     fun getStats(): String? {
         val ptr = ProxyLibrary.INSTANCE.GetStats() ?: return null

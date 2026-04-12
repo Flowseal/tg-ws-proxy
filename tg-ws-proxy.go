@@ -21,9 +21,12 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -47,7 +50,7 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	defaultPort    = 1080
+	defaultPort    = 1443
 	tcpNodelay     = true
 	defaultRecvBuf = 256 * 1024
 	defaultSendBuf = 256 * 1024
@@ -55,7 +58,7 @@ const (
 	wsPoolMaxAge   = 60.0
 	wsBridgeIdle   = 120.0
 
-	dcFailCooldown       = 30.0
+	dcFailCooldown       = 10.0
 	wsFailTimeout        = 2.0
 	poolMaintainInterval = 15
 )
@@ -66,6 +69,31 @@ var (
 	poolSize   = defaultPoolSz
 	logVerbose = false
 )
+
+// Cloudflare proxy config
+var (
+	cfproxyEnabled    = true
+	cfproxyPriority   = true
+	cfproxyUserDomain = ""
+	cfproxyDomains    []string
+	activeCfDomain    string
+	cfproxyMu         sync.RWMutex
+)
+
+// MTProto proxy secret (hex, 32 chars = 16 bytes)
+var (
+	proxySecret   = "00000000000000000000000000000000"
+	proxySecretMu sync.RWMutex
+)
+
+var dcDefaultIPs = map[int]string{
+	1:   "149.154.175.50",
+	2:   "149.154.167.51",
+	3:   "149.154.175.100",
+	4:   "149.154.167.91",
+	5:   "149.154.171.5",
+	203: "91.105.192.100",
+}
 
 // ---------------------------------------------------------------------------
 // Logger
@@ -89,15 +117,63 @@ func (w androidLogWriter) Write(p []byte) (n int, err error) {
 }
 
 func initLogging(verbose bool) {
-	flags := log.Ltime
+	flags := 0
 	out := androidLogWriter{}
-	logInfo = log.New(out, "INFO  ", flags)
-	logWarn = log.New(out, "WARN  ", flags)
-	logError = log.New(out, "ERROR ", flags)
+	logInfo = log.New(out, "", flags)
+	logWarn = log.New(out, "[WARN] ", flags)
+	logError = log.New(out, "[ERROR] ", flags)
 	if verbose {
-		logDebug = log.New(out, "DEBUG ", flags)
+		logDebug = log.New(out, "[DEBUG] ", flags)
 	} else {
 		logDebug = log.New(io.Discard, "", 0)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Cloudflare proxy domain decoding
+// ---------------------------------------------------------------------------
+
+var cfproxyEnc = []string{"virkgj.com", "vmmzovy.com", "mkuosckvso.com", "zaewayzmplad.com", "twdmbzcm.com"}
+
+func decodeCfDomain(s string) string {
+	if !strings.HasSuffix(s, ".com") {
+		return s
+	}
+	suffix := string([]byte{46, 99, 111, 46, 117, 107}) // decoded suffix
+	p := s[:len(s)-4]
+	n := 0
+	for _, c := range p {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+			n++
+		}
+	}
+	var result []byte
+	for _, c := range []byte(p) {
+		if c >= 'a' && c <= 'z' {
+			result = append(result, byte((int(c-'a')-n%26+26)%26+'a'))
+		} else if c >= 'A' && c <= 'Z' {
+			result = append(result, byte((int(c-'A')-n%26+26)%26+'A'))
+		} else {
+			result = append(result, c)
+		}
+	}
+	return string(result) + suffix
+}
+
+func initCfproxyDomains() {
+	cfproxyMu.Lock()
+	defer cfproxyMu.Unlock()
+	if cfproxyUserDomain != "" {
+		cfproxyDomains = []string{cfproxyUserDomain}
+		activeCfDomain = cfproxyUserDomain
+		return
+	}
+	cfproxyDomains = make([]string, len(cfproxyEnc))
+	for i, enc := range cfproxyEnc {
+		cfproxyDomains[i] = decodeCfDomain(enc)
+	}
+	if len(cfproxyDomains) > 0 {
+		activeCfDomain = cfproxyDomains[0]
 	}
 }
 
@@ -222,10 +298,13 @@ var (
 
 type Stats struct {
 	connectionsTotal       atomic.Int64
+	connectionsActive      atomic.Int64
 	connectionsWs          atomic.Int64
 	connectionsTcpFallback atomic.Int64
+	connectionsCfproxy     atomic.Int64
 	connectionsHttpReject  atomic.Int64
 	connectionsPassthrough atomic.Int64
+	connectionsBad         atomic.Int64
 	wsErrors               atomic.Int64
 	bytesUp                atomic.Int64
 	bytesDown              atomic.Int64
@@ -237,12 +316,13 @@ func (s *Stats) Summary() string {
 	ph := s.poolHits.Load()
 	pm := s.poolMisses.Load()
 	return fmt.Sprintf(
-		"total=%d ws=%d tcp_fb=%d http_skip=%d pass=%d err=%d pool=%d/%d up=%s down=%s",
+		"total=%d active=%d ws=%d tcp_fb=%d cf=%d bad=%d err=%d pool=%d/%d up=%s down=%s",
 		s.connectionsTotal.Load(),
+		s.connectionsActive.Load(),
 		s.connectionsWs.Load(),
 		s.connectionsTcpFallback.Load(),
-		s.connectionsHttpReject.Load(),
-		s.connectionsPassthrough.Load(),
+		s.connectionsCfproxy.Load(),
+		s.connectionsBad.Load(),
 		s.wsErrors.Load(),
 		ph, ph+pm,
 		humanBytes(s.bytesUp.Load()),
@@ -250,12 +330,41 @@ func (s *Stats) Summary() string {
 	)
 }
 
+func (s *Stats) SummaryRu() string {
+	active := s.connectionsActive.Load()
+	ws := s.connectionsWs.Load()
+	cf := s.connectionsCfproxy.Load()
+	tcp := s.connectionsTcpFallback.Load()
+	errCount := s.wsErrors.Load()
+	up := humanBytes(s.bytesUp.Load())
+	down := humanBytes(s.bytesDown.Load())
+
+	parts := []string{fmt.Sprintf("акт:%d", active)}
+	if ws > 0 {
+		parts = append(parts, fmt.Sprintf("ws:%d", ws))
+	}
+	if cf > 0 {
+		parts = append(parts, fmt.Sprintf("cf:%d", cf))
+	}
+	if tcp > 0 {
+		parts = append(parts, fmt.Sprintf("tcp:%d", tcp))
+	}
+	if errCount > 0 {
+		parts = append(parts, fmt.Sprintf("ош:%d", errCount))
+	}
+	parts = append(parts, fmt.Sprintf("↑%s ↓%s", up, down))
+	return strings.Join(parts, " | ")
+}
+
 func (s *Stats) Reset() {
 	s.connectionsTotal.Store(0)
+	s.connectionsActive.Store(0)
 	s.connectionsWs.Store(0)
 	s.connectionsTcpFallback.Store(0)
+	s.connectionsCfproxy.Store(0)
 	s.connectionsHttpReject.Store(0)
 	s.connectionsPassthrough.Store(0)
+	s.connectionsBad.Store(0)
 	s.wsErrors.Store(0)
 	s.bytesUp.Store(0)
 	s.bytesDown.Store(0)
@@ -739,15 +848,15 @@ func newAESCTR(key, iv []byte) (cipher.Stream, error) {
 	return cipher.NewCTR(block, iv), nil
 }
 
-func dcFromInit(data []byte) (dc int, isMedia bool, ok bool) {
+func dcFromInit(data []byte) (dc int, isMedia bool, proto uint32, ok bool) {
 	if len(data) < 64 {
-		return 0, false, false
+		return 0, false, 0, false
 	}
 
 	stream, err := newAESCTR(data[8:40], data[40:56])
 	if err != nil {
 		logDebug.Printf("DC extraction failed: %v", err)
-		return 0, false, false
+		return 0, false, 0, false
 	}
 
 	keystream := make([]byte, 64)
@@ -758,13 +867,13 @@ func dcFromInit(data []byte) (dc int, isMedia bool, ok bool) {
 		plain[i] = data[56+i] ^ keystream[56+i]
 	}
 
-	proto := binary.LittleEndian.Uint32(plain[0:4])
+	proto = binary.LittleEndian.Uint32(plain[0:4])
 	dcRaw := int16(binary.LittleEndian.Uint16(plain[4:6]))
 
 	logDebug.Printf("dc_from_init: proto=0x%08X dc_raw=%d plain=%x", proto, dcRaw, plain)
 
 	if !validProtos[proto] {
-		return 0, false, false
+		return 0, false, 0, false
 	}
 
 	dcAbs := int(dcRaw)
@@ -774,10 +883,10 @@ func dcFromInit(data []byte) (dc int, isMedia bool, ok bool) {
 	media := dcRaw < 0
 
 	if (dcAbs >= 1 && dcAbs <= 5) || dcAbs == 203 {
-		return dcAbs, media, true
+		return dcAbs, media, proto, true
 	}
 
-	return 0, false, false
+	return 0, false, 0, false
 }
 
 func patchInitDC(data []byte, dc int) []byte {
@@ -809,11 +918,32 @@ func patchInitDC(data []byte, dc int) []byte {
 // MsgSplitter
 // ---------------------------------------------------------------------------
 
+const (
+	protoAbridged            = 0 // 0xEFEFEFEF
+	protoIntermediate        = 1 // 0xEEEEEEEE
+	protoPaddedIntermediate  = 2 // 0xDDDDDDDD
+)
+
 type MsgSplitter struct {
-	stream cipher.Stream
+	stream    cipher.Stream
+	protoType int
+	cipherBuf []byte // accumulates raw ciphertext across calls
+	plainBuf  []byte // accumulates decrypted plaintext across calls
+	disabled  bool
 }
 
-func newMsgSplitter(initData []byte) (*MsgSplitter, error) {
+func protoTagToType(proto uint32) int {
+	switch proto {
+	case 0xEEEEEEEE:
+		return protoIntermediate
+	case 0xDDDDDDDD:
+		return protoPaddedIntermediate
+	default:
+		return protoAbridged
+	}
+}
+
+func newMsgSplitter(initData []byte, proto uint32) (*MsgSplitter, error) {
 	if len(initData) < 56 {
 		return nil, fmt.Errorf("init data too short")
 	}
@@ -824,52 +954,119 @@ func newMsgSplitter(initData []byte) (*MsgSplitter, error) {
 	skip := make([]byte, 64)
 	stream.XORKeyStream(skip, zero64)
 
-	return &MsgSplitter{stream: stream}, nil
+	return &MsgSplitter{
+		stream:    stream,
+		protoType: protoTagToType(proto),
+	}, nil
 }
 
 func (s *MsgSplitter) Split(chunk []byte) [][]byte {
-	plain := make([]byte, len(chunk))
-	s.stream.XORKeyStream(plain, chunk)
-
-	var boundaries []int
-	pos := 0
-	plainLen := len(plain)
-
-	for pos < plainLen {
-		first := plain[pos]
-		var msgLen int
-		if first == 0x7f {
-			if pos+4 > plainLen {
-				break
-			}
-			msgLen = int(uint32(plain[pos+1]) | uint32(plain[pos+2])<<8 | uint32(plain[pos+3])<<16)
-			msgLen *= 4
-			pos += 4
-		} else {
-			msgLen = int(first) * 4
-			pos++
-		}
-		if msgLen == 0 || pos+msgLen > plainLen {
-			break
-		}
-		pos += msgLen
-		boundaries = append(boundaries, pos)
+	if len(chunk) == 0 {
+		return nil
 	}
-
-	if len(boundaries) <= 1 {
+	if s.disabled {
 		return [][]byte{chunk}
 	}
 
-	parts := make([][]byte, 0, len(boundaries)+1)
-	prev := 0
-	for _, b := range boundaries {
-		parts = append(parts, chunk[prev:b])
-		prev = b
+	// Accumulate ciphertext and decrypt the new chunk
+	s.cipherBuf = append(s.cipherBuf, chunk...)
+	decrypted := make([]byte, len(chunk))
+	s.stream.XORKeyStream(decrypted, chunk)
+	s.plainBuf = append(s.plainBuf, decrypted...)
+
+	var parts [][]byte
+	for len(s.cipherBuf) > 0 {
+		pktLen := s.nextPacketLen()
+		if pktLen < 0 {
+			// need more data
+			break
+		}
+		if pktLen == 0 {
+			// unknown protocol — pass through remainder and disable
+			parts = append(parts, append([]byte(nil), s.cipherBuf...))
+			s.cipherBuf = s.cipherBuf[:0]
+			s.plainBuf = s.plainBuf[:0]
+			s.disabled = true
+			break
+		}
+		if len(s.cipherBuf) < pktLen {
+			break // incomplete packet, wait for more data
+		}
+		parts = append(parts, append([]byte(nil), s.cipherBuf[:pktLen]...))
+		s.cipherBuf = s.cipherBuf[pktLen:]
+		s.plainBuf = s.plainBuf[pktLen:]
 	}
-	if prev < len(chunk) {
-		parts = append(parts, chunk[prev:])
+	if len(parts) == 0 {
+		return nil // all buffered, nothing complete yet
 	}
 	return parts
+}
+
+func (s *MsgSplitter) Flush() [][]byte {
+	if len(s.cipherBuf) == 0 {
+		return nil
+	}
+	tail := append([]byte(nil), s.cipherBuf...)
+	s.cipherBuf = s.cipherBuf[:0]
+	s.plainBuf = s.plainBuf[:0]
+	return [][]byte{tail}
+}
+
+// nextPacketLen returns:
+//   >0  total bytes for the next complete packet (header + payload)
+//    0  unknown protocol (disable splitter)
+//   -1  need more data
+func (s *MsgSplitter) nextPacketLen() int {
+	if len(s.plainBuf) == 0 {
+		return -1
+	}
+	switch s.protoType {
+	case protoAbridged:
+		return s.nextAbridgedLen()
+	case protoIntermediate, protoPaddedIntermediate:
+		return s.nextIntermediateLen()
+	default:
+		return 0
+	}
+}
+
+func (s *MsgSplitter) nextAbridgedLen() int {
+	first := s.plainBuf[0] & 0x7F
+	var headerLen, payloadLen int
+	if first == 0x7F {
+		// Long header: 1 byte (0x7F) + 3 bytes LE length in 4-byte words
+		if len(s.plainBuf) < 4 {
+			return -1
+		}
+		payloadLen = int(uint32(s.plainBuf[1]) | uint32(s.plainBuf[2])<<8 | uint32(s.plainBuf[3])<<16) * 4
+		headerLen = 4
+	} else {
+		payloadLen = int(first) * 4
+		headerLen = 1
+	}
+	if payloadLen <= 0 {
+		return 0
+	}
+	pktLen := headerLen + payloadLen
+	if len(s.plainBuf) < pktLen {
+		return -1
+	}
+	return pktLen
+}
+
+func (s *MsgSplitter) nextIntermediateLen() int {
+	if len(s.plainBuf) < 4 {
+		return -1
+	}
+	payloadLen := int(binary.LittleEndian.Uint32(s.plainBuf[:4]) & 0x7FFFFFFF)
+	if payloadLen <= 0 {
+		return 0
+	}
+	pktLen := 4 + payloadLen
+	if len(s.plainBuf) < pktLen {
+		return -1
+	}
+	return pktLen
 }
 
 // ---------------------------------------------------------------------------
@@ -947,7 +1144,7 @@ func (p *WsPool) Get(dc int, isMedia bool, targetIP string, domains []string) *R
 		}
 
 		stats.poolHits.Add(1)
-		logDebug.Printf("WS pool hit for DC%d%s (age=%.1fs, left=%d)",
+		logDebug.Printf("⚡ Пул: DC%d%s взят (%.0fс, ост:%d)",
 			dc, mediaTag(isMedia), age, len(bucket))
 		p.scheduleRefillLocked(key, targetIP, domains)
 		return entry.ws
@@ -1008,14 +1205,14 @@ func (p *WsPool) refill(key [2]int, targetIP string, domains []string) {
 	}
 
 	p.mu.Lock()
-	logDebug.Printf("WS pool refilled DC%d%s: %d ready",
+	logDebug.Printf("♻ Пул DC%d%s пополнен: %d готово",
 		dc, mediaTag(isMedia), len(p.idle[key]))
 	p.mu.Unlock()
 }
 
 func connectOneWS(targetIP string, domains []string) *RawWebSocket {
 	for _, domain := range domains {
-		ws, err := wsConnect(targetIP, domain, "/apiws", 8)
+		ws, err := wsConnect(targetIP, domain, "/apiws", 5)
 		if err != nil {
 			if wsErr, ok := err.(*WsHandshakeError); ok && wsErr.IsRedirect() {
 				continue
@@ -1041,7 +1238,7 @@ func (p *WsPool) Warmup(dcOptMap map[int]string) {
 			p.scheduleRefillLocked(key, targetIP, domains)
 		}
 	}
-	logInfo.Printf("WS pool warmup started for %d DC(s)", len(dcOptMap))
+	logDebug.Printf("♻ Прогрев пула: %d DC", len(dcOptMap))
 }
 
 func (p *WsPool) Maintain(ctx context.Context, dcOptMap map[int]string) {
@@ -1126,9 +1323,16 @@ var wsPool = newWsPool()
 
 func mediaTag(isMedia bool) string {
 	if isMedia {
-		return "m"
+		return "ᵐ"
 	}
 	return ""
+}
+
+func mediaLabel(isMedia bool) string {
+	if isMedia {
+		return "медиа"
+	}
+	return "основной"
 }
 
 // ---------------------------------------------------------------------------
@@ -1169,12 +1373,10 @@ func socks5Reply(status byte) []byte {
 
 func bridgeWS(ctx context.Context, conn net.Conn, ws *RawWebSocket,
 	label string, dc int, dst string, port int, isMedia bool,
-	splitter *MsgSplitter) {
+	splitter *MsgSplitter, cltDec, cltEnc, tgEnc, tgDec cipher.Stream) {
 
 	dcTag := fmt.Sprintf("DC%d%s", dc, mediaTag(isMedia))
-	dstTag := fmt.Sprintf("%s:%d", dst, port)
-
-	var upBytes, downBytes, upPkts, downPkts int64
+	var upBytes, downBytes int64
 	startTime := time.Now()
 
 	ctx2, cancel := context.WithCancel(ctx)
@@ -1201,16 +1403,18 @@ func bridgeWS(ctx context.Context, conn net.Conn, ws *RawWebSocket,
 				chunk := buf[:n]
 				stats.bytesUp.Add(int64(n))
 				upBytes += int64(n)
-				upPkts++
 
+				cltDec.XORKeyStream(chunk, chunk)
+				tgEnc.XORKeyStream(chunk, chunk)
 				var sendErr error
 				if splitter != nil {
 					parts := splitter.Split(chunk)
 					if len(parts) > 1 {
 						sendErr = ws.SendBatch(parts)
-					} else {
+					} else if len(parts) == 1 {
 						sendErr = ws.Send(parts[0])
 					}
+					// len(parts) == 0 means data is buffered, waiting for more
 				} else {
 					sendErr = ws.Send(chunk)
 				}
@@ -1236,7 +1440,8 @@ func bridgeWS(ctx context.Context, conn net.Conn, ws *RawWebSocket,
 			n := len(data)
 			stats.bytesDown.Add(int64(n))
 			downBytes += int64(n)
-			downPkts++
+			tgDec.XORKeyStream(data, data)
+			cltEnc.XORKeyStream(data, data)
 			if _, err := conn.Write(data); err != nil {
 				return
 			}
@@ -1246,11 +1451,12 @@ func bridgeWS(ctx context.Context, conn net.Conn, ws *RawWebSocket,
 	wg.Wait()
 
 	elapsed := time.Since(startTime).Seconds()
-	logInfo.Printf("[%s] %s (%s) WS session closed: ^%s (%d pkts) v%s (%d pkts) in %.1fs",
-		label, dcTag, dstTag,
-		humanBytes(upBytes), upPkts,
-		humanBytes(downBytes), downPkts,
-		elapsed)
+	if upBytes > 0 || downBytes > 0 {
+		logInfo.Printf("✕ %s  ↑%s ↓%s  %.1fс",
+			dcTag, humanBytes(upBytes), humanBytes(downBytes), elapsed)
+	} else {
+		logDebug.Printf("✕ %s  пустое (%.1fс)", dcTag, elapsed)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1258,7 +1464,7 @@ func bridgeWS(ctx context.Context, conn net.Conn, ws *RawWebSocket,
 // ---------------------------------------------------------------------------
 
 func bridgeTCP(ctx context.Context, client, remote net.Conn,
-	label string, dc int, dst string, port int, isMedia bool) {
+	label string, dc int, dst string, port int, isMedia bool, cltDec, cltEnc, tgEnc, tgDec cipher.Stream) {
 
 	ctx2, cancel := context.WithCancel(ctx)
 
@@ -1281,8 +1487,12 @@ func bridgeTCP(ctx context.Context, client, remote net.Conn,
 			if n > 0 {
 				if isUp {
 					stats.bytesUp.Add(int64(n))
+					cltDec.XORKeyStream(buf[:n], buf[:n])
+					tgEnc.XORKeyStream(buf[:n], buf[:n])
 				} else {
 					stats.bytesDown.Add(int64(n))
+					tgDec.XORKeyStream(buf[:n], buf[:n])
+					cltEnc.XORKeyStream(buf[:n], buf[:n])
 				}
 				if _, werr := dstW.Write(buf[:n]); werr != nil {
 					return
@@ -1305,20 +1515,155 @@ func bridgeTCP(ctx context.Context, client, remote net.Conn,
 // ---------------------------------------------------------------------------
 
 func tcpFallback(ctx context.Context, client net.Conn, dst string, port int,
-	init []byte, label string, dc int, isMedia bool) bool {
+	init []byte, label string, dc int, isMedia bool, cltDec, cltEnc, tgEnc, tgDec cipher.Stream) bool {
 
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	remote, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", dst, port))
 	if err != nil {
-		logWarn.Printf("[%s] TCP fallback connect to %s:%d failed: %v",
-			label, dst, port, err)
+		logWarn.Printf("⚠ DC%d TCP→%s не удался", dc, dst)
+		logDebug.Printf("TCP fallback error [%s] %s:%d: %v", label, dst, port, err)
 		return false
 	}
 
 	stats.connectionsTcpFallback.Add(1)
+	logInfo.Printf("🔄 DC%d%s подключен по TCP", dc, mediaTag(isMedia))
 	_, _ = remote.Write(init)
-	bridgeTCP(ctx, client, remote, label, dc, dst, port, isMedia)
+	bridgeTCP(ctx, client, remote, label, dc, dst, port, isMedia, cltDec, cltEnc, tgEnc, tgDec)
 	return true
+}
+
+// ---------------------------------------------------------------------------
+// Cloudflare proxy fallback
+// ---------------------------------------------------------------------------
+
+func cfproxyFallback(ctx context.Context, conn net.Conn, relayInit []byte, label string,
+	dc int, isMedia bool, splitter *MsgSplitter,
+	cltDec, cltEnc, tgEnc, tgDec cipher.Stream) bool {
+
+	cfproxyMu.RLock()
+	if !cfproxyEnabled || len(cfproxyDomains) == 0 {
+		cfproxyMu.RUnlock()
+		return false
+	}
+	active := activeCfDomain
+	domains := make([]string, len(cfproxyDomains))
+	copy(domains, cfproxyDomains)
+	cfproxyMu.RUnlock()
+
+	ordered := []string{active}
+	for _, d := range domains {
+		if d != active {
+			ordered = append(ordered, d)
+		}
+	}
+
+	mTag := mediaTag(isMedia)
+	logDebug.Printf("☁ DC%d%s → пробуем CF", dc, mTag)
+
+	type wsResult struct {
+		ws     *RawWebSocket
+		domain string
+	}
+	ch := make(chan wsResult, len(ordered))
+	for _, baseDomain := range ordered {
+		go func(bd string) {
+			domain := fmt.Sprintf("kws%d.%s", dc, bd)
+			ws, err := wsConnect(domain, domain, "/apiws", 5)
+			if err != nil {
+				logDebug.Printf("☁ DC%d%s CF %s ✗: %v", dc, mTag, domain, err)
+				ch <- wsResult{nil, ""}
+				return
+			}
+			ch <- wsResult{ws, bd}
+		}(baseDomain)
+	}
+
+	var ws *RawWebSocket
+	var chosenDomain string
+	for i := 0; i < len(ordered); i++ {
+		r := <-ch
+		if r.ws != nil && ws == nil {
+			ws = r.ws
+			chosenDomain = r.domain
+		} else if r.ws != nil {
+			go r.ws.Close()
+		}
+	}
+
+	if ws == nil {
+		return false
+	}
+
+	if chosenDomain != "" && chosenDomain != active {
+		cfproxyMu.Lock()
+		activeCfDomain = chosenDomain
+		cfproxyMu.Unlock()
+		logInfo.Printf("☁ CF домен → %s", chosenDomain)
+	}
+
+	stats.connectionsCfproxy.Add(1)
+	logInfo.Printf("☁ DC%d%s подключен через CF", dc, mTag)
+
+	if err := ws.Send(relayInit); err != nil {
+		ws.Close()
+		return false
+	}
+
+	bridgeWS(ctx, conn, ws, label, dc, chosenDomain, 443, isMedia, splitter, cltDec, cltEnc, tgEnc, tgDec)
+	return true
+}
+
+// ---------------------------------------------------------------------------
+// Unified fallback (CF + TCP)
+// ---------------------------------------------------------------------------
+
+func doFallback(ctx context.Context, conn net.Conn, relayInit []byte, label string,
+	dc int, isMedia bool, splitter *MsgSplitter,
+	cltDec, cltEnc, tgEnc, tgDec cipher.Stream) bool {
+
+	// Use configured DC IP if available, otherwise fall back to defaults
+	var fallbackDst string
+	dcOptMu.RLock()
+	if ip, ok := dcOpt[dc]; ok && ip != "" {
+		fallbackDst = ip
+	}
+	dcOptMu.RUnlock()
+	if fallbackDst == "" {
+		fallbackDst = dcDefaultIPs[dc]
+	}
+
+	cfproxyMu.RLock()
+	useCf := cfproxyEnabled
+	cfproxyMu.RUnlock()
+
+	mTag := mediaTag(isMedia)
+
+	type fbMethod string
+	var methods []fbMethod
+	if useCf {
+		methods = []fbMethod{"cf"}
+	} else {
+		methods = []fbMethod{"tcp"}
+	}
+
+	for _, m := range methods {
+		switch m {
+		case "cf":
+			if cfproxyFallback(ctx, conn, relayInit, label, dc, isMedia, splitter, cltDec, cltEnc, tgEnc, tgDec) {
+				return true
+			}
+		case "tcp":
+			if fallbackDst != "" {
+				logDebug.Printf("🔄 DC%d%s → TCP %s:443", dc, mTag, fallbackDst)
+				if tcpFallback(ctx, conn, fallbackDst, 443, relayInit, label, dc, isMedia, cltDec, cltEnc, tgEnc, tgDec) {
+					return true
+				}
+			}
+		}
+	}
+
+	logWarn.Printf("⚠ DC%d%s нет доступных маршрутов", dc, mTag)
+	return false
 }
 
 // ---------------------------------------------------------------------------
@@ -1347,237 +1692,487 @@ func pipe(ctx context.Context, src, dst net.Conn, done chan<- struct{}) {
 }
 
 // ---------------------------------------------------------------------------
-// SOCKS5 client handler
+// Fake TLS support (ee-secret)
 // ---------------------------------------------------------------------------
 
-func readExactly(conn net.Conn, n int, timeout time.Duration) ([]byte, error) {
-	if timeout > 0 {
-		_ = conn.SetReadDeadline(time.Now().Add(timeout))
-		defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+const (
+	tlsRecordHandshake = 0x16
+	tlsRecordCCS       = 0x14
+	tlsRecordAppData   = 0x17
+	tlsAppDataMax      = 16384
+	clientRandomOffset = 11
+	clientRandomLen    = 32
+	sessionIdOffset    = 44
+	sessionIdLen       = 32
+	timestampTolerance = 120
+)
+
+// verifyClientHello checks whether the incoming ClientHello has a valid
+// HMAC-SHA256 computed over the hello with the random field zeroed,
+// using `secret` as key.  Returns (clientRandom, sessionId, ok).
+func verifyClientHello(data, secret []byte) ([]byte, []byte, bool) {
+	n := len(data)
+	if n < 43 {
+		return nil, nil, false
 	}
-	buf := make([]byte, n)
-	_, err := io.ReadFull(conn, buf)
-	return buf, err
+	if data[0] != tlsRecordHandshake {
+		return nil, nil, false
+	}
+	if data[5] != 0x01 {
+		return nil, nil, false
+	}
+
+	clientRandom := make([]byte, clientRandomLen)
+	copy(clientRandom, data[clientRandomOffset:clientRandomOffset+clientRandomLen])
+
+	zeroed := make([]byte, n)
+	copy(zeroed, data)
+	for i := 0; i < clientRandomLen; i++ {
+		zeroed[clientRandomOffset+i] = 0
+	}
+
+	mac := hmacSHA256(secret, zeroed)
+
+	for i := 0; i < 28; i++ {
+		if mac[i] != clientRandom[i] {
+			return nil, nil, false
+		}
+	}
+
+	// Check timestamp
+	tsXor := make([]byte, 4)
+	for i := 0; i < 4; i++ {
+		tsXor[i] = clientRandom[28+i] ^ mac[28+i]
+	}
+	timestamp := binary.LittleEndian.Uint32(tsXor)
+	now := uint32(time.Now().Unix())
+	diff := int64(now) - int64(timestamp)
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > timestampTolerance {
+		return nil, nil, false
+	}
+
+	sessionId := make([]byte, sessionIdLen)
+	if n >= sessionIdOffset+sessionIdLen && data[43] == 0x20 {
+		copy(sessionId, data[sessionIdOffset:sessionIdOffset+sessionIdLen])
+	}
+
+	return clientRandom, sessionId, true
+}
+
+func hmacSHA256(key, data []byte) []byte {
+	h := hmac.New(sha256.New, key)
+	h.Write(data)
+	return h.Sum(nil)
+}
+
+var serverHelloTemplate = []byte{
+	0x16, 0x03, 0x03, 0x00, 0x7a,
+	0x02, 0x00, 0x00, 0x76,
+	0x03, 0x03,
+	// 32 bytes server random (offset 11)
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	0x20,
+	// 32 bytes session id (offset 44)
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	0x13, 0x01, 0x00,
+	0x00, 0x2e,
+	0x00, 0x33, 0x00, 0x24, 0x00, 0x1d, 0x00, 0x20,
+	// 32 bytes public key (offset 89)
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	0x00, 0x2b, 0x00, 0x02, 0x03, 0x04,
+}
+
+const (
+	shRandomOff = 11
+	shSessIdOff = 44
+	shPubKeyOff = 89
+)
+
+func buildServerHello(secret, clientRandom, sessionId []byte) []byte {
+	sh := make([]byte, len(serverHelloTemplate))
+	copy(sh, serverHelloTemplate)
+
+	copy(sh[shSessIdOff:shSessIdOff+32], sessionId)
+
+	pubKey := make([]byte, 32)
+	rand.Read(pubKey)
+	copy(sh[shPubKeyOff:shPubKeyOff+32], pubKey)
+
+	ccsFrame := []byte{0x14, 0x03, 0x03, 0x00, 0x01, 0x01}
+
+	encSize := 1900 + int(time.Now().UnixNano()%200)
+	encData := make([]byte, encSize)
+	rand.Read(encData)
+	appRecord := make([]byte, 5+encSize)
+	appRecord[0] = 0x17
+	appRecord[1] = 0x03
+	appRecord[2] = 0x03
+	binary.BigEndian.PutUint16(appRecord[3:5], uint16(encSize))
+	copy(appRecord[5:], encData)
+
+	response := make([]byte, 0, len(sh)+len(ccsFrame)+len(appRecord))
+	response = append(response, sh...)
+	response = append(response, ccsFrame...)
+	response = append(response, appRecord...)
+
+	hmacInput := make([]byte, 0, len(clientRandom)+len(response))
+	hmacInput = append(hmacInput, clientRandom...)
+	hmacInput = append(hmacInput, response...)
+	serverRandom := hmacSHA256(secret, hmacInput)
+
+	copy(response[shRandomOff:shRandomOff+32], serverRandom)
+
+	return response
+}
+
+func wrapTlsRecord(data []byte) []byte {
+	var parts []byte
+	offset := 0
+	for offset < len(data) {
+		end := offset + tlsAppDataMax
+		if end > len(data) {
+			end = len(data)
+		}
+		chunk := data[offset:end]
+		hdr := []byte{0x17, 0x03, 0x03, 0, 0}
+		binary.BigEndian.PutUint16(hdr[3:5], uint16(len(chunk)))
+		parts = append(parts, hdr...)
+		parts = append(parts, chunk...)
+		offset = end
+	}
+	return parts
+}
+
+// FakeTlsConn wraps a net.Conn, transparently unwrapping TLS AppData
+// records on read and wrapping data in TLS AppData on write.
+type FakeTlsConn struct {
+	conn     net.Conn
+	readBuf  []byte
+	readLeft int // remaining bytes in current TLS record
+}
+
+func newFakeTlsConn(conn net.Conn) *FakeTlsConn {
+	return &FakeTlsConn{conn: conn}
+}
+
+func (f *FakeTlsConn) Read(p []byte) (int, error) {
+	// If we have buffered data, return it first
+	if len(f.readBuf) > 0 {
+		n := copy(p, f.readBuf)
+		f.readBuf = f.readBuf[n:]
+		return n, nil
+	}
+
+	// If we're in the middle of a record, read remaining
+	if f.readLeft > 0 {
+		toRead := f.readLeft
+		if toRead > len(p) {
+			toRead = len(p)
+		}
+		n, err := f.conn.Read(p[:toRead])
+		f.readLeft -= n
+		return n, err
+	}
+
+	// Read next TLS record header
+	for {
+		hdr := make([]byte, 5)
+		if _, err := io.ReadFull(f.conn, hdr); err != nil {
+			return 0, err
+		}
+
+		rtype := hdr[0]
+		recLen := int(binary.BigEndian.Uint16(hdr[3:5]))
+
+		if rtype == tlsRecordCCS {
+			// Skip CCS records
+			if recLen > 0 {
+				discard := make([]byte, recLen)
+				if _, err := io.ReadFull(f.conn, discard); err != nil {
+					return 0, err
+				}
+			}
+			continue
+		}
+
+		if rtype != tlsRecordAppData {
+			return 0, fmt.Errorf("unexpected TLS record type 0x%02X", rtype)
+		}
+
+		// Read up to len(p) from this record
+		toRead := recLen
+		if toRead > len(p) {
+			toRead = len(p)
+		}
+		n, err := io.ReadAtLeast(f.conn, p[:toRead], 1)
+		f.readLeft = recLen - n
+		return n, err
+	}
+}
+
+func (f *FakeTlsConn) Write(p []byte) (int, error) {
+	wrapped := wrapTlsRecord(p)
+	_, err := f.conn.Write(wrapped)
+	if err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func (f *FakeTlsConn) Close() error {
+	return f.conn.Close()
+}
+
+func (f *FakeTlsConn) LocalAddr() net.Addr {
+	return f.conn.LocalAddr()
+}
+
+func (f *FakeTlsConn) RemoteAddr() net.Addr {
+	return f.conn.RemoteAddr()
+}
+
+func (f *FakeTlsConn) SetDeadline(t time.Time) error {
+	return f.conn.SetDeadline(t)
+}
+
+func (f *FakeTlsConn) SetReadDeadline(t time.Time) error {
+	return f.conn.SetReadDeadline(t)
+}
+
+func (f *FakeTlsConn) SetWriteDeadline(t time.Time) error {
+	return f.conn.SetWriteDeadline(t)
 }
 
 func handleClient(ctx context.Context, conn net.Conn) {
 	stats.connectionsTotal.Add(1)
+	stats.connectionsActive.Add(1)
+	defer func() {
+		if stats.connectionsActive.Load() > 0 {
+			stats.connectionsActive.Add(-1)
+		}
+	}()
 	peer := conn.RemoteAddr().String()
 	label := peer
 
 	setSockOpts(conn)
-
 	defer conn.Close()
 
-	// -- SOCKS5 greeting --
-	hdr, err := readExactly(conn, 2, 10*time.Second)
+	proxySecretMu.RLock()
+	currentSecret := proxySecret
+	proxySecretMu.RUnlock()
+	secretBytes, _ := hex.DecodeString(currentSecret)
+
+	// Read first byte to detect FakeTLS vs plain
+	firstByte := make([]byte, 1)
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if _, err := io.ReadFull(conn, firstByte); err != nil {
+		logDebug.Printf("клиент отключился до рукопожатия")
+		return
+	}
+	_ = conn.SetReadDeadline(time.Time{})
+
+	var clientConn net.Conn = conn // the connection we read MTProto from
+	var handshake []byte
+
+	if firstByte[0] == tlsRecordHandshake {
+		// FakeTLS mode (ee-secret)
+		hdrRest := make([]byte, 4)
+		if _, err := io.ReadFull(conn, hdrRest); err != nil {
+			logDebug.Printf("неполный TLS-заголовок")
+			return
+		}
+		tlsHeader := append(firstByte, hdrRest...)
+		recordLen := int(binary.BigEndian.Uint16(tlsHeader[3:5]))
+
+		recordBody := make([]byte, recordLen)
+		if _, err := io.ReadFull(conn, recordBody); err != nil {
+			logDebug.Printf("неполное тело TLS-записи")
+			return
+		}
+
+		clientHello := append(tlsHeader, recordBody...)
+
+		clientRandom, sessionId, ok := verifyClientHello(clientHello, secretBytes)
+		if !ok {
+			stats.connectionsBad.Add(1)
+			logWarn.Printf("⚠ bad handshake")
+			return
+		}
+
+		logDebug.Printf("FakeTLS рукопожатие ОК")
+
+		serverHello := buildServerHello(secretBytes, clientRandom, sessionId)
+		if _, err := conn.Write(serverHello); err != nil {
+			return
+		}
+
+		tlsConn := newFakeTlsConn(conn)
+		clientConn = tlsConn
+
+		handshake = make([]byte, 64)
+		if _, err := io.ReadFull(tlsConn, handshake); err != nil {
+			logDebug.Printf("неполный обфускированный init внутри TLS")
+			return
+		}
+	} else {
+		// Plain obfuscated mode (dd-secret)
+		rest := make([]byte, 63)
+		if _, err := io.ReadFull(conn, rest); err != nil {
+			logDebug.Printf("клиент отключился до рукопожатия")
+			return
+		}
+		handshake = append(firstByte, rest...)
+	}
+
+	cltDecPrekey := handshake[8:40]
+	cltDecIv := handshake[40:56]
+
+	hashDec := sha256.New()
+	hashDec.Write(cltDecPrekey)
+	hashDec.Write(secretBytes)
+	cltDecKey := hashDec.Sum(nil)
+
+	cltDecryptor, err := newAESCTR(cltDecKey, cltDecIv)
 	if err != nil {
-		logDebug.Printf("[%s] read greeting failed: %v", label, err)
-		return
-	}
-	if hdr[0] != 5 {
-		logDebug.Printf("[%s] not SOCKS5 (ver=%d)", label, hdr[0])
-		return
-	}
-	nmethods := int(hdr[1])
-	if _, err := readExactly(conn, nmethods, 10*time.Second); err != nil {
-		return
-	}
-	if _, err := conn.Write([]byte{0x05, 0x00}); err != nil {
 		return
 	}
 
-	// -- SOCKS5 CONNECT request --
-	req, err := readExactly(conn, 4, 10*time.Second)
-	if err != nil {
-		return
-	}
-	cmd := req[1]
-	atyp := req[3]
+	decrypted := make([]byte, 64)
+	cltDecryptor.XORKeyStream(decrypted, handshake)
 
-	if cmd != 1 {
-		_, _ = conn.Write(socks5Reply(0x07))
+	protoTag := decrypted[56:60]
+	proto := binary.LittleEndian.Uint32(protoTag)
+	if !validProtos[proto] {
+		stats.connectionsBad.Add(1)
+		logWarn.Printf("⚠ bad handshake")
 		return
 	}
 
-	var dst string
-	switch atyp {
-	case 1: // IPv4
-		raw, err := readExactly(conn, 4, 10*time.Second)
-		if err != nil {
-			return
+	dcRaw := int16(binary.LittleEndian.Uint16(decrypted[60:62]))
+	dc := int(dcRaw)
+	if dc < 0 {
+		dc = -dc
+	}
+	isMedia := dcRaw < 0
+	
+	logInfo.Printf("→ DC%d %s", dc, mediaLabel(isMedia))
+
+	// Encryption back to client
+	cltEncPrekeyAndIv := make([]byte, 48)
+	for i := 0; i < 48; i++ {
+		cltEncPrekeyAndIv[i] = handshake[8+47-i]
+	}
+	cltEncPrekey := cltEncPrekeyAndIv[:32]
+	cltEncIv := cltEncPrekeyAndIv[32:]
+
+	hashEnc := sha256.New()
+	hashEnc.Write(cltEncPrekey)
+	hashEnc.Write(secretBytes)
+	cltEncKey := hashEnc.Sum(nil)
+	cltEncryptor, _ := newAESCTR(cltEncKey, cltEncIv)
+
+	// cltDecryptor was already advanced by 64 bytes during handshake decryption.
+	// cltEncryptor does NOT need to be advanced according to Python logic.
+
+	// Generate relay Init
+	relayInit := make([]byte, 64)
+	for {
+		rand.Read(relayInit)
+		if relayInit[0] == 0xEF { continue }
+		s := string(relayInit[:4])
+		if s == "HEAD" || s == "POST" || s == "GET " || s == "\xee\xee\xee\xee" || s == "\xdd\xdd\xdd\xdd" {
+			continue
 		}
-		dst = net.IP(raw).String()
-	case 3: // domain
-		dlenBuf, err := readExactly(conn, 1, 10*time.Second)
-		if err != nil {
-			return
+		// TLS ClientHello start
+		if relayInit[0] == 0x16 && relayInit[1] == 0x03 && relayInit[2] == 0x01 && relayInit[3] == 0x02 {
+			continue
 		}
-		domBytes, err := readExactly(conn, int(dlenBuf[0]), 10*time.Second)
-		if err != nil {
-			return
+		// Reserved continuation bytes
+		if relayInit[4] == 0 && relayInit[5] == 0 && relayInit[6] == 0 && relayInit[7] == 0 {
+			continue
 		}
-		dst = string(domBytes)
-	case 4: // IPv6
-		raw, err := readExactly(conn, 16, 10*time.Second)
-		if err != nil {
-			return
-		}
-		dst = net.IP(raw).String()
-	default:
-		_, _ = conn.Write(socks5Reply(0x08))
-		return
+		break
 	}
 
-	portBuf, err := readExactly(conn, 2, 10*time.Second)
-	if err != nil {
-		return
+	tgEncKey := relayInit[8:40]
+	tgEncIv := relayInit[40:56]
+
+	tgDecPrekeyAndIv := make([]byte, 48)
+	for i := 0; i < 48; i++ {
+		tgDecPrekeyAndIv[i] = relayInit[8+47-i]
 	}
-	port := int(binary.BigEndian.Uint16(portBuf))
+	tgDecKey := tgDecPrekeyAndIv[:32]
+	tgDecIv := tgDecPrekeyAndIv[32:]
 
-	if strings.Contains(dst, ":") {
-		logError.Printf("[%s] IPv6 address detected: %s:%d — "+
-			"IPv6 addresses are not supported; "+
-			"disable IPv6 to continue using the proxy.",
-			label, dst, port)
-		_, _ = conn.Write(socks5Reply(0x05))
-		return
+	tgEncryptor, _ := newAESCTR(tgEncKey, tgEncIv)
+	tgDecryptor, _ := newAESCTR(tgDecKey, tgDecIv)
+	
+	dcBytes := make([]byte, 2)
+	dcIdx := dc
+	if isMedia {
+	    dcIdx = -dc
 	}
+	binary.LittleEndian.PutUint16(dcBytes, uint16(dcIdx))
+	
+	tailPlain := make([]byte, 8)
+	copy(tailPlain[0:4], protoTag)
+	copy(tailPlain[4:6], dcBytes)
+	rand.Read(tailPlain[6:8])
 
-	// -- Non-Telegram IP -> direct passthrough --
-	if !isTelegramIP(dst) {
-		stats.connectionsPassthrough.Add(1)
-		logDebug.Printf("[%s] passthrough -> %s:%d", label, dst, port)
+	encryptedFull := make([]byte, 64)
+	tgEncryptor.XORKeyStream(encryptedFull, relayInit)
 
-		dialer := &net.Dialer{Timeout: 10 * time.Second}
-		remote, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", dst, port))
-		if err != nil {
-			logWarn.Printf("[%s] passthrough failed to %s: %T: %v", label, dst, err, err)
-			_, _ = conn.Write(socks5Reply(0x05))
-			return
-		}
-
-		_, _ = conn.Write(socks5Reply(0x00))
-
-		ctx2, cancel := context.WithCancel(ctx)
-		defer cancel()
-
-		// Close connections when context done
-		go func() {
-			<-ctx2.Done()
-			_ = conn.Close()
-			_ = remote.Close()
-		}()
-
-		done := make(chan struct{}, 2)
-		go pipe(ctx2, conn, remote, done)
-		go pipe(ctx2, remote, conn, done)
-		<-done
-		cancel()
-		<-done
-		_ = remote.Close()
-		return
+	keystreamTail := make([]byte, 8)
+	for i := 0; i < 8; i++ {
+		keystreamTail[i] = encryptedFull[56+i] ^ relayInit[56+i]
+		relayInit[56+i] = tailPlain[i] ^ keystreamTail[i]
 	}
+	// tgEncryptor was already advanced by 64 bytes above.
+	// tgDecryptor does NOT need to be advanced according to Python logic.
 
-	// -- Telegram DC: accept SOCKS, read init --
-	_, _ = conn.Write(socks5Reply(0x00))
-
-	init, err := readExactly(conn, 64, 15*time.Second)
-	if err != nil {
-		logDebug.Printf("[%s] client disconnected before init: %v", label, err)
-		return
-	}
-
-	// HTTP transport -> reject
-	if isHTTPTransport(init) {
-		stats.connectionsHttpReject.Add(1)
-		logDebug.Printf("[%s] HTTP transport to %s:%d (rejected)", label, dst, port)
-		return
-	}
-
-	// -- Extract DC ID --
-	dc, isMedia, dcOk := dcFromInit(init)
-	initPatched := false
-	var isMediaPtr *bool
-	if dcOk {
-		isMediaPtr = &isMedia
-	}
-
-	// Android with useSecret=0 has random dc_id bytes — patch it
-	if !dcOk {
-		if info, found := ipToDC[dst]; found {
-			dc = info.dc
-			isMedia = info.isMedia
-			isMediaPtr = &isMedia
-			dcOk = true
-
-			dcOptMu.RLock()
-			_, hasDC := dcOpt[dc]
-			dcOptMu.RUnlock()
-
-			if hasDC {
-				// media -> positive dc, non-media -> negative dc
-				signedDC := -dc
-				if isMedia {
-					signedDC = dc
-				}
-				init = patchInitDC(init, signedDC)
-				initPatched = true
-			}
-		}
-	}
-
-	dcOptMu.RLock()
-	_, dcConfigured := dcOpt[dc]
-	dcOptMu.RUnlock()
-
-	if !dcOk || !dcConfigured {
-		logDebug.Printf("[%s] unknown DC%d for %s:%d -> TCP passthrough", label, dc, dst, port)
-		tcpFallback(ctx, conn, dst, port, init, label, dc, isMedia)
-		return
-	}
-
+	mTag := mediaTag(isMedia)
 	dcKey := [2]int{dc, isMediaInt(isMedia)}
 	now := monoNow()
 
-	mTag := ""
-	if isMediaPtr == nil {
-		mTag = " media?"
-	} else if *isMediaPtr {
-		mTag = " media"
-	}
+	// Splitting MTProto if needed.
+	splitter, _ := newMsgSplitter(relayInit, proto)
 
-	// -- WS blacklist check --
+	dcOptMu.RLock()
+	target, dcConfigured := dcOpt[dc]
+	dcOptMu.RUnlock()
+
 	wsBlackMu.RLock()
 	blacklisted := wsBlacklist[dcKey]
 	wsBlackMu.RUnlock()
 
-	if blacklisted {
-		logDebug.Printf("[%s] DC%d%s WS blacklisted -> TCP %s:%d",
-			label, dc, mTag, dst, port)
-		ok := tcpFallback(ctx, conn, dst, port, init, label, dc, isMedia)
+	if !dcConfigured || blacklisted {
+		if !dcConfigured {
+			logDebug.Printf("DC%d не настроен → резерв", dc)
+		} else {
+			logDebug.Printf("DC%d%s WS заблокирован → резерв", dc, mTag)
+		}
+		ok := doFallback(ctx, clientConn, relayInit, label, dc, isMedia, splitter, cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor)
 		if ok {
-			logInfo.Printf("[%s] DC%d%s TCP fallback closed", label, dc, mTag)
+			logDebug.Printf("DC%d%s резерв закрыт", dc, mTag)
 		}
 		return
 	}
 
-	// -- Try WebSocket --
 	dcFailMu.RLock()
 	failUntil := dcFailUntil[dcKey]
 	dcFailMu.RUnlock()
 
 	wsTimeout := 10.0
-	if now < failUntil {
-		wsTimeout = wsFailTimeout
-	}
+	if now < failUntil { wsTimeout = wsFailTimeout }
 
 	isMediaForDomains := isMedia
 	domains := wsDomains(dc, &isMediaForDomains)
-
-	dcOptMu.RLock()
-	target := dcOpt[dc]
-	dcOptMu.RUnlock()
 
 	var ws *RawWebSocket
 	wsFailedRedirect := false
@@ -1585,57 +2180,38 @@ func handleClient(ctx context.Context, conn net.Conn) {
 
 	ws = wsPool.Get(dc, isMedia, target, domains)
 	if ws != nil {
-		logInfo.Printf("[%s] DC%d%s (%s:%d) -> pool hit via %s",
-			label, dc, mTag, dst, port, target)
+		logInfo.Printf("⚡ DC%d%s подключен из пула", dc, mTag)
 	} else {
 		for _, domain := range domains {
-			url := fmt.Sprintf("wss://%s/apiws", domain)
-			logInfo.Printf("[%s] DC%d%s (%s:%d) -> %s via %s",
-				label, dc, mTag, dst, port, url, target)
+			logDebug.Printf("🔗 DC%d%s попытка WS %s", dc, mTag, domain)
 
 			var connErr error
 			ws, connErr = wsConnect(target, domain, "/apiws", wsTimeout)
 			if connErr == nil {
+				logInfo.Printf("🔗 DC%d%s подключен напрямую", dc, mTag)
 				allRedirects = false
 				break
 			}
 
 			stats.wsErrors.Add(1)
-
 			if wsErr, ok := connErr.(*WsHandshakeError); ok {
 				if wsErr.IsRedirect() {
 					wsFailedRedirect = true
-					logWarn.Printf("[%s] DC%d%s got %d from %s -> %s",
-						label, dc, mTag, wsErr.StatusCode, domain,
-						wsErr.Location)
 					continue
 				}
 				allRedirects = false
-				logWarn.Printf("[%s] DC%d%s WS handshake: %s",
-					label, dc, mTag, wsErr.StatusLine)
 			} else {
 				allRedirects = false
-				errStr := connErr.Error()
-				if strings.Contains(errStr, "certificate") ||
-					strings.Contains(errStr, "hostname") {
-					logWarn.Printf("[%s] DC%d%s SSL error: %v",
-						label, dc, mTag, connErr)
-				} else {
-					logWarn.Printf("[%s] DC%d%s WS connect failed: %v",
-						label, dc, mTag, connErr)
-				}
 			}
 		}
 	}
 
-	// -- WS failed -> fallback --
 	if ws == nil {
 		if wsFailedRedirect && allRedirects {
 			wsBlackMu.Lock()
 			wsBlacklist[dcKey] = true
 			wsBlackMu.Unlock()
-			logWarn.Printf("[%s] DC%d%s blacklisted for WS (all 302)",
-				label, dc, mTag)
+			logWarn.Printf("⚠ DC%d%s заблокирован (302)", dc, mTag)
 		} else if wsFailedRedirect {
 			dcFailMu.Lock()
 			dcFailUntil[dcKey] = now + dcFailCooldown
@@ -1644,41 +2220,30 @@ func handleClient(ctx context.Context, conn net.Conn) {
 			dcFailMu.Lock()
 			dcFailUntil[dcKey] = now + dcFailCooldown
 			dcFailMu.Unlock()
-			logInfo.Printf("[%s] DC%d%s WS cooldown for %ds",
-				label, dc, mTag, int(dcFailCooldown))
+			logDebug.Printf("DC%d%s кулдаун %dс", dc, mTag, int(dcFailCooldown))
 		}
 
-		logInfo.Printf("[%s] DC%d%s -> TCP fallback to %s:%d",
-			label, dc, mTag, dst, port)
-		ok := tcpFallback(ctx, conn, dst, port, init, label, dc, isMedia)
+		splitterFb, _ := newMsgSplitter(relayInit, proto)
+		ok := doFallback(ctx, clientConn, relayInit, label, dc, isMedia, splitterFb, cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor)
 		if ok {
-			logInfo.Printf("[%s] DC%d%s TCP fallback closed", label, dc, mTag)
+			logDebug.Printf("DC%d%s резерв закрыт", dc, mTag)
 		}
 		return
 	}
 
-	// -- WS success --
 	dcFailMu.Lock()
 	delete(dcFailUntil, dcKey)
 	dcFailMu.Unlock()
 
 	stats.connectionsWs.Add(1)
 
-	var splitter *MsgSplitter
-	if initPatched {
-		splitter, _ = newMsgSplitter(init)
-	}
-
-	// Send init packet
-	if err := ws.Send(init); err != nil {
-		logDebug.Printf("[%s] reconnecting via TCP fallback (WS broken): %v", label, err)
+	if err := ws.Send(relayInit); err != nil {
 		ws.Close()
-		tcpFallback(ctx, conn, dst, port, init, label, dc, isMedia)
+		tcpFallback(ctx, clientConn, target, 443, relayInit, label, dc, isMedia, cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor)
 		return
 	}
 
-	// Bidirectional bridge
-	bridgeWS(ctx, conn, ws, label, dc, dst, port, isMedia, splitter)
+	bridgeWS(ctx, clientConn, ws, label, dc, target, 443, isMedia, splitter, cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor)
 }
 
 // ---------------------------------------------------------------------------
@@ -1710,17 +2275,17 @@ func runProxy(ctx context.Context, host string, port int, dcOptMap map[int]strin
 	srvCtx, srvCancel := context.WithCancel(ctx)
 	defer srvCancel()
 
-	logInfo.Println(strings.Repeat("=", 60))
-	logInfo.Println("  Telegram WS Bridge Proxy (Go)")
-	logInfo.Printf("  Listening on   %s:%d", host, port)
-	logInfo.Println("  Target DC IPs:")
+	logInfo.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	logInfo.Println("  TG WS Proxy запущен")
+	logInfo.Printf("  Адрес: %s:%d", host, port)
 	for dc, ip := range dcOptMap {
-		logInfo.Printf("    DC%d: %s", dc, ip)
+		logInfo.Printf("  DC%d → %s", dc, ip)
 	}
-	logInfo.Println(strings.Repeat("=", 60))
-	logInfo.Printf("  Configure Telegram Desktop:")
-	logInfo.Printf("    SOCKS5 proxy -> %s:%d  (no user/pass)", host, port)
-	logInfo.Println(strings.Repeat("=", 60))
+	proxySecretMu.RLock()
+	currentSec := proxySecret
+	proxySecretMu.RUnlock()
+	logInfo.Printf("  Ключ: ee%s", currentSec)
+	logInfo.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
 	// Stats logger
 	go func() {
@@ -1731,22 +2296,8 @@ func runProxy(ctx context.Context, host string, port int, dcOptMap map[int]strin
 			case <-srvCtx.Done():
 				return
 			case <-ticker.C:
-				wsBlackMu.RLock()
-				var blParts []string
-				for k := range wsBlacklist {
-					m := ""
-					if k[1] == 1 {
-						m = "m"
-					}
-					blParts = append(blParts, fmt.Sprintf("DC%d%s", k[0], m))
-				}
-				wsBlackMu.RUnlock()
-				bl := "none"
-				if len(blParts) > 0 {
-					bl = strings.Join(blParts, ", ")
-				}
 				idleCount := wsPool.IdleCount()
-				logInfo.Printf("stats: %s idle=%d | ws_bl: %s", stats.Summary(), idleCount, bl)
+				logInfo.Printf("📊 %s | пул:%d", stats.SummaryRu(), idleCount)
 			}
 		}
 	}()
@@ -1772,7 +2323,7 @@ func runProxy(ctx context.Context, host string, port int, dcOptMap map[int]strin
 					if ne, ok := err.(net.Error); ok && ne.Timeout() {
 						continue
 					}
-					logError.Printf("accept error: %v", err)
+					logError.Printf("ошибка accept: %v", err)
 					return
 				}
 			}
@@ -1786,7 +2337,7 @@ func runProxy(ctx context.Context, host string, port int, dcOptMap map[int]strin
 
 	// Wait for context cancellation
 	<-srvCtx.Done()
-	logInfo.Println("Shutting down proxy server...")
+	logInfo.Println("⏹ Остановка прокси...")
 	_ = listener.Close()
 
 	// Wait for active connections with timeout
@@ -1798,15 +2349,15 @@ func runProxy(ctx context.Context, host string, port int, dcOptMap map[int]strin
 
 	select {
 	case <-done:
-		logInfo.Println("All connections closed gracefully")
+		logInfo.Println("✓ Все соединения закрыты")
 	case <-time.After(30 * time.Second):
-		logWarn.Println("Graceful shutdown timed out after 30s")
+		logWarn.Println("⚠ Таймаут завершения (30с)")
 	}
 
 	// Close pool connections
 	wsPool.CloseAll()
 
-	logInfo.Printf("Final stats: %s", stats.Summary())
+	logInfo.Printf("📊 Итого: %s", stats.SummaryRu())
 	return nil
 }
 
@@ -1859,10 +2410,11 @@ func StartProxy(cHost *C.char, port C.int, cDcIps *C.char, verbose C.int) C.int 
 	isVerbose := int(verbose) != 0
 
 	initLogging(isVerbose)
+	initCfproxyDomains()
 
 	dcOptMap, err := parseCIDRPool(dcIpsStr)
 	if err != nil {
-		logError.Printf("parseCIDRPool: %v", err)
+		logError.Printf("ошибка разбора DC: %v", err)
 		return -2
 	}
 
@@ -1870,7 +2422,7 @@ func StartProxy(cHost *C.char, port C.int, cDcIps *C.char, verbose C.int) C.int 
 
 	go func() {
 		if err := runProxy(globalCtx, host, goPort, dcOptMap); err != nil {
-			logError.Printf("runProxy error: %v", err)
+			logError.Printf("✗ Ошибка прокси: %v", err)
 		}
 	}()
 
@@ -1915,7 +2467,64 @@ func SetPoolSize(size C.int) {
 	}
 	poolSize = n
 	if logInfo != nil {
-		logInfo.Printf("Pool size set to %d", n)
+		logInfo.Printf("⚙ Пул: %d", n)
+	}
+}
+
+//export SetCfProxyConfig
+func SetCfProxyConfig(enabled C.int, priority C.int, cUserDomain *C.char) {
+	cfproxyMu.Lock()
+	defer cfproxyMu.Unlock()
+
+	cfproxyEnabled = int(enabled) != 0
+	cfproxyPriority = int(priority) != 0
+
+	userDomain := C.GoString(cUserDomain)
+	cfproxyUserDomain = userDomain
+
+	if userDomain != "" {
+		cfproxyDomains = []string{userDomain}
+		activeCfDomain = userDomain
+	}
+
+	if logInfo != nil {
+		status := "выкл"
+		if cfproxyEnabled {
+			status = "вкл"
+		}
+		prio := "TCP→CF"
+		if cfproxyPriority {
+			prio = "CF→TCP"
+		}
+		dom := activeCfDomain
+		if dom == "" {
+			dom = "авто"
+		}
+		logInfo.Printf("☁ CF: %s (%s) %s", status, prio, dom)
+	}
+}
+
+//export SetSecret
+func SetSecret(cSecret *C.char) {
+	s := C.GoString(cSecret)
+	if len(s) != 32 {
+		if logWarn != nil {
+			logWarn.Printf("⚠ Ключ: неверная длина %d (нужно 32)", len(s))
+		}
+		return
+	}
+	// Validate hex
+	if _, err := hex.DecodeString(s); err != nil {
+		if logWarn != nil {
+			logWarn.Printf("⚠ Ключ: невалидный hex")
+		}
+		return
+	}
+	proxySecretMu.Lock()
+	proxySecret = s
+	proxySecretMu.Unlock()
+	if logInfo != nil {
+		logInfo.Printf("🔑 Ключ обновлён: ee%s...", s[:8])
 	}
 }
 
@@ -1938,6 +2547,7 @@ func main() {
 	runtime.LockOSThread()
 
 	initLogging(false)
+	initCfproxyDomains()
 
 	dcOptMap := map[int]string{
 		2: "149.154.167.220",

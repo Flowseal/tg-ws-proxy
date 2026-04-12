@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -12,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "1.0.4"
+        versionName = "1.0.51"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -20,32 +22,64 @@ android {
         }
         
         ndk {
-            abiFilters.add("arm64-v8a")
+            abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a"))
         }
     }
 
+    val localProperties = Properties()
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        localProperties.load(localPropertiesFile.inputStream())
+    }
+
     signingConfigs {
-        val keystoreFile = file("amurcanov.jks")
-        if (keystoreFile.exists()) {
-            create("release") {
-                storeFile = keystoreFile
-                // Берем пароли из локальных переменных среды или файла
-                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "flowseal-fork"
-                keyAlias = "amurcanov"
-                keyPassword = System.getenv("KEY_PASSWORD") ?: "flowseal-fork"
+        create("release") {
+            val keyFile = localProperties.getProperty("KEYSTORE_FILE")
+            if (keyFile != null) {
+                // Резолвим путь: если начинается с "..", берём от корня проекта
+                val resolvedFile = if (keyFile.startsWith("..")) {
+                    // ../release.keystore -> корень проекта / release.keystore
+                    file(rootDir.resolve(keyFile.substring(3)))
+                } else {
+                    file(keyFile)
+                }
+                if (resolvedFile.exists()) {
+                    storeFile = resolvedFile
+                    storePassword = localProperties.getProperty("KEYSTORE_PASSWORD")
+                    keyAlias = localProperties.getProperty("KEY_ALIAS")
+                    keyPassword = localProperties.getProperty("KEY_PASSWORD")
+                } else {
+                    println("WARNING: Keystore file not found: $keyFile (resolved: ${resolvedFile.absolutePath})")
+                }
             }
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
 
     buildTypes {
-        release {
-            signingConfig = signingConfigs.findByName("release")
+        getByName("release") {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            val keyFile = localProperties.getProperty("KEYSTORE_FILE")
+            val resolvedFile = if (keyFile != null && keyFile.startsWith("..")) {
+                file(rootDir.resolve(keyFile.substring(3)))
+            } else if (keyFile != null) {
+                file(keyFile)
+            } else null
+            
+            if (resolvedFile != null && resolvedFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+                println("✅ Signing config applied: ${resolvedFile.absolutePath}")
+            } else {
+                println("⚠️ WARNING: Keystore not found, using debug signing")
+                println("   Looked for: ${resolvedFile?.absolutePath ?: keyFile}")
+            }
         }
     }
     compileOptions {
@@ -83,6 +117,9 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+
+    // DataStore for persistent settings
+    implementation("androidx.datastore:datastore-preferences:1.0.0")
 
     // JNA for easy C-shared library calls
     implementation("net.java.dev.jna:jna:5.14.0@aar")
