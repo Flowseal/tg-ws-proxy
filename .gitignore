@@ -6,6 +6,8 @@ __pycache__/
 dist/
 build/
 *.spec.bak
+venv/
+.venv/
 
 # PyInstaller
 *.manifest
