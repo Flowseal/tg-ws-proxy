@@ -115,6 +115,92 @@ private val DarkColorScheme = darkColorScheme(
     surfaceTint = Color(0xFFD7CCC8),
 )
 
+// ═══ Тёмная палитра — «Цвет 1» ═══
+private val IndigoLightColorScheme = lightColorScheme(
+    primary = Color(0xFF5B588D),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFE2DFFF),
+    onPrimaryContainer = Color(0xFF1A1744),
+    secondary = Color(0xFF5B588D),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFE2DFFF),
+    onSecondaryContainer = Color(0xFF1A1744),
+    background = Color(0xFFFBF8FF),
+    onBackground = Color(0xFF1B1B1F),
+    surface = Color(0xFFF6F3FA),
+    onSurface = Color(0xFF1B1B1F),
+    surfaceVariant = Color(0xFFE4E1EC),
+    onSurfaceVariant = Color(0xFF47464F),
+    outline = Color(0xFF787680),
+    outlineVariant = Color(0xFFC8C5D0),
+)
+
+private val IndigoDarkColorScheme = darkColorScheme(
+    primary = Color(0xFFC4C0FF),
+    onPrimary = Color(0xFF2D2A5B),
+    primaryContainer = Color(0xFF434073),
+    onPrimaryContainer = Color(0xFFE2DFFF),
+    secondary = Color(0xFFC4C0FF),
+    onSecondary = Color(0xFF2D2A5B),
+    secondaryContainer = Color(0xFF434073),
+    onSecondaryContainer = Color(0xFFE2DFFF),
+    background = Color(0xFF131316),
+    onBackground = Color(0xFFE4E1E6),
+    surface = Color(0xFF1B1B1F),
+    onSurface = Color(0xFFC8C5D0),
+    surfaceVariant = Color(0xFF47464F),
+    onSurfaceVariant = Color(0xFFC8C5D0),
+    outline = Color(0xFF918F9A),
+    outlineVariant = Color(0xFF47464F),
+)
+
+// ═══ Палитра «Цвет 2» ═══
+private val ForestLightColorScheme = lightColorScheme(
+    primary = Color(0xFF5F5D68),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFE5E0F0),
+    onPrimaryContainer = Color(0xFF1C1A23),
+    secondary = Color(0xFF5F5D68),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFE5E0F0),
+    onSecondaryContainer = Color(0xFF1C1A23),
+    background = Color(0xFFFCF8FF),
+    onBackground = Color(0xFF1D1B20),
+    surface = Color(0xFFF7F2FA),
+    onSurface = Color(0xFF1D1B20),
+    surfaceVariant = Color(0xFFE6E0E9),
+    onSurfaceVariant = Color(0xFF48454E),
+    outline = Color(0xFF79747E),
+    outlineVariant = Color(0xFFCAC4D0),
+)
+
+private val ForestDarkColorScheme = darkColorScheme(
+    primary = Color(0xFFC8C4D3),
+    onPrimary = Color(0xFF312F38),
+    primaryContainer = Color(0xFF474550),
+    onPrimaryContainer = Color(0xFFE5E0F0),
+    secondary = Color(0xFFC8C4D3),
+    onSecondary = Color(0xFF312F38),
+    secondaryContainer = Color(0xFF474550),
+    onSecondaryContainer = Color(0xFFE5E0F0),
+    background = Color(0xFF141318),
+    onBackground = Color(0xFFE6E1E5),
+    surface = Color(0xFF1D1B20),
+    onSurface = Color(0xFFCAC4D0),
+    surfaceVariant = Color(0xFF48454E),
+    onSurfaceVariant = Color(0xFFCAC4D0),
+    outline = Color(0xFF938F99),
+    outlineVariant = Color(0xFF48454E),
+)
+
+private fun getAppColorScheme(palette: String, isDark: Boolean): androidx.compose.material3.ColorScheme {
+    return when(palette) {
+        "espresso" -> if (isDark) DarkColorScheme else LightColorScheme
+        "forest" -> if (isDark) ForestDarkColorScheme else ForestLightColorScheme
+        else -> if (isDark) IndigoDarkColorScheme else IndigoLightColorScheme
+    }
+}
+
 // ═══ Расширенные цвета для кастомных элементов ═══
 object AppColors {
     val connected = Color(0xFF4CAF50)
@@ -148,6 +234,7 @@ object AppColors {
 fun TgWsProxyTheme(
     themeMode: String = "system",
     dynamicColor: Boolean = true,
+    themePalette: String = "indigo",
     content: @Composable () -> Unit
 ) {
     val darkTheme = when (themeMode) {
@@ -161,8 +248,7 @@ fun TgWsProxyTheme(
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+        else -> getAppColorScheme(themePalette, darkTheme)
     }
 
     MaterialTheme(

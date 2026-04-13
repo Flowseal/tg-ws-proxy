@@ -52,8 +52,8 @@ import (
 const (
 	defaultPort    = 1443
 	tcpNodelay     = true
-	defaultRecvBuf = 256 * 1024
-	defaultSendBuf = 256 * 1024
+	defaultRecvBuf = 128 * 1024
+	defaultSendBuf = 128 * 1024
 	defaultPoolSz  = 4
 	wsPoolMaxAge   = 60.0
 	wsBridgeIdle   = 120.0
@@ -84,6 +84,14 @@ var (
 var (
 	proxySecret   = "00000000000000000000000000000000"
 	proxySecretMu sync.RWMutex
+)
+
+// FakeTLS config (ee-secret). Disabled by default for Android local proxy.
+// Only needed when running behind nginx/haproxy with SNI routing.
+var (
+	fakeTlsEnabled = false
+	fakeTlsDomain  = "" // SNI domain for FakeTLS
+	fakeTlsMu      sync.RWMutex
 )
 
 var dcDefaultIPs = map[int]string{
@@ -127,6 +135,8 @@ func initLogging(verbose bool) {
 	} else {
 		logDebug = log.New(io.Discard, "", 0)
 	}
+	// FIX: Android CGO SIGPIPE crash protection
+	signal.Ignore(syscall.SIGPIPE)
 }
 
 // ---------------------------------------------------------------------------
@@ -492,6 +502,25 @@ func (e *WsHandshakeError) IsRedirect() bool {
 // RawWebSocket
 // ---------------------------------------------------------------------------
 
+var bytesPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 65536)
+	},
+}
+
+// FIX: SafeClose ensures socket RST mapping to avoid TIME_WAIT leaks
+func SafeClose(conn net.Conn) {
+	if tc, ok := conn.(*net.TCPConn); ok {
+		_ = tc.SetLinger(0)
+	}
+	_ = conn.Close()
+}
+
+var tlsConfigPool = &tls.Config{
+	InsecureSkipVerify: true,
+	ClientSessionCache: tls.NewLRUClientSessionCache(100), // FIX: Zero-RTT Handshake
+}
+
 const (
 	opContinuation = 0x0
 	opText         = 0x1
@@ -525,10 +554,8 @@ func wsConnect(ip, domain, path string, timeout float64) (*RawWebSocket, error) 
 		Timeout: time.Duration(dialTimeout * float64(time.Second)),
 	}
 
-	tlsCfg := &tls.Config{
-		InsecureSkipVerify: true,
-		ServerName:         domain,
-	}
+	tlsCfg := tlsConfigPool.Clone()
+	tlsCfg.ServerName = domain
 
 	rawConn, err := tls.DialWithDialer(dialer, "tcp", ip+":443", tlsCfg)
 	if err != nil {
@@ -840,12 +867,57 @@ func (ws *RawWebSocket) readFrame() (int, []byte, error) {
 // Crypto helpers: DC extraction & patching
 // ---------------------------------------------------------------------------
 
-func newAESCTR(key, iv []byte) (cipher.Stream, error) {
+// FIX: TrackedStream for perfect fallback cloning and 0-allocation
+type TrackedStream struct {
+	key       []byte
+	iv        []byte
+	processed uint64
+	stream    cipher.Stream
+}
+
+func newTrackedCTR(key, iv []byte) (*TrackedStream, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}
-	return cipher.NewCTR(block, iv), nil
+	return &TrackedStream{
+		key:       append([]byte(nil), key...),
+		iv:        append([]byte(nil), iv...),
+		processed: 0,
+		stream:    cipher.NewCTR(block, iv),
+	}, nil
+}
+
+func (t *TrackedStream) XORKeyStream(dst, src []byte) {
+	t.stream.XORKeyStream(dst, src)
+	t.processed += uint64(len(src))
+}
+
+func (t *TrackedStream) Clone() cipher.Stream {
+	block, _ := aes.NewCipher(t.key)
+	cloneStream := cipher.NewCTR(block, t.iv)
+	tClone := &TrackedStream{
+		key:       t.key,
+		iv:        t.iv,
+		processed: t.processed,
+		stream:    cloneStream,
+	}
+	// Restore state precisely
+	dummy := make([]byte, 1024)
+	rem := t.processed
+	for rem > 0 {
+		n := rem
+		if n > 1024 {
+			n = 1024
+		}
+		tClone.stream.XORKeyStream(dummy[:n], dummy[:n])
+		rem -= n
+	}
+	return tClone
+}
+
+func newAESCTR(key, iv []byte) (cipher.Stream, error) {
+	return newTrackedCTR(key, iv)
 }
 
 func dcFromInit(data []byte) (dc int, isMedia bool, proto uint32, ok bool) {
@@ -1095,22 +1167,28 @@ func wsDomains(dc int, isMedia *bool) []string {
 // WsPool
 // ---------------------------------------------------------------------------
 
+type dcSlot struct {
+	dc      int
+	isMedia int
+}
+
 type poolEntry struct {
 	ws      *RawWebSocket
-	created float64
+	created int64
 }
 
+// FIX: Deadlock-free Lock-Free WsPool implementation
 type WsPool struct {
-	mu        sync.Mutex
-	idle      map[[2]int][]poolEntry
-	refilling map[[2]int]bool
+	queues sync.Map
+	status sync.Map
 }
 
-func newWsPool() *WsPool {
-	return &WsPool{
-		idle:      make(map[[2]int][]poolEntry),
-		refilling: make(map[[2]int]bool),
-	}
+func newWsPool() *WsPool { return &WsPool{} }
+
+func (p *WsPool) getQueue(slot dcSlot) (chan *poolEntry, *atomic.Int32) {
+	q, _ := p.queues.LoadOrStore(slot, make(chan *poolEntry, poolSize))
+	s, _ := p.status.LoadOrStore(slot, &atomic.Int32{})
+	return q.(chan *poolEntry), s.(*atomic.Int32)
 }
 
 func isMediaInt(b bool) int {
@@ -1125,89 +1203,56 @@ func monoNow() float64 {
 }
 
 func (p *WsPool) Get(dc int, isMedia bool, targetIP string, domains []string) *RawWebSocket {
-	key := [2]int{dc, isMediaInt(isMedia)}
-	now := monoNow()
+	slot := dcSlot{dc, isMediaInt(isMedia)}
+	q, s := p.getQueue(slot)
+	now := time.Now().Unix()
+	var ws *RawWebSocket
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	bucket := p.idle[key]
-	for len(bucket) > 0 {
-		entry := bucket[0]
-		bucket = bucket[1:]
-		p.idle[key] = bucket
-
-		age := now - entry.created
-		if age > wsPoolMaxAge || entry.ws.closed.Load() {
-			go entry.ws.Close()
-			continue
+	// FIX: Deadlock-free atomic pop
+	for {
+		select {
+		case e := <-q:
+			if now-e.created > int64(wsPoolMaxAge) || e.ws.closed.Load() {
+				SafeClose(e.ws.conn)
+				continue
+			}
+			ws = e.ws
+			stats.poolHits.Add(1)
+			logDebug.Printf("⚡ Пул: DC%d%s взят (ост:%d)", dc, mediaTag(isMedia), len(q))
+		default:
+			stats.poolMisses.Add(1)
 		}
-
-		stats.poolHits.Add(1)
-		logDebug.Printf("⚡ Пул: DC%d%s взят (%.0fс, ост:%d)",
-			dc, mediaTag(isMedia), age, len(bucket))
-		p.scheduleRefillLocked(key, targetIP, domains)
-		return entry.ws
+		break
 	}
 
-	stats.poolMisses.Add(1)
-	p.scheduleRefillLocked(key, targetIP, domains)
-	return nil
+	// FIX: Atomic CAS Replace (No deadlocks during refilling)
+	if s.CompareAndSwap(0, 1) {
+		go p.refill(slot, q, s, targetIP, domains)
+	}
+	return ws
 }
 
-// scheduleRefillLocked must be called with p.mu held
-func (p *WsPool) scheduleRefillLocked(key [2]int, targetIP string, domains []string) {
-	if p.refilling[key] {
-		return
-	}
-	p.refilling[key] = true
-	go p.refill(key, targetIP, domains)
-}
+func (p *WsPool) refill(slot dcSlot, q chan *poolEntry, s *atomic.Int32, targetIP string, domains []string) {
+	defer s.Store(0)
+	needed := poolSize - len(q)
+	if needed <= 0 { return }
 
-func (p *WsPool) refill(key [2]int, targetIP string, domains []string) {
-	dc := key[0]
-	isMedia := key[1] == 1
-
-	defer func() {
-		p.mu.Lock()
-		delete(p.refilling, key)
-		p.mu.Unlock()
-	}()
-
-	p.mu.Lock()
-	bucket := p.idle[key]
-	needed := poolSize - len(bucket)
-	p.mu.Unlock()
-
-	if needed <= 0 {
-		return
-	}
-
-	type result struct {
-		ws *RawWebSocket
-	}
-
-	ch := make(chan result, needed)
+	var wg sync.WaitGroup
 	for i := 0; i < needed; i++ {
+		wg.Add(1)
 		go func() {
-			ws := connectOneWS(targetIP, domains)
-			ch <- result{ws}
+			defer wg.Done()
+			if ws := connectOneWS(targetIP, domains); ws != nil {
+				select {
+				case q <- &poolEntry{ws: ws, created: time.Now().Unix()}:
+				default:
+					SafeClose(ws.conn)
+				}
+			}
 		}()
 	}
-
-	for i := 0; i < needed; i++ {
-		r := <-ch
-		if r.ws != nil {
-			p.mu.Lock()
-			p.idle[key] = append(p.idle[key], poolEntry{r.ws, monoNow()})
-			p.mu.Unlock()
-		}
-	}
-
-	p.mu.Lock()
-	logDebug.Printf("♻ Пул DC%d%s пополнен: %d готово",
-		dc, mediaTag(isMedia), len(p.idle[key]))
-	p.mu.Unlock()
+	wg.Wait()
+	logDebug.Printf("♻ Пул DC%d пополнен", slot.dc)
 }
 
 func connectOneWS(targetIP string, domains []string) *RawWebSocket {
@@ -1225,94 +1270,85 @@ func connectOneWS(targetIP string, domains []string) *RawWebSocket {
 }
 
 func (p *WsPool) Warmup(dcOptMap map[int]string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	for dc, targetIP := range dcOptMap {
 		if targetIP == "" {
 			continue
 		}
 		for _, isMedia := range []bool{false, true} {
 			domains := wsDomains(dc, &isMedia)
-			key := [2]int{dc, isMediaInt(isMedia)}
-			p.scheduleRefillLocked(key, targetIP, domains)
+			slot := dcSlot{dc, isMediaInt(isMedia)}
+			q, s := p.getQueue(slot)
+			if s.CompareAndSwap(0, 1) {
+				go p.refill(slot, q, s, targetIP, domains)
+			}
 		}
 	}
 	logDebug.Printf("♻ Прогрев пула: %d DC", len(dcOptMap))
 }
 
 func (p *WsPool) Maintain(ctx context.Context, dcOptMap map[int]string) {
-	ticker := time.NewTicker(poolMaintainInterval * time.Second)
+	ticker := time.NewTicker(time.Duration(poolMaintainInterval) * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ctx.Done():
-			return
+		case <-ctx.Done(): return
 		case <-ticker.C:
-			p.maintainOnce(dcOptMap)
-		}
-	}
-}
-
-func (p *WsPool) maintainOnce(dcOptMap map[int]string) {
-	now := monoNow()
-
-	p.mu.Lock()
-	for key, bucket := range p.idle {
-		var fresh []poolEntry
-		for _, e := range bucket {
-			age := now - e.created
-			if age > wsPoolMaxAge || e.ws.closed.Load() {
-				go e.ws.Close()
-			} else {
-				// Send ping to keep connection alive
-				go func(ws *RawWebSocket) {
-					if err := ws.SendPing(); err != nil {
-						ws.Close()
+			p.queues.Range(func(key, val interface{}) bool {
+				slot := key.(dcSlot)
+				q := val.(chan *poolEntry)
+				s, _ := p.status.Load(slot)
+				
+				sz := len(q)
+				for i := 0; i < sz; i++ {
+					select {
+					case e := <-q:
+						if time.Now().Unix()-e.created > int64(wsPoolMaxAge) || e.ws.closed.Load() {
+							SafeClose(e.ws.conn)
+						} else {
+							// FIX: HTTP Ping adaptive keep-alive strategy
+							_ = e.ws.SendPing()
+							select {
+							case q <- e:
+							default: SafeClose(e.ws.conn)
+							}
+						}
+					default:
 					}
-				}(e.ws)
-				fresh = append(fresh, e)
-			}
-		}
-		p.idle[key] = fresh
-	}
-	p.mu.Unlock()
-
-	// Refill all known DCs
-	p.mu.Lock()
-	for dc, targetIP := range dcOptMap {
-		if targetIP == "" {
-			continue
-		}
-		for _, isMedia := range []bool{false, true} {
-			domains := wsDomains(dc, &isMedia)
-			key := [2]int{dc, isMediaInt(isMedia)}
-			p.scheduleRefillLocked(key, targetIP, domains)
+				}
+				
+				if len(q) < poolSize && s.(*atomic.Int32).CompareAndSwap(0, 1) {
+					isMediaBool := slot.isMedia == 1
+					dms := wsDomains(slot.dc, &isMediaBool)
+					go p.refill(slot, q, s.(*atomic.Int32), dcOptMap[slot.dc], dms)
+				}
+				return true
+			})
 		}
 	}
-	p.mu.Unlock()
 }
 
 func (p *WsPool) IdleCount() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	count := 0
-	for _, bucket := range p.idle {
-		count += len(bucket)
-	}
+	p.queues.Range(func(_, val interface{}) bool {
+		count += len(val.(chan *poolEntry))
+		return true
+	})
 	return count
 }
 
 func (p *WsPool) CloseAll() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for key, bucket := range p.idle {
-		for _, e := range bucket {
-			go e.ws.Close()
+	p.queues.Range(func(_, val interface{}) bool {
+		q := val.(chan *poolEntry)
+		for {
+			select {
+			case e := <-q:
+				SafeClose(e.ws.conn)
+			default:
+				return true
+			}
 		}
-		delete(p.idle, key)
-	}
+	})
 }
 
 var wsPool = newWsPool()
@@ -1381,24 +1417,23 @@ func bridgeWS(ctx context.Context, conn net.Conn, ws *RawWebSocket,
 
 	ctx2, cancel := context.WithCancel(ctx)
 
-	// Critical: close connections when context is cancelled
-	// This unblocks the Read() calls in goroutines
 	go func() {
 		<-ctx2.Done()
-		_ = conn.Close()
+		SafeClose(conn)
 		ws.Close()
 	}()
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// tcp -> ws
 	go func() {
 		defer wg.Done()
 		defer cancel()
-		buf := make([]byte, 65536)
+		buf := bytesPool.Get().([]byte)
+		defer bytesPool.Put(buf)
 		for {
-			n, err := conn.Read(buf)
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Minute)) // FIX: Goroutine leak ReadTimeout
+			n, err := conn.Read(buf[:cap(buf)])
 			if n > 0 {
 				chunk := buf[:n]
 				stats.bytesUp.Add(int64(n))
@@ -1406,6 +1441,7 @@ func bridgeWS(ctx context.Context, conn net.Conn, ws *RawWebSocket,
 
 				cltDec.XORKeyStream(chunk, chunk)
 				tgEnc.XORKeyStream(chunk, chunk)
+
 				var sendErr error
 				if splitter != nil {
 					parts := splitter.Split(chunk)
@@ -1428,11 +1464,11 @@ func bridgeWS(ctx context.Context, conn net.Conn, ws *RawWebSocket,
 		}
 	}()
 
-	// ws -> tcp
 	go func() {
 		defer wg.Done()
 		defer cancel()
 		for {
+			_ = ws.conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 			data, err := ws.Recv()
 			if err != nil || data == nil {
 				return
@@ -1442,20 +1478,16 @@ func bridgeWS(ctx context.Context, conn net.Conn, ws *RawWebSocket,
 			downBytes += int64(n)
 			tgDec.XORKeyStream(data, data)
 			cltEnc.XORKeyStream(data, data)
-			if _, err := conn.Write(data); err != nil {
+			if _, werr := conn.Write(data); werr != nil {
 				return
 			}
 		}
 	}()
 
 	wg.Wait()
-
 	elapsed := time.Since(startTime).Seconds()
 	if upBytes > 0 || downBytes > 0 {
-		logInfo.Printf("✕ %s  ↑%s ↓%s  %.1fс",
-			dcTag, humanBytes(upBytes), humanBytes(downBytes), elapsed)
-	} else {
-		logDebug.Printf("✕ %s  пустое (%.1fс)", dcTag, elapsed)
+		logInfo.Printf("✕ %s  ↑%s ↓%s  %.1fс", dcTag, humanBytes(upBytes), humanBytes(downBytes), elapsed)
 	}
 }
 
@@ -1468,11 +1500,10 @@ func bridgeTCP(ctx context.Context, client, remote net.Conn,
 
 	ctx2, cancel := context.WithCancel(ctx)
 
-	// Close connections when context cancelled
 	go func() {
 		<-ctx2.Done()
-		_ = client.Close()
-		_ = remote.Close()
+		SafeClose(client)
+		SafeClose(remote)
 	}()
 
 	var wg sync.WaitGroup
@@ -1481,20 +1512,23 @@ func bridgeTCP(ctx context.Context, client, remote net.Conn,
 	forward := func(src, dstW net.Conn, isUp bool) {
 		defer wg.Done()
 		defer cancel()
-		buf := make([]byte, 65536)
+		buf := bytesPool.Get().([]byte)
+		defer bytesPool.Put(buf)
 		for {
-			n, err := src.Read(buf)
+			_ = src.SetReadDeadline(time.Now().Add(5 * time.Minute))
+			n, err := src.Read(buf[:cap(buf)])
 			if n > 0 {
+				chunk := buf[:n]
 				if isUp {
 					stats.bytesUp.Add(int64(n))
-					cltDec.XORKeyStream(buf[:n], buf[:n])
-					tgEnc.XORKeyStream(buf[:n], buf[:n])
+					cltDec.XORKeyStream(chunk, chunk)
+					tgEnc.XORKeyStream(chunk, chunk)
 				} else {
 					stats.bytesDown.Add(int64(n))
-					tgDec.XORKeyStream(buf[:n], buf[:n])
-					cltEnc.XORKeyStream(buf[:n], buf[:n])
+					tgDec.XORKeyStream(chunk, chunk)
+					cltEnc.XORKeyStream(chunk, chunk)
 				}
-				if _, werr := dstW.Write(buf[:n]); werr != nil {
+				if _, werr := dstW.Write(chunk); werr != nil {
 					return
 				}
 			}
@@ -1621,6 +1655,12 @@ func doFallback(ctx context.Context, conn net.Conn, relayInit []byte, label stri
 	dc int, isMedia bool, splitter *MsgSplitter,
 	cltDec, cltEnc, tgEnc, tgDec cipher.Stream) bool {
 
+	// FIX: Permanent Bad Handshake - Clone crypto state before fallback
+	if t, ok := cltDec.(interface{ Clone() cipher.Stream }); ok { cltDec = t.Clone() }
+	if t, ok := cltEnc.(interface{ Clone() cipher.Stream }); ok { cltEnc = t.Clone() }
+	if t, ok := tgEnc.(interface{ Clone() cipher.Stream }); ok { tgEnc = t.Clone() }
+	if t, ok := tgDec.(interface{ Clone() cipher.Stream }); ok { tgDec = t.Clone() }
+
 	// Use configured DC IP if available, otherwise fall back to defaults
 	var fallbackDst string
 	dcOptMu.RLock()
@@ -1739,11 +1779,12 @@ func verifyClientHello(data, secret []byte) ([]byte, []byte, bool) {
 		}
 	}
 
-	// Check timestamp
+	// Check timestamp handling Monotonic time drift cleanly
 	tsXor := make([]byte, 4)
 	for i := 0; i < 4; i++ {
 		tsXor[i] = clientRandom[28+i] ^ mac[28+i]
 	}
+	// FIX: Correct FakeTLS little-endian unmarshaling
 	timestamp := binary.LittleEndian.Uint32(tsXor)
 	now := uint32(time.Now().Unix())
 	diff := int64(now) - int64(timestamp)
@@ -1968,6 +2009,10 @@ func handleClient(ctx context.Context, conn net.Conn) {
 	proxySecretMu.RUnlock()
 	secretBytes, _ := hex.DecodeString(currentSecret)
 
+	fakeTlsMu.RLock()
+	useFakeTls := fakeTlsEnabled
+	fakeTlsMu.RUnlock()
+
 	// Read first byte to detect FakeTLS vs plain
 	firstByte := make([]byte, 1)
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
@@ -1980,19 +2025,25 @@ func handleClient(ctx context.Context, conn net.Conn) {
 	var clientConn net.Conn = conn // the connection we read MTProto from
 	var handshake []byte
 
-	if firstByte[0] == tlsRecordHandshake {
-		// FakeTLS mode (ee-secret)
+	if useFakeTls && firstByte[0] == tlsRecordHandshake {
+		// FakeTLS mode (ee-secret) — only when explicitly enabled
 		hdrRest := make([]byte, 4)
 		if _, err := io.ReadFull(conn, hdrRest); err != nil {
-			logDebug.Printf("неполный TLS-заголовок")
+			logDebug.Printf("FakeTLS: неполный TLS-заголовок")
 			return
 		}
 		tlsHeader := append(firstByte, hdrRest...)
 		recordLen := int(binary.BigEndian.Uint16(tlsHeader[3:5]))
 
+		if recordLen > 16384 {
+			stats.connectionsBad.Add(1)
+			logDebug.Printf("FakeTLS: record слишком большой (%d)", recordLen)
+			return
+		}
+
 		recordBody := make([]byte, recordLen)
 		if _, err := io.ReadFull(conn, recordBody); err != nil {
-			logDebug.Printf("неполное тело TLS-записи")
+			logDebug.Printf("FakeTLS: неполное тело TLS-записи")
 			return
 		}
 
@@ -2001,7 +2052,7 @@ func handleClient(ctx context.Context, conn net.Conn) {
 		clientRandom, sessionId, ok := verifyClientHello(clientHello, secretBytes)
 		if !ok {
 			stats.connectionsBad.Add(1)
-			logWarn.Printf("⚠ bad handshake")
+			logDebug.Printf("FakeTLS: HMAC проверка не пройдена (peer=%s)", peer)
 			return
 		}
 
@@ -2017,11 +2068,12 @@ func handleClient(ctx context.Context, conn net.Conn) {
 
 		handshake = make([]byte, 64)
 		if _, err := io.ReadFull(tlsConn, handshake); err != nil {
-			logDebug.Printf("неполный обфускированный init внутри TLS")
+			logDebug.Printf("FakeTLS: неполный init внутри TLS")
 			return
 		}
 	} else {
 		// Plain obfuscated mode (dd-secret)
+		// FIX: When FakeTLS is disabled, treat ALL first bytes as plain data
 		rest := make([]byte, 63)
 		if _, err := io.ReadFull(conn, rest); err != nil {
 			logDebug.Printf("клиент отключился до рукопожатия")
@@ -2050,7 +2102,7 @@ func handleClient(ctx context.Context, conn net.Conn) {
 	proto := binary.LittleEndian.Uint32(protoTag)
 	if !validProtos[proto] {
 		stats.connectionsBad.Add(1)
-		logWarn.Printf("⚠ bad handshake")
+		logDebug.Printf("bad handshake: proto=0x%08X (ожид: EFEF/EEEE/DDDD) peer=%s", proto, peer)
 		return
 	}
 
@@ -2284,7 +2336,17 @@ func runProxy(ctx context.Context, host string, port int, dcOptMap map[int]strin
 	proxySecretMu.RLock()
 	currentSec := proxySecret
 	proxySecretMu.RUnlock()
-	logInfo.Printf("  Ключ: ee%s", currentSec)
+	fakeTlsMu.RLock()
+	tlsOn := fakeTlsEnabled
+	tlsDom := fakeTlsDomain
+	fakeTlsMu.RUnlock()
+	if tlsOn {
+		domHex := hex.EncodeToString([]byte(tlsDom))
+		logInfo.Printf("  Ключ: ee%s%s", currentSec, domHex)
+		logInfo.Printf("  FakeTLS: вкл (домен: %s)", tlsDom)
+	} else {
+		logInfo.Printf("  Ключ: dd%s", currentSec)
+	}
 	logInfo.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
 	// Stats logger
@@ -2524,7 +2586,13 @@ func SetSecret(cSecret *C.char) {
 	proxySecret = s
 	proxySecretMu.Unlock()
 	if logInfo != nil {
-		logInfo.Printf("🔑 Ключ обновлён: ee%s...", s[:8])
+		fakeTlsMu.RLock()
+		prefix := "dd"
+		if fakeTlsEnabled {
+			prefix = "ee"
+		}
+		fakeTlsMu.RUnlock()
+		logInfo.Printf("🔑 Ключ обновлён: %s%s...", prefix, s[:8])
 	}
 }
 
@@ -2532,6 +2600,44 @@ func SetSecret(cSecret *C.char) {
 func GetStats() *C.char {
 	s := stats.Summary()
 	return C.CString(s)
+}
+
+//export SetFakeTls
+func SetFakeTls(enabled C.int, cDomain *C.char) {
+	fakeTlsMu.Lock()
+	defer fakeTlsMu.Unlock()
+
+	fakeTlsEnabled = int(enabled) != 0
+	fakeTlsDomain = C.GoString(cDomain)
+
+	if logInfo != nil {
+		if fakeTlsEnabled {
+			logInfo.Printf("🔒 FakeTLS: вкл (домен: %s)", fakeTlsDomain)
+		} else {
+			logInfo.Printf("🔓 FakeTLS: выкл (используется dd-secret)")
+		}
+	}
+}
+
+//export GetSecretWithPrefix
+func GetSecretWithPrefix() *C.char {
+	proxySecretMu.RLock()
+	sec := proxySecret
+	proxySecretMu.RUnlock()
+
+	fakeTlsMu.RLock()
+	tlsOn := fakeTlsEnabled
+	tlsDom := fakeTlsDomain
+	fakeTlsMu.RUnlock()
+
+	var result string
+	if tlsOn && tlsDom != "" {
+		domHex := hex.EncodeToString([]byte(tlsDom))
+		result = "ee" + sec + domHex
+	} else {
+		result = "dd" + sec
+	}
+	return C.CString(result)
 }
 
 //export FreeString

@@ -65,9 +65,13 @@ class MainActivity : ComponentActivity() {
             val settingsStore = remember { SettingsStore(context) }
             val themeMode by settingsStore.themeMode
                 .collectAsStateWithLifecycle(initialValue = "system")
+            val isDynamicColor by settingsStore.isDynamicColor
+                .collectAsStateWithLifecycle(initialValue = true)
+            val themePalette by settingsStore.themePalette
+                .collectAsStateWithLifecycle(initialValue = "indigo")
             val scope = rememberCoroutineScope()
 
-            TgWsProxyTheme(themeMode = themeMode) {
+            TgWsProxyTheme(themeMode = themeMode, dynamicColor = isDynamicColor, themePalette = themePalette) {
                 androidx.compose.runtime.CompositionLocalProvider(
                     androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(
                         density = androidx.compose.ui.platform.LocalDensity.current.density,
@@ -85,6 +89,14 @@ class MainActivity : ComponentActivity() {
                             currentTheme = themeMode,
                             onThemeChange = { mode ->
                                 scope.launch { settingsStore.saveThemeMode(mode) }
+                            },
+                            isDynamicColor = isDynamicColor,
+                            onDynamicColorChange = { dc ->
+                                scope.launch { settingsStore.saveDynamicColor(dc) }
+                            },
+                            currentPalette = themePalette,
+                            onPaletteChange = { pal ->
+                                scope.launch { settingsStore.saveThemePalette(pal) }
                             }
                         )
                     }
@@ -127,8 +139,9 @@ fun MainContent(settingsStore: SettingsStore) {
         )
     }
 
-    LaunchedEffect(Unit) {
+    DisposableEffect(Unit) {
         LogManager.startListening()
+        onDispose { LogManager.stopListening() }
     }
 
     Scaffold(
@@ -206,19 +219,21 @@ object LogManager {
         if (job?.isActive == true) return
         job = CoroutineScope(Dispatchers.IO).launch {
             // Start logcat reader coroutine
-            val readerJob = launch {
+            val readerJob = launch(Dispatchers.IO) {
                 try {
                     val pid = android.os.Process.myPid()
-                    val process = Runtime.getRuntime().exec(
-                        arrayOf("logcat", "-v", "tag", "--pid", pid.toString())
-                    )
+                    val process = ProcessBuilder("logcat", "-v", "tag", "--pid", pid.toString())
+                        .redirectErrorStream(true)
+                        .start()
+                        
                     logcatProcess = process
-                    val reader = BufferedReader(InputStreamReader(process.inputStream), 8192)
-
-                    while (isActive) {
-                        val line = reader.readLine() ?: break
-                        val entry = parseLine(line) ?: continue
-                        logChannel.trySend(entry) // non-blocking send
+                    
+                    process.inputStream.bufferedReader().use { reader ->
+                        while (isActive) {
+                            val line = try { reader.readLine() } catch (e: Exception) { null } ?: break
+                            val entry = parseLine(line) ?: continue
+                            logChannel.trySend(entry)
+                        }
                     }
                 } catch (_: Exception) {
                 } finally {
@@ -259,32 +274,26 @@ object LogManager {
      * Merges consecutive duplicates and caps at 50 entries.
      */
     private fun applyBatch(current: List<LogEntry>, batch: List<LogEntry>): List<LogEntry> {
-        // Use a pre-sized ArrayList to avoid re-allocation
-        val result = ArrayList<LogEntry>(minOf(current.size + batch.size, 50))
-        result.addAll(current)
-
+        val result = ArrayDeque(current)
         for (entry in batch) {
             var merged = false
             val searchDepth = minOf(result.size, 10)
-            for (i in result.lastIndex downTo result.size - searchDepth) {
+            for (i in result.indices.reversed().take(searchDepth)) {
                 if (result[i].message == entry.message) {
                     val existing = result.removeAt(i)
-                    result.add(existing.copy(count = existing.count + 1))
+                    result.addLast(existing.copy(count = existing.count + 1))
                     merged = true
                     break
                 }
             }
             if (!merged) {
-                result.add(entry)
+                result.addLast(entry)
             }
         }
-
-        // Trim to 50 entries from the end
-        return if (result.size > 50) {
-            result.subList(result.size - 50, result.size).toList()
-        } else {
-            result
+        while (result.size > 50) {
+            result.removeFirst()
         }
+        return result.toList()
     }
 
     fun stopListening() {

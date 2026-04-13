@@ -20,6 +20,7 @@ class ProxyService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var statsJob: Job? = null
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     companion object {
         const val ACTION_START = "com.amurcanov.tgwsproxy.START"
@@ -87,7 +88,7 @@ class ProxyService : Service() {
 
         _isRunning.value = true
 
-        statsJob = CoroutineScope(Dispatchers.IO).launch {
+        statsJob = serviceScope.launch {
             while (isActive) {
                 delay(2000)
                 if (_isRunning.value) {
@@ -197,6 +198,7 @@ class ProxyService : Service() {
     }
 
     override fun onDestroy() {
+        serviceScope.cancel()
         if (_isRunning.value) {
             stopProxy()
         }

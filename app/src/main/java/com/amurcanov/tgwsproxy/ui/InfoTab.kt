@@ -125,7 +125,7 @@ private fun isNewerVersion(local: String, remote: String): Boolean {
 
 @Composable
 fun InfoTab() {
-    val currentVersion = "v1.0.6"
+    val currentVersion = "v1.0.7"
     val scope = rememberCoroutineScope()
     var updateResult by remember { mutableStateOf<UpdateCheckResult>(UpdateCheckResult.Idle) }
 
@@ -271,7 +271,8 @@ fun InfoTab() {
             }
         }
 
-
+        // ═══ Справка ═══
+        HelpCard()
 
         Spacer(modifier = Modifier.height(16.dp))
     }
@@ -318,5 +319,70 @@ private fun GitHubSection(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun HelpCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text(
+                "Справка",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            
+            HelpSection(
+                title = "Авто / Адреса датацентров",
+                text = "При включенном CloudFlare сервера (DC) настраивать не нужно — они переадресовываются автоматически. Если вы отключите CloudFlare, нажмите «Настроить адреса DC» для прямого подключения. По умолчанию DC4 зафиксирован на стабильном лондонском узле (149.154.167.220)."
+            )
+
+            Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+            HelpSection(
+                title = "CloudFlare CDN",
+                text = "Ваш трафик маскируется под HTTPS WebSockets внутри сети Cloudflare. Это способствует лучшему обходу блокировок на мобильных сетях. При использовании Wi-Fi этот режим можно отключать для повышения скорости. Делает блокировку прокси почти невозможной для DPI."
+            )
+
+            Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+            HelpSection(
+                title = "Пул WS",
+                text = "Механизм многопоточности (фоновые соединения). По умолчанию: 4 потока. Если видео или медиафайлы грузятся медленно, попробуйте увеличить пул."
+            )
+
+            Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+
+            HelpSection(
+                title = "Секретный ключ",
+                text = "Специальный 16-байтовый ключ шифрования MTProto. Меняйте его только в случае, если старой ссылкой для подключения завладели посторонние."
+            )
+        }
+    }
+}
+
+@Composable
+private fun HelpSection(title: String, text: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            lineHeight = 20.sp
+        )
     }
 }

@@ -20,6 +20,9 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -100,6 +103,8 @@ fun SettingsTab(settingsStore: SettingsStore) {
     val savedPort by settingsStore.port.collectAsStateWithLifecycle(initialValue = "1443")
     val savedPoolSize by settingsStore.poolSize.collectAsStateWithLifecycle(initialValue = 4)
     val savedCfEnabled by settingsStore.cfproxyEnabled.collectAsStateWithLifecycle(initialValue = true)
+    val savedCustomDomainEnabled by settingsStore.customCfDomainEnabled.collectAsStateWithLifecycle(initialValue = false)
+    val savedCustomDomain by settingsStore.customCfDomain.collectAsStateWithLifecycle(initialValue = "")
     val savedSecretKey by settingsStore.secretKey.collectAsStateWithLifecycle(initialValue = "LOADING")
 
     var isDcAuto by rememberSaveable(savedIsDcAuto) { mutableStateOf(savedIsDcAuto) }
@@ -108,6 +113,8 @@ fun SettingsTab(settingsStore: SettingsStore) {
     var portText by rememberSaveable(savedPort) { mutableStateOf(savedPort) }
     var selectedPoolSize by rememberSaveable(savedPoolSize) { mutableIntStateOf(savedPoolSize) }
     var cfEnabled by rememberSaveable(savedCfEnabled) { mutableStateOf(savedCfEnabled) }
+    var customCfDomainEnabled by rememberSaveable(savedCustomDomainEnabled) { mutableStateOf(savedCustomDomainEnabled) }
+    var customCfDomain by rememberSaveable(savedCustomDomain) { mutableStateOf(savedCustomDomain) }
     var secretKeyText by remember(savedSecretKey) { mutableStateOf(if (savedSecretKey == "LOADING") "" else savedSecretKey) }
 
     LaunchedEffect(savedSecretKey) {
@@ -128,19 +135,16 @@ fun SettingsTab(settingsStore: SettingsStore) {
             delay(300)
             settingsStore.saveAll(
                 isDcAuto, dc2Text, dc4Text, portText, selectedPoolSize,
-                cfEnabled, secretKeyText
+                cfEnabled, customCfDomainEnabled, customCfDomain, secretKeyText
             )
         }
     }
 
     var showIpSetupDialog by rememberSaveable { mutableStateOf(false) }
-    var showHelpDialog by rememberSaveable { mutableStateOf(false) }
     val scrollState = rememberScrollState()
 
     if (showIpSetupDialog) {
         IpSetupDialog(
-            isDcAuto = isDcAuto,
-            onModeChange = { isDcAuto = it; scheduleSave() },
             dc2Text = dc2Text,
             onDc2Change = { dc2Text = it; scheduleSave() },
             dc4Text = dc4Text,
@@ -149,17 +153,19 @@ fun SettingsTab(settingsStore: SettingsStore) {
         )
     }
 
-    if (showHelpDialog) {
-        HelpDialog(onDismiss = { showHelpDialog = false })
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(scrollState)
             .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        Text(
+            text = "Настройки",
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
+        )
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
@@ -167,23 +173,27 @@ fun SettingsTab(settingsStore: SettingsStore) {
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
         ) {
             Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    "Подключение",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.Public, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                    Text(
+                        "Подключение",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
                 OutlinedTextField(
                     value = portText,
                     onValueChange = { portText = it; scheduleSave() },
                     label = { Text("Порт") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth().height(60.dp),
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(14.dp),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = MaterialTheme.colorScheme.primary,
                         unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
@@ -191,16 +201,20 @@ fun SettingsTab(settingsStore: SettingsStore) {
                 )
                 OutlinedButton(
                     onClick = { showIpSetupDialog = true },
-                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                    enabled = !cfEnabled && !isRunning,
+                    modifier = Modifier.fillMaxWidth().height(40.dp),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.outlinedButtonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                        contentColor = MaterialTheme.colorScheme.primary,
+                        disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
                     ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (cfEnabled || isRunning) 0.2f else 0.5f))
                 ) {
                     Icon(Icons.Default.Settings, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Настроить адреса DC", fontWeight = FontWeight.SemiBold)
+                    Text(if (cfEnabled) "Авто" else "Настроить адреса DC", fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -212,8 +226,8 @@ fun SettingsTab(settingsStore: SettingsStore) {
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
         ) {
             Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -230,7 +244,7 @@ fun SettingsTab(settingsStore: SettingsStore) {
                             modifier = Modifier.size(20.dp)
                         )
                         Text(
-                            "CloudFlare",
+                            "CloudFlare CDN",
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.SemiBold
@@ -238,19 +252,14 @@ fun SettingsTab(settingsStore: SettingsStore) {
                     }
                     Switch(
                         checked = cfEnabled,
-                        onCheckedChange = { cfEnabled = it; scheduleSave() },
+                        onCheckedChange = { 
+                            cfEnabled = it
+                            isDcAuto = it
+                            scheduleSave() 
+                        },
                         enabled = !isRunning
                     )
                 }
-                Text(
-                    if (cfEnabled)
-                        "Трафик проксируется через CloudFlare — улучшает обход блокировок."
-                    else
-                        "Подключение к DC Telegram напрямую.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    lineHeight = 16.sp
-                )
             }
         }
 
@@ -261,15 +270,18 @@ fun SettingsTab(settingsStore: SettingsStore) {
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
         ) {
             Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    "Пул WS",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.Layers, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                    Text(
+                        "Пул WS",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -286,7 +298,7 @@ fun SettingsTab(settingsStore: SettingsStore) {
                         }
                     }
                 }
-                Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), modifier = Modifier.padding(vertical = 4.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -308,7 +320,7 @@ fun SettingsTab(settingsStore: SettingsStore) {
                     onValueChange = {},
                     readOnly = true,
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(14.dp),
                     textStyle = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                     trailingIcon = {
@@ -364,7 +376,7 @@ fun SettingsTab(settingsStore: SettingsStore) {
                     scope.launch {
                         settingsStore.saveAll(
                             isDcAuto, dc2Text, dc4Text, portText, selectedPoolSize,
-                            cfEnabled, secretKeyText
+                            cfEnabled, customCfDomainEnabled, customCfDomain, secretKeyText
                         )
                     }
                     val startIntent = Intent(context, ProxyService::class.java).apply {
@@ -373,15 +385,14 @@ fun SettingsTab(settingsStore: SettingsStore) {
                         putExtra(ProxyService.EXTRA_IPS, parsedIps)
                         putExtra(ProxyService.EXTRA_POOL_SIZE, selectedPoolSize)
                         putExtra(ProxyService.EXTRA_CFPROXY_ENABLED, cfEnabled)
-                        // ProxyService intent expects these even if CF priority is disabled in UI
                         putExtra(ProxyService.EXTRA_CFPROXY_PRIORITY, true)
-                        putExtra(ProxyService.EXTRA_CFPROXY_DOMAIN, "")
+                        putExtra(ProxyService.EXTRA_CFPROXY_DOMAIN, if (customCfDomainEnabled && cfEnabled) customCfDomain.trim() else "")
                         putExtra(ProxyService.EXTRA_SECRET_KEY, secretKeyText.trim())
                     }
                     ContextCompat.startForegroundService(context, startIntent)
                 }
             },
-            modifier = Modifier.fillMaxWidth().height(50.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp),
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(containerColor = buttonColor)
         ) {
@@ -402,7 +413,7 @@ fun SettingsTab(settingsStore: SettingsStore) {
             val raw = secretKeyText.trim()
             if (raw.isNotEmpty()) raw else "00000000000000000000000000000000"
         }
-        val proxyUrl = "tg://proxy?server=127.0.0.1&port=$port&secret=ee$secretForUrl"
+        val proxyUrl = "tg://proxy?server=127.0.0.1&port=$port&secret=dd$secretForUrl"
         val telegramBtnColor by animateColorAsState(
             targetValue = if (isRunning) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
             animationSpec = tween(400),
@@ -411,20 +422,53 @@ fun SettingsTab(settingsStore: SettingsStore) {
         Button(
             onClick = { openTelegram(context, proxyUrl) },
             enabled = isRunning,
-            modifier = Modifier.fillMaxWidth().height(50.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp),
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(containerColor = telegramBtnColor, contentColor = MaterialTheme.colorScheme.onSurface)
         ) {
             Text("Применить в Telegram", fontWeight = FontWeight.SemiBold)
         }
 
-        OutlinedButton(
-            onClick = { showHelpDialog = true },
-            modifier = Modifier.fillMaxWidth().height(46.dp),
-            shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+        Text(
+            text = "или",
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Surface(
+            onClick = {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                val clip = android.content.ClipData.newPlainText("Proxy URL", proxyUrl)
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(context, "Ссылка скопирована", Toast.LENGTH_SHORT).show()
+            },
+            shape = RoundedCornerShape(14.dp),
+            color = androidx.compose.ui.graphics.Color.Transparent,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
+            modifier = Modifier.fillMaxWidth().height(52.dp)
         ) {
-            Text("Пожалуйста ознакомьтесь!", fontWeight = FontWeight.Medium)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)
+            ) {
+                Text(
+                    text = proxyUrl,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(
+                    imageVector = Icons.Default.ContentCopy,
+                    contentDescription = "Копировать",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
 
         Spacer(Modifier.height(8.dp))
@@ -456,102 +500,10 @@ private fun PoolChip(
     }
 }
 
-@Composable
-private fun HelpDialog(onDismiss: () -> Unit) {
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 8.dp,
-            modifier = Modifier.fillMaxWidth(0.95f)
-        ) {
-            Column(
-                modifier = Modifier
-                    .padding(24.dp)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Text(
-                    "Справка",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-
-                HelpSection(
-                    title = "Адреса датацентров",
-                    text = "Внимание, рекомендую использовать при включенном CloudFlare - Автоматический режим получения DC от самого телеграма. " +
-                            "В случае если вы не пользуетесь CloudFlare или он у вас не работает, переключитесь на ручное использование. " +
-                            "По умолчанию указан DC4 149.154.167.220."
-                )
-
-                Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
-                HelpSection(
-                    title = "Порт",
-                    text = "Локальный порт прокси. Используйте свободный порт. По умолчанию — 1443."
-                )
-
-                Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
-                HelpSection(
-                    title = "CloudFlare",
-                    text = "Проксирует трафик через CloudFlare для обхода блокировок. Если Telegram не подключается — отключите."
-                )
-
-                Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
-                HelpSection(
-                    title = "Пул WS",
-                    text = "Количество фоновых соединений (по умолчанию 4). Увеличьте, если скорость низкая."
-                )
-
-                Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
-                HelpSection(
-                    title = "Секретный ключ",
-                    text = "Ключ шифрования MTProto. Обновляйте только при необходимости."
-                )
-
-                Spacer(Modifier.height(4.dp))
-
-                Button(
-                    onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth().height(46.dp),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Text("Понятно", fontWeight = FontWeight.SemiBold)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun HelpSection(title: String, text: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            lineHeight = 20.sp
-        )
-    }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun IpSetupDialog(
-    isDcAuto: Boolean, onModeChange: (Boolean) -> Unit,
     dc2Text: String, onDc2Change: (String) -> Unit,
     dc4Text: String, onDc4Change: (String) -> Unit,
     onDismiss: () -> Unit
@@ -585,37 +537,8 @@ private fun IpSetupDialog(
                     fontWeight = FontWeight.Bold
                 )
 
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = if (isDcAuto) "Авто DC от Telegram" else "Ручные DC",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Switch(
-                            checked = isDcAuto,
-                            onCheckedChange = { onModeChange(it) }
-                        )
-                    }
-                }
-
-                if (!isDcAuto) {
-                    @Composable
-                    fun dcInput(label: String, value: String, update: (String) -> Unit) {
+                @Composable
+                fun dcInput(label: String, value: String, update: (String) -> Unit) {
                         Text(
                             label,
                             style = MaterialTheme.typography.bodySmall,
@@ -638,7 +561,6 @@ private fun IpSetupDialog(
 
                     dcInput("DC2", dc2Text, onDc2Change)
                     dcInput("DC4", dc4Text, onDc4Change)
-                }
 
                 Spacer(Modifier.height(4.dp))
 
