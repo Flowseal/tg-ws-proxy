@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+*.py text diff=python
+*.spec text linguist-language=Python
+
+*.toml text
+*.txt text
+
+*.ico binary
