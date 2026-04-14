@@ -293,4 +293,4 @@ Tray-приложение хранит данные в:
 
 ## Лицензия
 
-[MIT License](LICENSE)
+[MIT License](https://github.com/Flowseal/tg-ws-proxy/blob/main/LICENSE)
