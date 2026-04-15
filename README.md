@@ -10,6 +10,24 @@
 
 ---
 
+# 🎦 Видео гайд по установке и использованию 
+
+<img alt="maxresdefault" src="https://github.com/user-attachments/assets/6b2df494-de8d-44a2-a281-389fc7551a7c" />
+
+<div align="center">
+
+[**Смотреть на YouTube**](https://youtu.be/RP4RwyEHpwc)  
+
+[**Смотреть на Dzen**](https://dzen.ru/video/watch/69dcda2bd250b343c4de82ac)  
+
+[**Смотреть на VK Video**](https://vkvideo.ru/video-234234162_456239074)
+
+[**Смотреть в Telegram**](https://t.me/avencoreschat/506796)
+
+</div>
+
+---
+
 ## Возможности Android-версии
 
 - **Современный UI:** Управление на базе Material 3 (Jetpack Compose). Настройка в пару тапов.
