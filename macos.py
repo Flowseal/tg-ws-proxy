@@ -602,7 +602,7 @@ def run_menubar() -> None:
 
 
 def main() -> None:
-    if not acquire_lock("macos.py"):
+    if not acquire_lock():
         _show_info("Приложение уже запущено.")
         return
     try:

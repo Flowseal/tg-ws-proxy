@@ -276,7 +276,7 @@ def run_tray() -> None:
 
 
 def main() -> None:
-    if not acquire_lock("linux.py"):
+    if not acquire_lock():
         _show_info("Приложение уже запущено.", os.path.basename(sys.argv[0]))
         return
     try:

@@ -58,6 +58,39 @@ from ui.ctk_theme import (
 _tray_icon: Optional[object] = None
 _config: dict = {}
 _exiting = False
+_win_mutex_handle = None
+
+_ERROR_ALREADY_EXISTS = 183
+
+
+def _acquire_win_mutex() -> bool | None:
+    global _win_mutex_handle
+    try:
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+        handle = kernel32.CreateMutexW(None, True, "Local\\TgWsProxy_SingleInstance")
+        if kernel32.GetLastError() == _ERROR_ALREADY_EXISTS:
+            kernel32.CloseHandle(ctypes.c_void_p(handle))
+            return False
+        if not handle:
+            return None
+        _win_mutex_handle = handle
+        return True
+    except Exception:
+        return None
+
+
+def _release_win_mutex() -> None:
+    global _win_mutex_handle
+    if _win_mutex_handle:
+        try:
+            kernel32 = ctypes.windll.kernel32
+            kernel32.ReleaseMutex(ctypes.c_void_p(_win_mutex_handle))
+            kernel32.CloseHandle(ctypes.c_void_p(_win_mutex_handle))
+        except Exception:
+            pass
+        _win_mutex_handle = None
 
 ICON_PATH = str(Path(__file__).parent / "icon.ico")
 
@@ -353,13 +386,15 @@ def run_tray() -> None:
 
 
 def main() -> None:
-    if not acquire_lock("windows.py"):
+    if (mutex_result := _acquire_win_mutex()) is False or mutex_result is None and not acquire_lock():
         _show_info("Приложение уже запущено.", os.path.basename(sys.argv[0]))
         return
+
     try:
         run_tray()
     finally:
         release_lock()
+        _release_win_mutex()
 
 
 if __name__ == "__main__":

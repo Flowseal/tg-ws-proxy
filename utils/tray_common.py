@@ -61,7 +61,7 @@ def ensure_dirs() -> None:
 _lock_file_path: Optional[Path] = None
 
 
-def _same_process(meta: dict, proc: psutil.Process, script_hint: str) -> bool:
+def _same_process(meta: dict, proc: psutil.Process) -> bool:
     try:
         lock_ct = float(meta.get("create_time", 0.0))
         if lock_ct > 0 and abs(lock_ct - proc.create_time()) > 1.0:
@@ -73,7 +73,7 @@ def _same_process(meta: dict, proc: psutil.Process, script_hint: str) -> bool:
     return False
 
 
-def acquire_lock(script_hint: str = "") -> bool:
+def acquire_lock() -> bool:
     global _lock_file_path
     ensure_dirs()
     for f in list(APP_DIR.glob("*.lock")):
@@ -94,7 +94,7 @@ def acquire_lock(script_hint: str = "") -> bool:
             pass
         is_running = False
         try:
-            is_running = _same_process(meta, psutil.Process(pid), script_hint)
+            is_running = _same_process(meta, psutil.Process(pid))
         except Exception:
             pass
         if is_running:

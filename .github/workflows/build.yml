@@ -26,7 +26,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.11"
           cache: "pip"
 
       - name: Setup MSVC 14.40 toolset
@@ -38,10 +38,11 @@ jobs:
         run: pip install .
 
       - name: Build PyInstaller bootloader from source
-        run: |
-          pip install "pyinstaller==6.16.0" --no-binary pyinstaller
         env:
-          PYINSTALLER_COMPILE_BOOTLOADER: 1
+          PYINSTALLER_COMPILE_BOOTLOADER: "1"
+        run: |
+          pip download --no-binary pyinstaller --no-deps --no-cache-dir -d pyinstaller_src "pyinstaller==6.10.0"
+          pip install (Get-ChildItem pyinstaller_src\*.tar.gz).FullName
 
       - name: Build EXE with PyInstaller
         run: pyinstaller packaging/windows.spec --noconfirm
@@ -193,7 +194,7 @@ jobs:
 
           python3.12 -m pip install --no-deps wheelhouse/universal2/*.whl
           python3.12 -m pip install .
-          python3.12 -m pip install pyinstaller==6.16.0
+          python3.12 -m pip install pyinstaller==6.13.0
 
       - name: Create macOS icon from ICO
         run: |
@@ -295,7 +296,7 @@ jobs:
         run: |
           .venv/bin/pip install --upgrade pip
           .venv/bin/pip install .
-          .venv/bin/pip install "pyinstaller==6.16.0"
+          .venv/bin/pip install "pyinstaller==6.13.0"
 
       - name: Build binary with PyInstaller
         run: .venv/bin/pyinstaller packaging/linux.spec --noconfirm
