@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -16,11 +17,12 @@ from proxy import get_link_host
 
 from utils.tray_common import (
     APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, LOG_FILE,
-    acquire_lock, bootstrap, check_ipv6_warning, ctk_run_dialog,
-    ensure_ctk_thread, ensure_dirs, load_config, load_icon, log,
+    acquire_lock, apply_logging_config, bootstrap, check_ipv6_warning, ctk_run_dialog,
+    ensure_ctk_thread, ensure_dirs, load_config, load_icon, log, log_step,
     maybe_notify_update, quit_ctk, release_lock, restart_proxy,
     save_config, start_proxy, stop_proxy, tg_proxy_url,
 )
+from utils.log_utils import LogAction
 from ui.ctk_tray_ui import (
     install_tray_config_buttons, install_tray_config_form,
     populate_first_run_window, tray_settings_scroll_and_footer,
@@ -77,24 +79,24 @@ def _apply_window_icon(root) -> None:
 
 def _on_open_in_telegram(icon=None, item=None) -> None:
     url = tg_proxy_url(_config)
-    log.info("Copying %s", url)
+    log_step(logging.INFO, LogAction.LINK_OPEN_REQUESTED, url=url, method="clipboard")
     try:
         pyperclip.copy(url)
         _show_info(
             f"Ссылка скопирована в буфер обмена, отправьте её в Telegram и нажмите по ней ЛКМ:\n{url}"
         )
     except Exception as exc:
-        log.error("Clipboard copy failed: %s", exc)
+        log_step(logging.ERROR, LogAction.CLIPBOARD_COPY_FAILED, action="open_in_telegram", error=str(exc))
         _show_error(f"Не удалось скопировать ссылку:\n{exc}")
 
 
 def _on_copy_link(icon=None, item=None) -> None:
     url = tg_proxy_url(_config)
-    log.info("Copying link: %s", url)
+    log_step(logging.INFO, LogAction.LINK_COPY_REQUESTED, url=url)
     try:
         pyperclip.copy(url)
     except Exception as exc:
-        log.error("Clipboard copy failed: %s", exc)
+        log_step(logging.ERROR, LogAction.CLIPBOARD_COPY_FAILED, action="copy_link", error=str(exc))
         _show_error(f"Не удалось скопировать ссылку:\n{exc}")
 
 
@@ -109,7 +111,7 @@ def _on_edit_config(icon=None, item=None) -> None:
 
 
 def _on_open_logs(icon=None, item=None) -> None:
-    log.info("Opening log file: %s", LOG_FILE)
+    log_step(logging.INFO, LogAction.OPEN_LOGS_REQUESTED, path=str(LOG_FILE))
     if LOG_FILE.exists():
         env = {k: v for k, v in os.environ.items() if k not in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME")}
         subprocess.Popen(
@@ -127,7 +129,7 @@ def _on_exit(icon=None, item=None) -> None:
         os._exit(0)
         return
     _exiting = True
-    log.info("User requested exit")
+    log_step(logging.INFO, LogAction.APP_EXIT_REQUESTED)
     quit_ctk()
     threading.Thread(target=lambda: (time.sleep(3), os._exit(0)), daemon=True, name="force-exit").start()
     if icon:
@@ -168,7 +170,8 @@ def _edit_config_dialog() -> None:
                 return
             save_config(merged)
             _config.update(merged)
-            log.info("Config saved: %s", merged)
+            apply_logging_config(_config)
+            log_step(logging.INFO, LogAction.CONFIG_SAVED, keys=sorted(merged.keys()))
             _tray_icon.menu = _build_menu()
 
             do_restart = messagebox.askyesno(
@@ -250,7 +253,7 @@ def run_tray() -> None:
     bootstrap(_config)
 
     if pystray is None or Image is None:
-        log.error("pystray or Pillow not installed; running in console mode")
+        log_step(logging.ERROR, LogAction.CONSOLE_MODE_FALLBACK, reason="missing_dependencies")
         start_proxy(_config, _show_error)
         try:
             while True:
@@ -265,11 +268,11 @@ def run_tray() -> None:
     check_ipv6_warning(_show_info)
 
     _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
-    log.info("Tray icon running")
+    log_step(logging.INFO, LogAction.APP_UI_RUNNING, ui="tray")
     _tray_icon.run()
 
     stop_proxy()
-    log.info("Tray app exited")
+    log_step(logging.INFO, LogAction.APP_UI_EXITED, ui="tray")
 
 
 def main() -> None:

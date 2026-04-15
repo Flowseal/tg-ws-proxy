@@ -6,6 +6,7 @@ import logging
 import logging.handlers
 import os
 import socket as _socket
+import platform
 import sys
 import threading
 import time
@@ -17,6 +18,14 @@ import psutil
 from proxy import __version__, get_link_host, parse_dc_ip_list, proxy_config
 from proxy.tg_ws_proxy import _run
 from utils.default_config import default_tray_config
+from utils.log_utils import (
+    LogAction,
+    build_event_formatter,
+    log_event,
+    log_exception_event,
+    set_text_event_meta_visible,
+    sanitize_config_for_log,
+)
 
 log = logging.getLogger("tg-ws-tray")
 
@@ -34,6 +43,7 @@ def _app_dir() -> Path:
 APP_DIR = _app_dir()
 CONFIG_FILE = APP_DIR / "config.json"
 LOG_FILE = APP_DIR / "proxy.log"
+JSON_LOG_FILE = APP_DIR / "proxy_log.json"
 FIRST_RUN_MARKER = APP_DIR / ".first_run_done_mtproto"
 IPV6_WARN_MARKER = APP_DIR / ".ipv6_warned"
 
@@ -132,7 +142,7 @@ def load_config() -> dict:
                 data.setdefault(k, v)
             return data
         except Exception as exc:
-            log.warning("Failed to load config: %s", exc)
+            log_step(logging.WARNING, LogAction.CONFIG_LOAD_FAILED, error=str(exc))
     return dict(DEFAULT_CONFIG)
 
 
@@ -148,28 +158,85 @@ _LOG_FMT_FILE = "%(asctime)s  %(levelname)-5s  %(name)s  %(message)s"
 _LOG_FMT_CONSOLE = "%(asctime)s  %(levelname)-5s  %(message)s"
 
 
-def setup_logging(verbose: bool = False, log_max_mb: float = 5) -> None:
+def log_step(level: int, action: LogAction, **details: Any) -> None:
+    log_event(log, level, action, **details)
+
+
+def setup_logging(verbose: bool = False, log_max_mb: float = 5, json_mode: bool = False) -> None:
     ensure_dirs()
     level = logging.DEBUG if verbose else logging.INFO
+    set_text_event_meta_visible(verbose)
     root = logging.getLogger()
     root.setLevel(level)
     logging.getLogger('asyncio').setLevel(logging.WARNING)
+    for handler in list(root.handlers):
+        root.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:
+            pass
 
     fh = logging.handlers.RotatingFileHandler(
         str(LOG_FILE),
         maxBytes=max(32 * 1024, int(log_max_mb * 1024 * 1024)),
-        backupCount=0,
+        backupCount=2,
         encoding="utf-8",
     )
     fh.setLevel(logging.DEBUG)
-    fh.setFormatter(logging.Formatter(_LOG_FMT_FILE, datefmt="%Y-%m-%d %H:%M:%S"))
+    fh.setFormatter(
+        build_event_formatter(
+            json_mode=False,
+            datefmt="%Y-%m-%d %H:%M:%S",
+            text_fmt=_LOG_FMT_FILE,
+        )
+    )
     root.addHandler(fh)
+
+    if json_mode:
+        jh = logging.handlers.RotatingFileHandler(
+            str(JSON_LOG_FILE),
+            maxBytes=max(32 * 1024, int(log_max_mb * 1024 * 1024)),
+            backupCount=2,
+            encoding="utf-8",
+        )
+        jh.setLevel(logging.DEBUG)
+        jh.setFormatter(
+            build_event_formatter(
+                json_mode=True,
+                datefmt="%Y-%m-%d %H:%M:%S",
+                text_fmt=_LOG_FMT_FILE,
+            )
+        )
+        root.addHandler(jh)
 
     if not IS_FROZEN:
         ch = logging.StreamHandler(sys.stdout)
         ch.setLevel(level)
-        ch.setFormatter(logging.Formatter(_LOG_FMT_CONSOLE, datefmt="%H:%M:%S"))
+        ch.setFormatter(
+            build_event_formatter(
+                json_mode=False,
+                datefmt="%H:%M:%S",
+                text_fmt=_LOG_FMT_CONSOLE,
+            )
+        )
         root.addHandler(ch)
+
+
+def apply_logging_config(cfg: dict, *, emit_event: bool = True) -> None:
+    verbose = bool(cfg.get("verbose", False))
+    json_mode = bool(cfg.get("log_json", False))
+    setup_logging(
+        verbose,
+        log_max_mb=cfg.get("log_max_mb", DEFAULT_CONFIG["log_max_mb"]),
+        json_mode=json_mode,
+    )
+    if emit_event:
+        log_step(
+            logging.INFO,
+            LogAction.LOGGING_RECONFIGURED,
+            verbose=verbose,
+            json_mode=json_mode,
+        )
 
 
 # icon
@@ -242,7 +309,7 @@ def _run_proxy_thread(on_port_busy: Callable[[str], None]) -> None:
     try:
         loop.run_until_complete(_run(stop_event=stop_ev))
     except Exception as exc:
-        log.error("Proxy thread crashed: %s", exc)
+        log_step(logging.ERROR, LogAction.PROXY_THREAD_CRASHED, error=str(exc))
         if "Address already in use" in str(exc) or "10048" in str(exc):
             on_port_busy(
                 "Не удалось запустить прокси:\n"
@@ -260,7 +327,7 @@ def apply_proxy_config(cfg: dict) -> bool:
     try:
         dc_redirects = parse_dc_ip_list(dc_ip_list)
     except ValueError as e:
-        log.error("Bad config dc_ip: %s", e)
+        log_step(logging.ERROR, LogAction.CONFIG_DC_IP_INVALID, error=str(e))
         return False
 
     pc = proxy_config
@@ -273,13 +340,22 @@ def apply_proxy_config(cfg: dict) -> bool:
     pc.fallback_cfproxy = cfg.get("cfproxy", DEFAULT_CONFIG["cfproxy"])
     pc.fallback_cfproxy_priority = cfg.get("cfproxy_priority", DEFAULT_CONFIG["cfproxy_priority"])
     pc.cfproxy_user_domain = cfg.get("cfproxy_user_domain", DEFAULT_CONFIG["cfproxy_user_domain"])
+    log_step(
+        logging.DEBUG,
+        LogAction.PROXY_CONFIG_APPLIED,
+        host=pc.host,
+        port=pc.port,
+        buffer_size=pc.buffer_size,
+        pool_size=pc.pool_size,
+        redirects=len(pc.dc_redirects),
+    )
     return True
 
 
 def start_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
     global _proxy_thread
     if _proxy_thread and _proxy_thread.is_alive():
-        log.info("Proxy already running")
+        log_step(logging.INFO, LogAction.PROXY_START_SKIPPED, reason="already_running")
         return
 
     if not apply_proxy_config(cfg):
@@ -287,7 +363,7 @@ def start_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
         return
 
     pc = proxy_config
-    log.info("Starting proxy on %s:%d ...", pc.host, pc.port)
+    log_step(logging.INFO, LogAction.PROXY_STARTING, host=pc.host, port=pc.port)
     _proxy_thread = threading.Thread(
         target=_run_proxy_thread, args=(on_error,), daemon=True, name="proxy"
     )
@@ -302,11 +378,11 @@ def stop_proxy() -> None:
         if _proxy_thread:
             _proxy_thread.join(timeout=5)
     _proxy_thread = None
-    log.info("Proxy stopped")
+    log_step(logging.INFO, LogAction.PROXY_STOPPED)
 
 
 def restart_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
-    log.info("Restarting proxy...")
+    log_step(logging.INFO, LogAction.PROXY_RESTARTING)
     stop_proxy()
     time.sleep(0.3)
     start_proxy(cfg, on_error)
@@ -391,7 +467,7 @@ def maybe_notify_update(
             ):
                 webbrowser.open(url)
         except Exception as exc:
-            log.debug("Update check failed: %s", exc)
+            log_step(logging.DEBUG, LogAction.UPDATE_CHECK_FAILED, error=str(exc))
 
     threading.Thread(target=_work, daemon=True, name="update-check").start()
 
@@ -434,7 +510,7 @@ def ctk_run_dialog(build_fn: Callable[[threading.Event], None]) -> None:
         try:
             build_fn(done)
         except Exception:
-            log.exception("CTk dialog failed")
+            log_exception_event(log, LogAction.CTK_DIALOG_FAILED)
             done.set()
 
     _ctk_root.after(0, _invoke)
@@ -455,15 +531,20 @@ def quit_ctk() -> None:
 
 def bootstrap(cfg: dict) -> None:
     save_config(cfg)
-    if LOG_FILE.exists():
-        try:
-            LOG_FILE.unlink()
-        except Exception:
-            pass
-    setup_logging(
-        cfg.get("verbose", False),
-        log_max_mb=cfg.get("log_max_mb", DEFAULT_CONFIG["log_max_mb"]),
+    apply_logging_config(cfg, emit_event=False)
+    log_step(logging.INFO, LogAction.APP_STARTED, version=__version__)
+    log_step(
+        logging.INFO,
+        LogAction.RUNTIME,
+        python=sys.version.split()[0],
+        platform=platform.platform(),
+        frozen=IS_FROZEN,
+        pid=os.getpid(),
     )
-    log.info("TG WS Proxy версия %s starting", __version__)
-    log.info("Config: %s", cfg)
-    log.info("Log file: %s", LOG_FILE)
+    log_step(logging.INFO, LogAction.CONFIG_LOADED, **sanitize_config_for_log(cfg))
+    log_step(
+        logging.INFO,
+        LogAction.LOG_FILE_READY,
+        path=str(LOG_FILE),
+        json_path=str(JSON_LOG_FILE) if bool(cfg.get("log_json", False)) else "",
+    )

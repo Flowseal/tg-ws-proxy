@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -29,9 +30,11 @@ from proxy.tg_ws_proxy import _run
 
 from utils.tray_common import (
     APP_DIR, APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, IPV6_WARN_MARKER,
-    LOG_FILE, acquire_lock, apply_proxy_config, ensure_dirs, load_config,
-    log, release_lock, save_config, setup_logging, stop_proxy, tg_proxy_url,
+    LOG_FILE, acquire_lock, apply_logging_config, apply_proxy_config, bootstrap, ensure_dirs,
+    load_config, log, log_step, release_lock, save_config, stop_proxy,
+    tg_proxy_url,
 )
+from utils.log_utils import LogAction
 
 MENUBAR_ICON_PATH = APP_DIR / "menubar_icon.png"
 
@@ -155,7 +158,7 @@ def _run_proxy_thread() -> None:
     try:
         loop.run_until_complete(_run(stop_event=stop_ev))
     except Exception as exc:
-        log.error("Proxy thread crashed: %s", exc)
+        log_step(logging.ERROR, LogAction.PROXY_THREAD_CRASHED, error=str(exc))
         if "Address already in use" in str(exc):
             _show_error(
                 "Не удалось запустить прокси:\n"
@@ -171,13 +174,13 @@ def _run_proxy_thread() -> None:
 def _start_proxy() -> None:
     global _proxy_thread
     if _proxy_thread and _proxy_thread.is_alive():
-        log.info("Proxy already running")
+        log_step(logging.INFO, LogAction.PROXY_START_SKIPPED, reason="already_running")
         return
     if not apply_proxy_config(_config):
         _show_error("Ошибка конфигурации DC → IP.")
         return
     pc = proxy_config
-    log.info("Starting proxy on %s:%d ...", pc.host, pc.port)
+    log_step(logging.INFO, LogAction.PROXY_STARTING, host=pc.host, port=pc.port)
     _proxy_thread = threading.Thread(target=_run_proxy_thread, daemon=True, name="proxy")
     _proxy_thread.start()
 
@@ -190,11 +193,11 @@ def _stop_proxy() -> None:
         if _proxy_thread:
             _proxy_thread.join(timeout=2)
     _proxy_thread = None
-    log.info("Proxy stopped")
+    log_step(logging.INFO, LogAction.PROXY_STOPPED)
 
 
 def _restart_proxy() -> None:
-    log.info("Restarting proxy...")
+    log_step(logging.INFO, LogAction.PROXY_RESTARTING)
     _stop_proxy()
     time.sleep(0.3)
     _start_proxy()
@@ -205,18 +208,18 @@ def _restart_proxy() -> None:
 
 def _on_open_in_telegram(_=None) -> None:
     url = tg_proxy_url(_config)
-    log.info("Opening %s", url)
+    log_step(logging.INFO, LogAction.LINK_OPEN_REQUESTED, url=url, method="open_cmd")
     try:
         result = subprocess.call(["open", url])
         if result != 0:
             raise RuntimeError("open command failed")
     except Exception:
-        log.info("open command failed, trying webbrowser")
+        log_step(logging.INFO, LogAction.TELEGRAM_OPEN_FALLBACK_WEBBROWSER)
         try:
             if not webbrowser.open(url):
                 raise RuntimeError("webbrowser.open returned False")
         except Exception:
-            log.info("Browser open failed, copying to clipboard")
+            log_step(logging.INFO, LogAction.TELEGRAM_OPEN_FALLBACK_CLIPBOARD)
             try:
                 if pyperclip:
                     pyperclip.copy(url)
@@ -227,20 +230,20 @@ def _on_open_in_telegram(_=None) -> None:
                     f"Ссылка скопирована в буфер обмена:\n{url}"
                 )
             except Exception as exc:
-                log.error("Clipboard copy failed: %s", exc)
+                log_step(logging.ERROR, LogAction.CLIPBOARD_COPY_FAILED, action="open_in_telegram", error=str(exc))
                 _show_error(f"Не удалось скопировать ссылку:\n{exc}")
 
 
 def _on_copy_link(_=None) -> None:
     url = tg_proxy_url(_config)
-    log.info("Copying link: %s", url)
+    log_step(logging.INFO, LogAction.LINK_COPY_REQUESTED, url=url)
     try:
         if pyperclip:
             pyperclip.copy(url)
         else:
             subprocess.run(["pbcopy"], input=url.encode(), check=True)
     except Exception as exc:
-        log.error("Clipboard copy failed: %s", exc)
+        log_step(logging.ERROR, LogAction.CLIPBOARD_COPY_FAILED, action="copy_link", error=str(exc))
         _show_error(f"Не удалось скопировать ссылку:\n{exc}")
 
 
@@ -256,7 +259,7 @@ def _on_restart(_=None) -> None:
 
 
 def _on_open_logs(_=None) -> None:
-    log.info("Opening log file: %s", LOG_FILE)
+    log_step(logging.INFO, LogAction.OPEN_LOGS_REQUESTED, path=str(LOG_FILE))
     if LOG_FILE.exists():
         subprocess.call(["open", str(LOG_FILE)])
     else:
@@ -276,6 +279,7 @@ def _toggle_check_updates(_=None) -> None:
     global _config
     _config["check_updates"] = not bool(_config.get("check_updates", True))
     save_config(_config)
+    log_step(logging.INFO, LogAction.CHECK_UPDATES_TOGGLED, enabled=bool(_config.get("check_updates", True)))
     if _app is not None:
         _app._check_updates_item.title = _check_updates_menu_title()
 
@@ -309,7 +313,7 @@ def _maybe_notify_update_async() -> None:
             ):
                 webbrowser.open(url)
         except Exception as exc:
-            log.debug("Update check failed: %s", exc)
+            log_step(logging.DEBUG, LogAction.UPDATE_CHECK_FAILED, error=str(exc))
 
     threading.Thread(target=_work, daemon=True, name="update-check").start()
 
@@ -427,10 +431,11 @@ def _edit_config_dialog() -> None:
         "cfproxy_user_domain": cfproxy_domain,
     }
     save_config(new_cfg)
-    log.info("Config saved: %s", new_cfg)
+    log_step(logging.INFO, LogAction.CONFIG_SAVED, keys=sorted(new_cfg.keys()))
 
     global _config
     _config = new_cfg
+    apply_logging_config(_config)
     if _app:
         _app.update_menu_title()
 
@@ -570,24 +575,11 @@ def run_menubar() -> None:
     global _app, _config
 
     _config = load_config()
-    save_config(_config)
-
-    if LOG_FILE.exists():
-        try:
-            LOG_FILE.unlink()
-        except Exception:
-            pass
-
-    setup_logging(
-        _config.get("verbose", False),
-        log_max_mb=_config.get("log_max_mb", DEFAULT_CONFIG["log_max_mb"]),
-    )
-    log.info("TG WS Proxy версия %s, menubar app starting", __version__)
-    log.info("Config: %s", _config)
-    log.info("Log file: %s", LOG_FILE)
+    bootstrap(_config)
+    log_step(logging.INFO, LogAction.MENUBAR_RUNTIME_READY, version=__version__)
 
     if rumps is None or Image is None:
-        log.error("rumps or Pillow not installed; running in console mode")
+        log_step(logging.ERROR, LogAction.CONSOLE_MODE_FALLBACK, reason="missing_dependencies")
         _start_proxy()
         try:
             while True:
@@ -602,11 +594,11 @@ def run_menubar() -> None:
     _check_ipv6_warning()
 
     _app = TgWsProxyApp()
-    log.info("Menubar app running")
+    log_step(logging.INFO, LogAction.APP_UI_RUNNING, ui="menubar")
     _app.run()
 
     _stop_proxy()
-    log.info("Menubar app exited")
+    log_step(logging.INFO, LogAction.APP_UI_EXITED, ui="menubar")
 
 
 def main() -> None:

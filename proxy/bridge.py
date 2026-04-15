@@ -9,6 +9,7 @@ from .utils import *
 from .stats import stats
 from .config import proxy_config
 from .raw_websocket import RawWebSocket
+from utils.log_utils import LogAction, log_event
 
 
 log = logging.getLogger('tg-mtproto-proxy')
@@ -146,8 +147,16 @@ async def do_fallback(reader, writer, relay_init, label,
             if ok:
                 return True
         elif method == 'tcp' and fallback_dst:
-            log.info("[%s] DC%d%s -> TCP fallback to %s:443",
-                     label, dc, media_tag, fallback_dst)
+            log_event(
+                log,
+                logging.INFO,
+                LogAction.TCP_FALLBACK_ATTEMPT,
+                label=label,
+                dc=dc,
+                media=is_media,
+                target=fallback_dst,
+                port=443,
+            )
             ok = await _tcp_fallback(
                 reader, writer, fallback_dst, 443,
                 relay_init, label, dc=dc, is_media=is_media, ctx=ctx)
@@ -167,8 +176,7 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
     ws = None
     chosen_domain = None
 
-    log.info("[%s] DC%d%s -> trying CF proxy",
-            label, dc, media_tag)
+    log_event(log, logging.INFO, LogAction.CF_FALLBACK_ATTEMPT, label=label, dc=dc, media=is_media)
 
     for base_domain in ([active] + others):
         domain = f'kws{dc}.{base_domain}'
@@ -177,14 +185,21 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
             chosen_domain = base_domain
             break
         except Exception as exc:
-            log.warning("[%s] DC%d%s CF proxy failed: %s",
-                        label, dc, media_tag, exc)
+            log_event(
+                log,
+                logging.WARNING,
+                LogAction.CF_FALLBACK_CONNECT_FAILED,
+                label=label,
+                dc=dc,
+                media=is_media,
+                error=str(exc),
+            )
 
     if ws is None:
         return False
 
     if chosen_domain and chosen_domain != proxy_config.active_cfproxy_domain:
-        log.info("[%s] Switching active CF domain", label)
+        log_event(log, logging.INFO, LogAction.CF_ACTIVE_DOMAIN_SWITCHED, label=label, domain=chosen_domain)
         proxy_config.active_cfproxy_domain = chosen_domain
 
     stats.connections_cfproxy += 1
@@ -201,8 +216,15 @@ async def _tcp_fallback(reader, writer, dst, port, relay_init, label,
         rr, rw = await asyncio.wait_for(
             asyncio.open_connection(dst, port), timeout=10)
     except Exception as exc:
-        log.warning("[%s] TCP fallback to %s:%d failed: %s",
-                    label, dst, port, exc)
+        log_event(
+            log,
+            logging.WARNING,
+            LogAction.TCP_FALLBACK_CONNECT_FAILED,
+            label=label,
+            target=dst,
+            port=port,
+            error=str(exc),
+        )
         return False
 
     stats.connections_tcp_fallback += 1
@@ -260,7 +282,7 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
         except (asyncio.CancelledError, ConnectionError, OSError):
             return
         except Exception as e:
-            log.debug("[%s] tcp->ws ended: %s", label, e)
+            log_event(log, logging.DEBUG, LogAction.RELAY_TCP_TO_WS_ENDED, label=label, error=str(e))
 
     async def ws_to_tcp():
         nonlocal down_bytes, down_packets
@@ -280,7 +302,7 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
         except (asyncio.CancelledError, ConnectionError, OSError):
             return
         except Exception as e:
-            log.debug("[%s] ws->tcp ended: %s", label, e)
+            log_event(log, logging.DEBUG, LogAction.RELAY_WS_TO_TCP_ENDED, label=label, error=str(e))
 
     tasks = [asyncio.create_task(tcp_to_ws()),
              asyncio.create_task(ws_to_tcp())]
@@ -295,12 +317,18 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
             except BaseException:
                 pass
         elapsed = asyncio.get_running_loop().time() - start_time
-        log.info("[%s] %s WS session closed: "
-                 "^%s (%d pkts) v%s (%d pkts) in %.1fs",
-                 label, dc_tag,
-                 human_bytes(up_bytes), up_packets,
-                 human_bytes(down_bytes), down_packets,
-                 elapsed)
+        log_event(
+            log,
+            logging.INFO,
+            LogAction.WS_SESSION_CLOSED,
+            label=label,
+            dc=dc_tag,
+            up=human_bytes(up_bytes),
+            up_packets=up_packets,
+            down=human_bytes(down_bytes),
+            down_packets=down_packets,
+            elapsed_s=round(elapsed, 1),
+        )
         try:
             await ws.close()
         except BaseException:
@@ -337,7 +365,7 @@ async def _bridge_tcp_reencrypt(reader, writer, remote_reader, remote_writer,
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            log.debug("[%s] forward ended: %s", label, e)
+            log_event(log, logging.DEBUG, LogAction.RELAY_FORWARD_ENDED, label=label, error=str(e))
 
     tasks = [
         asyncio.create_task(forward(reader, remote_writer, True)),

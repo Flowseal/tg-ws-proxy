@@ -8,6 +8,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Dict, List
 from urllib.request import Request, urlopen
+from utils.log_utils import LogAction, log_event
 
 log = logging.getLogger('tg-mtproto-proxy')
 
@@ -66,7 +67,7 @@ def _fetch_cfproxy_domain_list() -> List[str]:
         ]
         return [_dd(d) for d in encoded]
     except Exception as exc:
-        log.warning("Failed to fetch CF proxy domain list: %s", exc)
+        log_event(log, logging.WARNING, LogAction.CFPROXY_DOMAINS_FETCH_FAILED, error=str(exc))
         return []
 
 
@@ -79,7 +80,7 @@ def refresh_cfproxy_domains() -> None:
     if fetched:
         seen = set()
         pool = [d for d in fetched if not (d in seen or seen.add(d))]
-        log.info("CF proxy domain pool updated from GitHub (%d domains)", len(pool))
+        log_event(log, logging.INFO, LogAction.CFPROXY_DOMAINS_UPDATED, source="github", count=len(pool))
     else:
         pool = list(proxy_config.cfproxy_domains) or list(CFPROXY_DEFAULT_DOMAINS)
 

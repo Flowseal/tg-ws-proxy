@@ -36,6 +36,10 @@ _TIP_VERBOSE = (
     "Если включено, в файл логов пишется больше подробностей — "
     "необходимо при поиске неполадок"
 )
+_TIP_LOG_JSON = (
+    "Если включено, помимо обычного proxy.log будет вестись "
+    "дополнительный файл proxy_log.json в формате JSON"
+)
 _TIP_BUF_KB = (
     "Размер буфера приёма/передачи в килобайтах.\n"
     "Больше значение — больше выделение памяти на сокет"
@@ -291,6 +295,7 @@ class TrayConfigFormWidgets:
     secret_var: Any
     dc_textbox: Any
     verbose_var: Any
+    log_json_var: Any
     adv_entries: List[Any]
     adv_keys: Tuple[str, ...]
     autostart_var: Optional[Any]
@@ -508,6 +513,13 @@ def install_tray_config_form(
     verbose_cb.pack(anchor="w", pady=(0, 6))
     attach_ctk_tooltip(verbose_cb, _TIP_VERBOSE)
 
+    log_json_var = ctk.BooleanVar(
+        value=bool(cfg.get("log_json", default_config.get("log_json", False)))
+    )
+    log_json_cb = _checkbox(ctk, log_inner, theme, "JSON формат логов", log_json_var)
+    log_json_cb.pack(anchor="w", pady=(0, 6))
+    attach_ctk_tooltip(log_json_cb, _TIP_LOG_JSON)
+
     adv_frame = ctk.CTkFrame(log_inner, fg_color="transparent")
     adv_frame.pack(fill="x")
 
@@ -586,7 +598,7 @@ def install_tray_config_form(
 
     return TrayConfigFormWidgets(
         host_var=host_var, port_var=port_var, secret_var=secret_var,
-        dc_textbox=dc_textbox, verbose_var=verbose_var,
+        dc_textbox=dc_textbox, verbose_var=verbose_var, log_json_var=log_json_var,
         adv_entries=adv_entries, adv_keys=adv_keys,
         autostart_var=autostart_var, check_updates_var=check_updates_var,
         cfproxy_var=cfproxy_var,
@@ -658,6 +670,7 @@ def validate_config_form(
         "secret": secret_val,
         "dc_ip": lines,
         "verbose": widgets.verbose_var.get(),
+        "log_json": bool(widgets.log_json_var.get()),
     }
     if include_autostart:
         new_cfg["autostart"] = (
