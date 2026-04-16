@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 
 from .utils import *
 from .stats import stats
+from .balancer import balancer
 from .config import proxy_config
 from .raw_websocket import RawWebSocket
 
@@ -160,17 +161,13 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
                             dc=None, is_media=False,
                             ctx: CryptoCtx = None, splitter=None):
     media_tag = ' media' if is_media else ''
-
-    active = proxy_config.active_cfproxy_domain
-    others = [d for d in proxy_config.cfproxy_domains if d != active]
-
     ws = None
     chosen_domain = None
 
     log.info("[%s] DC%d%s -> trying CF proxy",
             label, dc, media_tag)
 
-    for base_domain in ([active] + others):
+    for base_domain in balancer.get_domains_for_dc(dc):
         domain = f'kws{dc}.{base_domain}'
         try:
             ws = await RawWebSocket.connect(domain, domain, timeout=10.0)
@@ -183,9 +180,8 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
     if ws is None:
         return False
 
-    if chosen_domain and chosen_domain != proxy_config.active_cfproxy_domain:
-        log.info("[%s] Switching active CF domain", label)
-        proxy_config.active_cfproxy_domain = chosen_domain
+    if chosen_domain and balancer.update_domain_for_dc(dc, chosen_domain):
+        log.info("[%s] Switched active CF domain", label)
 
     stats.connections_cfproxy += 1
     await ws.send(relay_init)

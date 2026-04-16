@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from proxy import __version__, get_link_host, parse_dc_ip_list
-from proxy.config import proxy_config
+from proxy.balancer import balancer
 from utils.update_check import RELEASES_PAGE_URL, get_status
 
 
@@ -451,7 +451,7 @@ def install_tray_config_form(
             _threading.Thread(target=_worker, daemon=True).start()
         else:
             def _worker_auto():
-                ok_domain, res = _run_cfproxy_auto_test(proxy_config.cfproxy_domains)
+                ok_domain, res = _run_cfproxy_auto_test(balancer.domains)
                 if btn:
                     btn.after(0, lambda: btn.configure(text="Тест", state="normal"))
                     btn.after(0, lambda: _cfproxy_show_auto_test_results(ok_domain, res))

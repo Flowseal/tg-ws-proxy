@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List
 from urllib.request import Request, urlopen
 
+from .balancer import balancer
+
 log = logging.getLogger('tg-mtproto-proxy')
 
 CFPROXY_DOMAINS_URL = (
@@ -45,8 +47,6 @@ class ProxyConfig:
     fallback_cfproxy: bool = True
     fallback_cfproxy_priority: bool = True
     cfproxy_user_domain: str = ''
-    cfproxy_domains: List[str] = field(default_factory=lambda: list(CFPROXY_DEFAULT_DOMAINS))
-    active_cfproxy_domain: str = field(default_factory=lambda: random.choice(CFPROXY_DEFAULT_DOMAINS))
     fake_tls_domain: str = ''
     proxy_protocol: bool = False
 
@@ -79,12 +79,8 @@ def refresh_cfproxy_domains() -> None:
     if fetched:
         seen = set()
         pool = [d for d in fetched if not (d in seen or seen.add(d))]
+        balancer.update_domains_list(pool)
         log.info("CF proxy domain pool updated from GitHub (%d domains)", len(pool))
-    else:
-        pool = list(proxy_config.cfproxy_domains) or list(CFPROXY_DEFAULT_DOMAINS)
-
-    proxy_config.cfproxy_domains = pool
-    proxy_config.active_cfproxy_domain = random.choice(pool)
 
 
 _refresh_stop: threading.Event = threading.Event()
@@ -95,6 +91,8 @@ def start_cfproxy_domain_refresh() -> None:
     _refresh_stop.set()
     _refresh_stop = threading.Event()
     stop = _refresh_stop
+
+    balancer.update_domains_list(CFPROXY_DEFAULT_DOMAINS)
 
     def _loop():
         refresh_cfproxy_domains()

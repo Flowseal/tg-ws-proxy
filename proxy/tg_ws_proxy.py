@@ -4,7 +4,6 @@ import os
 import sys
 import time
 import struct
-import random
 import asyncio
 import hashlib
 import argparse
@@ -25,10 +24,11 @@ if __name__ == '__main__' and (__package__ is None or __package__ == ''):
 
 from .utils import *
 from .stats import stats
-from .config import proxy_config, parse_dc_ip_list, start_cfproxy_domain_refresh, CFPROXY_DEFAULT_DOMAINS
+from .config import proxy_config, parse_dc_ip_list, start_cfproxy_domain_refresh
 from .bridge import MsgSplitter, CryptoCtx, do_fallback, bridge_ws_reencrypt
 from .raw_websocket import RawWebSocket, WsHandshakeError, set_sock_opts
 from .fake_tls import proxy_to_masking_domain, verify_client_hello, build_server_hello, FakeTlsStream, TLS_RECORD_HANDSHAKE
+from .balancer import balancer
 
 
 log = logging.getLogger('tg-mtproto-proxy')
@@ -535,11 +535,8 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     if proxy_config.fallback_cfproxy:
         user = proxy_config.cfproxy_user_domain
         if user:
-            proxy_config.cfproxy_domains = [user]
-            proxy_config.active_cfproxy_domain = user
+            balancer.update_domains_list([user])
         else:
-            proxy_config.cfproxy_domains = list(CFPROXY_DEFAULT_DOMAINS)
-            proxy_config.active_cfproxy_domain = random.choice(CFPROXY_DEFAULT_DOMAINS)
             start_cfproxy_domain_refresh()
 
     secret_bytes = bytes.fromhex(proxy_config.secret)
@@ -585,12 +582,11 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
         user_domain = "user" if proxy_config.cfproxy_user_domain else "auto"
         log.info("  CF proxy:      enabled (%s | %s)", prio, user_domain)
     log.info("=" * 60)
-    log.info("  Connect links:")
+    log.info("  Connect:")
     if ftls:
-        log.info("    ee (Fake TLS):        %s", ee_link)
+        log.info("    %s", ee_link)
     else:
-        log.info("       (standard):        %s", proxy_config.secret)
-        log.info("    dd (random padding):  %s", dd_link)
+        log.info("    %s", dd_link)
     log.info("=" * 60)
 
     async def log_stats():
@@ -716,7 +712,6 @@ def main():
     proxy_config.pool_size = max(0, args.pool_size)
     proxy_config.fallback_cfproxy = not args.no_cfproxy
     proxy_config.fallback_cfproxy_priority = args.cfproxy_priority
-    proxy_config.cfproxy_user_domain = args.cfproxy_domain
     proxy_config.fake_tls_domain = args.fake_tls_domain.strip()
     proxy_config.proxy_protocol = args.proxy_protocol
 
