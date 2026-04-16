@@ -257,7 +257,8 @@ def _edit_config_dialog() -> None:
         scroll, footer = tray_settings_scroll_and_footer(ctk, frame, theme)
         widgets = install_tray_config_form(
             ctk, scroll, theme, cfg, DEFAULT_CONFIG,
-            show_autostart=_supports_autostart(),
+            autostart_title="Автозапуск",
+            show_windows_autostart=_supports_autostart(),
             autostart_value=cfg.get("autostart", False),
         )
 

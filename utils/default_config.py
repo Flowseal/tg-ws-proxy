@@ -1,7 +1,4 @@
-"""
-Общие значения по умолчанию для tray-приложений (Windows / Linux / macOS).
-Единственное отличие по платформе — ключ autostart только на Windows.
-"""
+"""Общие значения по умолчанию для tray-приложений."""
 from __future__ import annotations
 
 import sys
@@ -29,5 +26,7 @@ def default_tray_config() -> Dict[str, Any]:
 
     if sys.platform == "win32":
         cfg["autostart"] = False
+    elif sys.platform.startswith("linux"):
+        cfg["linux_gui_autostart"] = False
 
     return cfg

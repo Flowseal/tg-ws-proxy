@@ -14,6 +14,11 @@ from PIL import Image, ImageTk
 
 from proxy import get_link_host
 
+from utils.linux_integration import (
+    linux_autostart_capabilities,
+    read_linux_autostart_state,
+    sync_linux_autostart,
+)
 from utils.tray_common import (
     APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, LOG_FILE,
     acquire_lock, bootstrap, check_ipv6_warning, ctk_run_dialog,
@@ -53,7 +58,7 @@ def _msgbox(kind: str, text: str, title: str, **kw):
     return result
 
 
-def _show_error(text: str, title: str = "TG WS Proxy — Ошибка") -> None:
+def _show_error(text: str, title: str = "TG WS Proxy - Ошибка") -> None:
     _msgbox("showerror", text, title)
 
 
@@ -142,19 +147,35 @@ def _edit_config_dialog() -> None:
         _show_error("customtkinter не установлен.")
         return
 
-    cfg = dict(_config)
+    capabilities = linux_autostart_capabilities()
+    cfg = read_linux_autostart_state(_config)
+    linux_gui_reason = (
+        "Создаёт XDG desktop entry в ~/.config/autostart."
+        if capabilities.gui_autostart_supported
+        else capabilities.gui_autostart_reason
+    )
 
     def _build(done: threading.Event) -> None:
         theme = ctk_theme_for_platform()
         w, h = CONFIG_DIALOG_SIZE
         root = create_ctk_toplevel(
-            ctk, title="TG WS Proxy — Настройки", width=w, height=h, theme=theme,
+            ctk, title="TG WS Proxy - Настройки", width=w, height=h, theme=theme,
             after_create=_apply_window_icon,
         )
         fpx, fpy = CONFIG_DIALOG_FRAME_PAD
         frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)
         scroll, footer = tray_settings_scroll_and_footer(ctk, frame, theme)
-        widgets = install_tray_config_form(ctk, scroll, theme, cfg, DEFAULT_CONFIG, show_autostart=False)
+        widgets = install_tray_config_form(
+            ctk,
+            scroll,
+            theme,
+            cfg,
+            DEFAULT_CONFIG,
+            autostart_title="Автозапуск",
+            show_linux_gui_autostart=capabilities.gui_autostart_supported,
+            linux_gui_reason=linux_gui_reason,
+            linux_gui_autostart_value=cfg.get("linux_gui_autostart", False),
+        )
 
         def _finish() -> None:
             root.destroy()
@@ -162,14 +183,31 @@ def _edit_config_dialog() -> None:
 
         def on_save() -> None:
             from tkinter import messagebox
-            merged = validate_config_form(widgets, DEFAULT_CONFIG, include_autostart=False)
+            merged = validate_config_form(
+                widgets,
+                DEFAULT_CONFIG,
+                include_autostart=False,
+                include_linux_gui_autostart=capabilities.gui_autostart_supported,
+            )
             if isinstance(merged, str):
-                messagebox.showerror("TG WS Proxy — Ошибка", merged, parent=root)
+                messagebox.showerror("TG WS Proxy - Ошибка", merged, parent=root)
                 return
             save_config(merged)
             _config.update(merged)
             log.info("Config saved: %s", merged)
             _tray_icon.menu = _build_menu()
+            try:
+                sync_linux_autostart(
+                    gui_enabled=bool(merged.get("linux_gui_autostart", False)),
+                )
+            except Exception as exc:
+                log.exception("Failed to sync Linux autostart")
+                messagebox.showwarning(
+                    "TG WS Proxy - предупреждение",
+                    "Настройки сохранены, но автозапуск обновился не полностью:\n\n"
+                    + f"XDG autostart: {exc}",
+                    parent=root,
+                )
 
             do_restart = messagebox.askyesno(
                 "Перезапустить?",
