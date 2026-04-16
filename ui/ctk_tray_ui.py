@@ -299,6 +299,16 @@ class TrayConfigFormWidgets:
     cfproxy_priority_var: Optional[Any] = None
     cfproxy_user_domain_var: Optional[Any] = None
     appearance_var: Optional[Any] = None
+    linux_gui_autostart_var: Optional[Any] = None
+
+
+@dataclass(frozen=True)
+class AutostartSectionConfig:
+    title: str
+    hint: Optional[str] = None
+    windows_autostart: bool = False
+    linux_gui_autostart: bool = False
+    linux_gui_reason: Optional[str] = None
 
 
 def install_tray_config_form(
@@ -308,8 +318,9 @@ def install_tray_config_form(
     cfg: dict,
     default_config: dict,
     *,
-    show_autostart: bool = False,
+    autostart_section: Optional[AutostartSectionConfig] = None,
     autostart_value: bool = False,
+    linux_gui_autostart_value: bool = False,
 ) -> TrayConfigFormWidgets:
     header = ctk.CTkFrame(frame, fg_color="transparent")
     header.pack(fill="x", pady=(0, 2))
@@ -571,18 +582,57 @@ def install_tray_config_form(
     ).pack(anchor="w")
 
     autostart_var = None
-    if show_autostart:
-        sys_inner = _config_section(ctk, frame, theme, "Запуск Windows", bottom_spacer=4)
-        autostart_var = ctk.BooleanVar(value=autostart_value)
-        as_cb = _checkbox(ctk, sys_inner, theme, "Автозапуск при включении компьютера", autostart_var)
-        as_cb.pack(anchor="w", pady=(0, 4))
-        as_hint = _label(
-            ctk, sys_inner, theme,
-            "Если переместить программу в другую папку, запись автозапуска может сброситься.",
-            size=11, justify="left", wraplength=_INNER_W,
-        )
-        as_hint.pack(anchor="w")
-        attach_tooltip_to_widgets([as_cb, as_hint], _TIP_AUTOSTART)
+    linux_gui_autostart_var = None
+    if autostart_section is not None:
+        sys_inner = _config_section(ctk, frame, theme, autostart_section.title, bottom_spacer=4)
+        added_rows = False
+
+        if autostart_section.hint:
+            _label(
+                ctk, sys_inner, theme, autostart_section.hint,
+                size=11, justify="left", wraplength=_INNER_W,
+            ).pack(anchor="w", pady=(0, 6))
+
+        if autostart_section.windows_autostart:
+            autostart_var = ctk.BooleanVar(value=autostart_value)
+            as_cb = _checkbox(ctk, sys_inner, theme, "Автозапуск при включении компьютера", autostart_var)
+            as_cb.pack(anchor="w", pady=(0, 4))
+            as_hint = _label(
+                ctk, sys_inner, theme,
+                "Если переместить программу в другую папку, запись автозапуска может сброситься.",
+                size=11, justify="left", wraplength=_INNER_W,
+            )
+            as_hint.pack(anchor="w", pady=(0, 6))
+            attach_tooltip_to_widgets([as_cb, as_hint], _TIP_AUTOSTART)
+            added_rows = True
+
+        if autostart_section.linux_gui_autostart:
+            linux_gui_autostart_var = ctk.BooleanVar(value=linux_gui_autostart_value)
+            gui_cb = _checkbox(ctk, sys_inner, theme, "Запускать tray при входе в графическую сессию", linux_gui_autostart_var)
+            gui_cb.pack(anchor="w", pady=(0, 4))
+            gui_hint = autostart_section.linux_gui_reason or "Создаёт XDG desktop entry в ~/.config/autostart."
+            gui_lbl = _label(
+                ctk, sys_inner, theme, gui_hint,
+                size=11, justify="left", wraplength=_INNER_W,
+            )
+            gui_lbl.pack(anchor="w", pady=(0, 6))
+            attach_tooltip_to_widgets([gui_cb, gui_lbl], gui_hint)
+            added_rows = True
+
+        if not added_rows:
+            unavailable = []
+            if autostart_section.linux_gui_reason:
+                unavailable.append(f"Tray autostart: {autostart_section.linux_gui_reason}")
+            if unavailable:
+                _label(
+                    ctk,
+                    sys_inner,
+                    theme,
+                    "\n".join(unavailable),
+                    size=11,
+                    justify="left",
+                    wraplength=_INNER_W,
+                ).pack(anchor="w")
 
     return TrayConfigFormWidgets(
         host_var=host_var, port_var=port_var, secret_var=secret_var,
@@ -593,6 +643,7 @@ def install_tray_config_form(
         cfproxy_priority_var=cfproxy_priority_var,
         cfproxy_user_domain_var=cfproxy_user_domain_var,
         appearance_var=appearance_var,
+        linux_gui_autostart_var=linux_gui_autostart_var,
     )
 
 
@@ -618,6 +669,7 @@ def validate_config_form(
     default_config: dict,
     *,
     include_autostart: bool,
+    include_linux_gui_autostart: bool = False,
 ) -> Union[dict, str]:
     import socket as _sock
 
@@ -663,6 +715,12 @@ def validate_config_form(
         new_cfg["autostart"] = (
             widgets.autostart_var.get()
             if widgets.autostart_var is not None
+            else False
+        )
+    if include_linux_gui_autostart:
+        new_cfg["linux_gui_autostart"] = (
+            widgets.linux_gui_autostart_var.get()
+            if widgets.linux_gui_autostart_var is not None
             else False
         )
 

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=TG WS Proxy
+GenericName=Telegram Proxy
+Comment=Telegram Desktop WebSocket Bridge Proxy
+Exec=tg-ws-proxy
+Icon=tg-ws-proxy
+Terminal=false
+Categories=Network;
+StartupNotify=true
+Keywords=telegram;proxy;websocket;

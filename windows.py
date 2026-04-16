@@ -44,6 +44,7 @@ from utils.tray_common import (
     save_config, start_proxy, stop_proxy, tg_proxy_url,
 )
 from ui.ctk_tray_ui import (
+    AutostartSectionConfig,
     install_tray_config_buttons, install_tray_config_form,
     populate_first_run_window, tray_settings_scroll_and_footer,
     validate_config_form,
@@ -257,7 +258,10 @@ def _edit_config_dialog() -> None:
         scroll, footer = tray_settings_scroll_and_footer(ctk, frame, theme)
         widgets = install_tray_config_form(
             ctk, scroll, theme, cfg, DEFAULT_CONFIG,
-            show_autostart=_supports_autostart(),
+            autostart_section=AutostartSectionConfig(
+                title="Автозапуск",
+                windows_autostart=_supports_autostart(),
+            ),
             autostart_value=cfg.get("autostart", False),
         )
 
