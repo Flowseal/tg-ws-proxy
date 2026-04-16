@@ -27,7 +27,6 @@ from utils.tray_common import (
     save_config, start_proxy, stop_proxy, tg_proxy_url,
 )
 from ui.ctk_tray_ui import (
-    AutostartSectionConfig,
     install_tray_config_buttons, install_tray_config_form,
     populate_first_run_window, tray_settings_scroll_and_footer,
     validate_config_form,
@@ -150,6 +149,11 @@ def _edit_config_dialog() -> None:
 
     capabilities = linux_autostart_capabilities()
     cfg = read_linux_autostart_state(_config)
+    linux_gui_reason = (
+        "Создаёт XDG desktop entry в ~/.config/autostart."
+        if capabilities.gui_autostart_supported
+        else capabilities.gui_autostart_reason
+    )
 
     def _build(done: threading.Event) -> None:
         theme = ctk_theme_for_platform()
@@ -167,15 +171,9 @@ def _edit_config_dialog() -> None:
             theme,
             cfg,
             DEFAULT_CONFIG,
-            autostart_section=AutostartSectionConfig(
-                title="Автозапуск",
-                linux_gui_autostart=capabilities.gui_autostart_supported,
-                linux_gui_reason=(
-                    "Создаёт XDG desktop entry в ~/.config/autostart."
-                    if capabilities.gui_autostart_supported
-                    else capabilities.gui_autostart_reason
-                ),
-            ),
+            autostart_title="Автозапуск",
+            show_linux_gui_autostart=capabilities.gui_autostart_supported,
+            linux_gui_reason=linux_gui_reason,
             linux_gui_autostart_value=cfg.get("linux_gui_autostart", False),
         )
 
@@ -196,21 +194,18 @@ def _edit_config_dialog() -> None:
                 return
             save_config(merged)
             _config.update(merged)
-            sync_errors = sync_linux_autostart(
-                gui_enabled=bool(merged.get("linux_gui_autostart", False)),
-            )
             log.info("Config saved: %s", merged)
             _tray_icon.menu = _build_menu()
-
-            if sync_errors:
-                parts = []
-                for scope, text in sync_errors:
-                    label = "XDG autostart" if scope == "gui" else scope
-                    parts.append(f"{label}: {text}")
+            try:
+                sync_linux_autostart(
+                    gui_enabled=bool(merged.get("linux_gui_autostart", False)),
+                )
+            except Exception as exc:
+                log.exception("Failed to sync Linux autostart")
                 messagebox.showwarning(
                     "TG WS Proxy - предупреждение",
                     "Настройки сохранены, но автозапуск обновился не полностью:\n\n"
-                    + "\n".join(parts),
+                    + f"XDG autostart: {exc}",
                     parent=root,
                 )
 

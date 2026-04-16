@@ -302,15 +302,6 @@ class TrayConfigFormWidgets:
     linux_gui_autostart_var: Optional[Any] = None
 
 
-@dataclass(frozen=True)
-class AutostartSectionConfig:
-    title: str
-    hint: Optional[str] = None
-    windows_autostart: bool = False
-    linux_gui_autostart: bool = False
-    linux_gui_reason: Optional[str] = None
-
-
 def install_tray_config_form(
     ctk: Any,
     frame: Any,
@@ -318,7 +309,11 @@ def install_tray_config_form(
     cfg: dict,
     default_config: dict,
     *,
-    autostart_section: Optional[AutostartSectionConfig] = None,
+    autostart_title: Optional[str] = None,
+    autostart_hint: Optional[str] = None,
+    show_windows_autostart: bool = False,
+    show_linux_gui_autostart: bool = False,
+    linux_gui_reason: Optional[str] = None,
     autostart_value: bool = False,
     linux_gui_autostart_value: bool = False,
 ) -> TrayConfigFormWidgets:
@@ -583,17 +578,17 @@ def install_tray_config_form(
 
     autostart_var = None
     linux_gui_autostart_var = None
-    if autostart_section is not None:
-        sys_inner = _config_section(ctk, frame, theme, autostart_section.title, bottom_spacer=4)
+    if autostart_title is not None:
+        sys_inner = _config_section(ctk, frame, theme, autostart_title, bottom_spacer=4)
         added_rows = False
 
-        if autostart_section.hint:
+        if autostart_hint:
             _label(
-                ctk, sys_inner, theme, autostart_section.hint,
+                ctk, sys_inner, theme, autostart_hint,
                 size=11, justify="left", wraplength=_INNER_W,
             ).pack(anchor="w", pady=(0, 6))
 
-        if autostart_section.windows_autostart:
+        if show_windows_autostart:
             autostart_var = ctk.BooleanVar(value=autostart_value)
             as_cb = _checkbox(ctk, sys_inner, theme, "Автозапуск при включении компьютера", autostart_var)
             as_cb.pack(anchor="w", pady=(0, 4))
@@ -606,11 +601,11 @@ def install_tray_config_form(
             attach_tooltip_to_widgets([as_cb, as_hint], _TIP_AUTOSTART)
             added_rows = True
 
-        if autostart_section.linux_gui_autostart:
+        if show_linux_gui_autostart:
             linux_gui_autostart_var = ctk.BooleanVar(value=linux_gui_autostart_value)
             gui_cb = _checkbox(ctk, sys_inner, theme, "Запускать tray при входе в графическую сессию", linux_gui_autostart_var)
             gui_cb.pack(anchor="w", pady=(0, 4))
-            gui_hint = autostart_section.linux_gui_reason or "Создаёт XDG desktop entry в ~/.config/autostart."
+            gui_hint = linux_gui_reason or "Создаёт XDG desktop entry в ~/.config/autostart."
             gui_lbl = _label(
                 ctk, sys_inner, theme, gui_hint,
                 size=11, justify="left", wraplength=_INNER_W,
@@ -621,8 +616,8 @@ def install_tray_config_form(
 
         if not added_rows:
             unavailable = []
-            if autostart_section.linux_gui_reason:
-                unavailable.append(f"Tray autostart: {autostart_section.linux_gui_reason}")
+            if linux_gui_reason:
+                unavailable.append(f"Tray autostart: {linux_gui_reason}")
             if unavailable:
                 _label(
                     ctk,

@@ -7,7 +7,7 @@ import tempfile
 from configparser import ConfigParser, Error as ConfigError
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 from utils.tray_common import APP_NAME
 
@@ -187,20 +187,9 @@ def set_linux_gui_autostart_enabled(enabled: bool) -> None:
         log.info("Linux autostart already disabled: %s", path)
 
 
-def sync_linux_autostart(
-    *,
-    gui_enabled: bool,
-) -> List[Tuple[str, str]]:
-    errors: List[Tuple[str, str]] = []
+def sync_linux_autostart(*, gui_enabled: bool) -> None:
     log.info("Syncing Linux autostart: gui_enabled=%s", gui_enabled)
-
-    try:
-        set_linux_gui_autostart_enabled(gui_enabled)
-    except Exception as exc:
-        log.error("Failed to sync Linux autostart: %s", exc)
-        errors.append(("gui", str(exc)))
-
-    return errors
+    set_linux_gui_autostart_enabled(gui_enabled)
 
 
 def read_linux_autostart_state(cfg: Dict[str, object]) -> Dict[str, object]:
