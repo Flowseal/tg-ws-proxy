@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import webbrowser
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -196,6 +197,84 @@ _APPEARANCE_TO_CFG = {"Авто": "auto", "Светлая": "light", "Тёмна
 _APPEARANCE_TO_CTK = {"auto": "system", "light": "Light", "dark": "Dark"}
 
 
+def _widget_belongs_to(widget: Any, ancestor: Any) -> bool:
+    try:
+        current = str(widget)
+        target = str(ancestor)
+        while current:
+            if current == target:
+                return True
+            parent = widget.tk.call("winfo", "parent", current)
+            if not parent or parent == current:
+                return False
+            current = parent
+    except Exception:
+        return False
+    return False
+
+
+def _resolve_scrollable_canvas(scroll: Any) -> Optional[Any]:
+    for attr in ("_parent_canvas", "_canvas"):
+        canvas = getattr(scroll, attr, None)
+        if canvas is not None:
+            return canvas
+    return None
+
+
+def _install_linux_wheel_compat(scroll: Any) -> None:
+    if not sys.platform.startswith("linux") or getattr(scroll, "_linux_wheel_compat", False):
+        return
+
+    canvas = _resolve_scrollable_canvas(scroll)
+    if canvas is None:
+        return
+
+    toplevel = scroll.winfo_toplevel()
+    binding_ids: Dict[str, str] = {}
+
+    def _scroll_view(axis: str, delta: int) -> str:
+        view = getattr(canvas, f"{axis}view", None)
+        if view is None:
+            return "break"
+        try:
+            first, last = view()
+        except Exception:
+            return "break"
+        if first <= 0.0 and last >= 1.0:
+            return "break"
+        getattr(canvas, f"{axis}view_scroll")(delta, "units")
+        return "break"
+
+    def _on_linux_wheel(event: Any) -> Optional[str]:
+        if not _widget_belongs_to(event.widget, scroll):
+            return None
+        axis = "x" if bool(event.state & 0x0001) else "y"
+        if axis == "x":
+            if event.num == 4:
+                return _scroll_view(axis, -1)
+            if event.num == 5:
+                return _scroll_view(axis, 1)
+            return None
+        if event.num == 4:
+            return _scroll_view(axis, -1)
+        if event.num == 5:
+            return _scroll_view(axis, 1)
+        return None
+
+    for sequence in ("<Button-4>", "<Button-5>", "<Shift-Button-4>", "<Shift-Button-5>"):
+        binding_ids[sequence] = toplevel.bind(sequence, _on_linux_wheel, add="+")
+
+    def _cleanup(_event: Any = None) -> None:
+        for sequence, func_id in binding_ids.items():
+            try:
+                toplevel.unbind(sequence, func_id)
+            except Exception:
+                pass
+
+    scroll.bind("<Destroy>", _cleanup, add="+")
+    scroll._linux_wheel_compat = True
+
+
 def _entry(ctk, parent, theme, *, var=None, width=0, height=36, radius=10, **kw):
     opts = dict(
         font=(theme.ui_font_family, 13), corner_radius=radius,
@@ -259,6 +338,7 @@ def tray_settings_scroll_and_footer(
         scrollbar_button_color=theme.field_border,
         scrollbar_button_hover_color=theme.text_secondary,
     )
+    _install_linux_wheel_compat(scroll)
     scroll.pack(fill="both", expand=True)
     return scroll, footer
 
