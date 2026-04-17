@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import webbrowser
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -196,6 +197,35 @@ _APPEARANCE_TO_CFG = {"Авто": "auto", "Светлая": "light", "Тёмна
 _APPEARANCE_TO_CTK = {"auto": "system", "light": "Light", "dark": "Dark"}
 
 
+def _install_linux_wheel_compat(scroll: Any) -> None:
+    if not sys.platform.startswith("linux") or getattr(scroll, "_linux_wheel_compat", False):
+        return
+
+    canvas = getattr(scroll, "_parent_canvas", getattr(scroll, "_canvas", None))
+    if canvas is None:
+        return
+
+    scroll_path = str(scroll)
+
+    def _on_linux_wheel(event: Any) -> Optional[str]:
+        widget_path = str(event.widget)
+        if widget_path != scroll_path and not widget_path.startswith(f"{scroll_path}."):
+            return None
+        if event.num not in (4, 5):
+            return None
+        try:
+            first, last = canvas.yview()
+        except Exception:
+            return "break"
+        if (first, last) != (0.0, 1.0):
+            canvas.yview_scroll(-1 if event.num == 4 else 1, "units")
+        return "break"
+
+    for sequence in ("<Button-4>", "<Button-5>"):
+        scroll.winfo_toplevel().bind(sequence, _on_linux_wheel, add="+")
+    scroll._linux_wheel_compat = True
+
+
 def _entry(ctk, parent, theme, *, var=None, width=0, height=36, radius=10, **kw):
     opts = dict(
         font=(theme.ui_font_family, 13), corner_radius=radius,
@@ -259,6 +289,7 @@ def tray_settings_scroll_and_footer(
         scrollbar_button_color=theme.field_border,
         scrollbar_button_hover_color=theme.text_secondary,
     )
+    _install_linux_wheel_compat(scroll)
     scroll.pack(fill="both", expand=True)
     return scroll, footer
 
