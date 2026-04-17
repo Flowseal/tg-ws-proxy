@@ -197,81 +197,32 @@ _APPEARANCE_TO_CFG = {"Авто": "auto", "Светлая": "light", "Тёмна
 _APPEARANCE_TO_CTK = {"auto": "system", "light": "Light", "dark": "Dark"}
 
 
-def _widget_belongs_to(widget: Any, ancestor: Any) -> bool:
-    try:
-        current = str(widget)
-        target = str(ancestor)
-        while current:
-            if current == target:
-                return True
-            parent = widget.tk.call("winfo", "parent", current)
-            if not parent or parent == current:
-                return False
-            current = parent
-    except Exception:
-        return False
-    return False
-
-
-def _resolve_scrollable_canvas(scroll: Any) -> Optional[Any]:
-    for attr in ("_parent_canvas", "_canvas"):
-        canvas = getattr(scroll, attr, None)
-        if canvas is not None:
-            return canvas
-    return None
-
-
 def _install_linux_wheel_compat(scroll: Any) -> None:
     if not sys.platform.startswith("linux") or getattr(scroll, "_linux_wheel_compat", False):
         return
 
-    canvas = _resolve_scrollable_canvas(scroll)
+    canvas = getattr(scroll, "_parent_canvas", getattr(scroll, "_canvas", None))
     if canvas is None:
         return
 
-    toplevel = scroll.winfo_toplevel()
-    binding_ids: Dict[str, str] = {}
-
-    def _scroll_view(axis: str, delta: int) -> str:
-        view = getattr(canvas, f"{axis}view", None)
-        if view is None:
-            return "break"
-        try:
-            first, last = view()
-        except Exception:
-            return "break"
-        if first <= 0.0 and last >= 1.0:
-            return "break"
-        getattr(canvas, f"{axis}view_scroll")(delta, "units")
-        return "break"
+    scroll_path = str(scroll)
 
     def _on_linux_wheel(event: Any) -> Optional[str]:
-        if not _widget_belongs_to(event.widget, scroll):
+        widget_path = str(event.widget)
+        if widget_path != scroll_path and not widget_path.startswith(f"{scroll_path}."):
             return None
-        axis = "x" if bool(event.state & 0x0001) else "y"
-        if axis == "x":
-            if event.num == 4:
-                return _scroll_view(axis, -1)
-            if event.num == 5:
-                return _scroll_view(axis, 1)
+        if event.num not in (4, 5):
             return None
-        if event.num == 4:
-            return _scroll_view(axis, -1)
-        if event.num == 5:
-            return _scroll_view(axis, 1)
-        return None
+        try:
+            first, last = canvas.yview()
+        except Exception:
+            return "break"
+        if (first, last) != (0.0, 1.0):
+            canvas.yview_scroll(-1 if event.num == 4 else 1, "units")
+        return "break"
 
-    for sequence in ("<Button-4>", "<Button-5>", "<Shift-Button-4>", "<Shift-Button-5>"):
-        binding_ids[sequence] = toplevel.bind(sequence, _on_linux_wheel, add="+")
-
-    def _cleanup(_event: Any = None) -> None:
-        for sequence, func_id in binding_ids.items():
-            try:
-                toplevel.unbind(sequence, func_id)
-            except Exception:
-                pass
-
-    scroll.bind("<Destroy>", _cleanup, add="+")
+    for sequence in ("<Button-4>", "<Button-5>"):
+        scroll.winfo_toplevel().bind(sequence, _on_linux_wheel, add="+")
     scroll._linux_wheel_compat = True
 
 
