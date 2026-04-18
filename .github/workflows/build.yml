@@ -358,6 +358,76 @@ jobs:
           dpkg-deb --build --root-owner-group \
             "$PKG_ROOT" \
             "dist/TgWsProxy_linux_amd64.deb"
+            
+      - name: Create .rpm package with fpm
+        run: |
+          set -euo pipefail
+          VERSION="${{ github.event.inputs.version }}"
+          VERSION="${VERSION#v}"
+          
+          sudo gem install fpm
+          
+          mkdir -p rpm_package/usr/bin
+          mkdir -p rpm_package/usr/share/applications
+          mkdir -p rpm_package/usr/share/icons/hicolor/256x256/apps
+          
+          cp dist/TgWsProxy_linux_amd64 rpm_package/usr/bin/tg-ws-proxy
+          chmod 755 rpm_package/usr/bin/tg-ws-proxy
+          
+          .venv/bin/python - <<PY
+          from PIL import Image
+          Image.open("icon.ico").save(
+              "rpm_package/usr/share/icons/hicolor/256x256/apps/tg-ws-proxy.png",
+              "PNG",
+          )
+          PY
+          
+          cat > rpm_package/usr/share/applications/tg-ws-proxy.desktop <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=TG WS Proxy
+          GenericName=Telegram Proxy
+          Comment=Telegram Desktop WebSocket Bridge Proxy
+          Exec=tg-ws-proxy
+          Icon=tg-ws-proxy
+          Terminal=false
+          Categories=Network;
+          StartupNotify=true
+          Keywords=telegram;proxy;websocket;
+          EOF
+          
+          cat > post_install.sh <<EOF
+          #!/bin/bash
+          if [ -x /usr/bin/update-desktop-database ]; then
+            /usr/bin/update-desktop-database &> /dev/null || :
+          fi
+          if [ -x /usr/bin/gtk-update-icon-cache ]; then
+            /usr/bin/gtk-update-icon-cache -q /usr/share/icons/hicolor &> /dev/null || :
+          fi
+          EOF
+          
+          chmod +x post_install.sh
+          
+          fpm -s dir \
+              -t rpm \
+              -n tg-ws-proxy \
+              -v ${VERSION} \
+              --iteration 1 \
+              --architecture x86_64 \
+              --license "Proprietary" \
+              --vendor "Flowseal" \
+              --maintainer "Flowseal" \
+              --url "https://github.com/Flowseal/tg-ws-proxy" \
+              --description "MTProto/WebSocket bridge proxy for Telegram Desktop with tray UI." \
+              --depends "libgtk-3.so.0()(64bit)" \
+              --depends "libayatana-appindicator3.so.1()(64bit)" \
+              --depends "python3-tkinter" \
+              --after-install post_install.sh \
+              --after-remove post_install.sh \
+              -C rpm_package \
+              .
+          
+          mv tg-ws-proxy-${VERSION}-1.x86_64.rpm dist/TgWsProxy_linux_amd64.rpm
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -366,6 +436,7 @@ jobs:
           path: |
             dist/TgWsProxy_linux_amd64
             dist/TgWsProxy_linux_amd64.deb
+            dist/TgWsProxy_linux_amd64.rpm
 
   release:
     needs: [build-windows, build-win7, build-macos, build-linux]
@@ -393,6 +464,7 @@ jobs:
             dist/TgWsProxy_macos_universal.dmg
             dist/TgWsProxy_linux_amd64
             dist/TgWsProxy_linux_amd64.deb
+            dist/TgWsProxy_linux_amd64.rpm
           draft: false
           prerelease: false
         env:
