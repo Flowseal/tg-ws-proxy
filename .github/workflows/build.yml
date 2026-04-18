@@ -365,19 +365,15 @@ jobs:
           VERSION="${{ github.event.inputs.version }}"
           VERSION="${VERSION#v}"
           
-          # Устанавливаем fpm через gem
           sudo gem install fpm
           
-          # Создаем временную директорию
           mkdir -p rpm_package/usr/bin
           mkdir -p rpm_package/usr/share/applications
           mkdir -p rpm_package/usr/share/icons/hicolor/256x256/apps
           
-          # Копируем файлы
           cp dist/TgWsProxy_linux_amd64 rpm_package/usr/bin/tg-ws-proxy
           chmod 755 rpm_package/usr/bin/tg-ws-proxy
           
-          # Создаем иконку
           .venv/bin/python - <<PY
           from PIL import Image
           Image.open("icon.ico").save(
@@ -386,7 +382,6 @@ jobs:
           )
           PY
           
-          # Создаем desktop файл
           cat > rpm_package/usr/share/applications/tg-ws-proxy.desktop <<EOF
           [Desktop Entry]
           Type=Application
@@ -401,7 +396,6 @@ jobs:
           Keywords=telegram;proxy;websocket;
           EOF
           
-          # Создаем скрипты post-install
           cat > post_install.sh <<EOF
           #!/bin/bash
           if [ -x /usr/bin/update-desktop-database ]; then
@@ -414,7 +408,6 @@ jobs:
           
           chmod +x post_install.sh
           
-          # Создаем RPM с помощью fpm
           fpm -s dir \
               -t rpm \
               -n tg-ws-proxy \
