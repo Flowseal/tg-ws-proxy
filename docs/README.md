@@ -112,6 +112,50 @@ paru -S tg-ws-proxy-bin
 sudo systemctl start tg-ws-proxy-cli@8888:3075abe65830f0325116bb0416cadf9f
 ```
 
+Для NixOS используйте [tg-ws-proxy-flake](https://github.com/dmfrpro/tg-ws-proxy-flake):
+
+```nix
+inputs = {
+  nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+  tg-ws-proxy.url = "github:dmfrpro/tg-ws-proxy-flake";
+  tg-ws-proxy.inputs.nixpkgs.follows = "nixpkgs";
+};
+```
+
+Далее добавляете или системный модуль, или home-manager модуль:
+```nix
+outputs = { self, nixpkgs, tg-ws-proxy, ... }: {
+
+  # Или NixOS модуль
+  nixosConfigurations.host = nixpkgs.lib.nixosSystem {
+    system = "x86_64-linux";
+    modules = [
+      tg-ws-proxy.nixosModules.tg-ws-proxy
+    ];
+  };
+
+  # Или Home-manager модуль
+  homeConfigurations."user@host" = home-manager.lib.homeManagerConfiguration {
+    inherit pkgs;
+    modules = [
+      tg-ws-proxy.homeModules.tg-ws-proxy
+    ];
+  };
+};
+```
+
+и включаете сервис:
+
+```nix
+{
+  services.tg-ws-proxy = {
+    enable = true;
+    secret = "3075abe65830f0325116bb0416cadf9f"; # openssl rand -hex 16
+  };
+}
+```
+
 Для остальных дистрибутивов можно использовать **`TgWsProxy_linux_amd64`** (бинарный файл для x86_64).
 
 ```bash
