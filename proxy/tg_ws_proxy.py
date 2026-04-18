@@ -35,7 +35,7 @@ log = logging.getLogger('tg-mtproto-proxy')
 
 DC_FAIL_COOLDOWN = 30.0
 WS_FAIL_TIMEOUT = 2.0
-ws_blacklist: Set[Tuple[int, bool]] = set()
+ws_blacklist: Set[str] = set()
 dc_fail_until: Dict[Tuple[int, bool], float] = {}
 
 
