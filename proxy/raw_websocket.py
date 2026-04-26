@@ -96,9 +96,6 @@ class RawWebSocket:
             f'Sec-WebSocket-Key: {ws_key}\r\n'
             f'Sec-WebSocket-Version: 13\r\n'
             f'Sec-WebSocket-Protocol: binary\r\n'
-            f'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-            f'AppleWebKit/537.36 (KHTML, like Gecko) '
-            f'Chrome/131.0.0.0 Safari/537.36\r\n'
             f'\r\n'
         )
         writer.write(req.encode())
