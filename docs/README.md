@@ -109,7 +109,7 @@ paru -S tg-ws-proxy-bin
 
 # Если вы установили -cli пакет, то запуск осуществляется через systemctl, где 8888 это номер порта,
 # разделитель ":" и secret, который можно сгенерировать командой: openssl rand -hex 16
-sudo systemctl start tg-ws-proxy-cli@8888:3075abe65830f0325116bb0416cadf9f
+sudo systemctl start tg-ws-proxy@8888:3075abe65830f0325116bb0416cadf9f
 ```
 
 Для остальных дистрибутивов можно использовать **`TgWsProxy_linux_amd64`** (бинарный файл для x86_64).
