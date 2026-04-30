@@ -651,6 +651,16 @@ def run_proxy(stop_event: Optional[asyncio.Event] = None):
 
 
 def main():
+    def _parse_bool(value: str) -> bool:
+        lowered = value.strip().lower()
+        if lowered == 'true':
+            return True
+        if lowered == 'false':
+            return False
+        raise argparse.ArgumentTypeError(
+            "Expected boolean value: true or false",
+        )
+
     ap = argparse.ArgumentParser(
         description='Telegram MTProto WebSocket Bridge Proxy')
     ap.add_argument('--port', type=int, default=1443,
@@ -679,7 +689,7 @@ def main():
                     help='User defined Cloudflare-proxied domain for WS fallback')
     ap.add_argument('--no-cfproxy', action='store_true',
                     help='Disable Cloudflare proxy fallback')
-    ap.add_argument('--cfproxy-priority', type=bool, default=True,
+    ap.add_argument('--cfproxy-priority', type=_parse_bool, default=True,
                     help='Try cfproxy before tcp fallback (default: true)')
     ap.add_argument('--fake-tls-domain', type=str, default='',
                     metavar='DOMAIN',
