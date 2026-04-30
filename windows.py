@@ -27,9 +27,10 @@ except ImportError:
     ctk = None
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageTk
 except ImportError:
     Image = None
+    ImageTk = None
 
 from proxy import get_link_host
 
@@ -91,8 +92,6 @@ def _release_win_mutex() -> None:
             pass
         _win_mutex_handle = None
 
-ICON_PATH = str(Path(__file__).parent / "icon.ico")
-
 # win32 dialogs
 
 _u32 = ctypes.windll.user32
@@ -119,6 +118,21 @@ def _ask_yes_no(text: str, title: str = "TG WS Proxy") -> bool:
     return _u32.MessageBoxW(None, text, title, _MB_YESNO_Q) == _IDYES
 
 
+def _apply_window_icon(root) -> None:
+    if ImageTk is None:
+        return
+    # Передаем сразу несколько размеров, чтобы Windows выбрал лучший для текущего DPI.
+    icon_sizes = (16, 24, 32, 48, 64, 128, 256)
+    photos = []
+    for size in icon_sizes:
+        icon_img = load_icon(size=size)
+        if icon_img:
+            photos.append(ImageTk.PhotoImage(icon_img))
+    if photos:
+        root._ctk_icon_photos = photos
+        root.iconphoto(False, *photos)
+
+
 def update_ctk_form(
     text: str, title: str = "TG WS Proxy", download_url: Optional[str] = None,
     release_url: Optional[str] = None,
@@ -141,7 +155,7 @@ def update_ctk_form(
             width=310 if IS_FROZEN else 210,
             height=130 if IS_FROZEN else 100,
             theme=theme,
-            after_create=lambda r: r.iconbitmap(ICON_PATH),
+            after_create=_apply_window_icon,
         )
         frame = main_content_frame(ctk, root, theme, padx=16, pady=14)
 
@@ -474,7 +488,7 @@ def _edit_config_dialog() -> None:
 
         root = create_ctk_toplevel(
             ctk, title="TG WS Proxy — Настройки", width=w, height=h, theme=theme,
-            after_create=lambda r: r.iconbitmap(ICON_PATH),
+            after_create=_apply_window_icon,
         )
         fpx, fpy = CONFIG_DIALOG_FRAME_PAD
         frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)
@@ -536,7 +550,7 @@ def _show_first_run() -> None:
         w, h = FIRST_RUN_SIZE
         root = create_ctk_toplevel(
             ctk, title="TG WS Proxy", width=w, height=h, theme=theme,
-            after_create=lambda r: r.iconbitmap(ICON_PATH),
+            after_create=_apply_window_icon,
         )
 
         def on_done(open_tg: bool) -> None:
@@ -598,7 +612,7 @@ def run_tray() -> None:
     _show_first_run()
     check_ipv6_warning(_show_info)
 
-    _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
+    _tray_icon = pystray.Icon(APP_NAME, load_icon(size=64), "TG WS Proxy", menu=_build_menu())
     log.info("Tray icon running")
     _tray_icon.run()
 

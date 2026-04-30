@@ -66,10 +66,16 @@ def _ask_yes_no(text: str, title: str = "TG WS Proxy") -> bool:
 
 
 def _apply_window_icon(root) -> None:
-    icon_img = load_icon()
-    if icon_img:
-        root._ctk_icon_photo = ImageTk.PhotoImage(icon_img.resize((64, 64)))
-        root.iconphoto(False, root._ctk_icon_photo)
+    # Передаем сразу несколько размеров, чтобы WM/DE выбирал лучший вариант.
+    icon_sizes = (16, 24, 32, 48, 64, 128, 256)
+    photos = []
+    for size in icon_sizes:
+        icon_img = load_icon(size=size)
+        if icon_img:
+            photos.append(ImageTk.PhotoImage(icon_img))
+    if photos:
+        root._ctk_icon_photos = photos
+        root.iconphoto(False, *photos)
 
 
 # tray callbacks
@@ -264,7 +270,7 @@ def run_tray() -> None:
     _show_first_run()
     check_ipv6_warning(_show_info)
 
-    _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
+    _tray_icon = pystray.Icon(APP_NAME, load_icon(size=64), "TG WS Proxy", menu=_build_menu())
     log.info("Tray icon running")
     _tray_icon.run()
 

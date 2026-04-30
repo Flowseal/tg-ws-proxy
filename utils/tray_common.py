@@ -213,16 +213,23 @@ def _font_paths():
     ]
 
 
-def load_icon():
+def load_icon(size: Optional[int] = None):
     from PIL import Image
 
     icon_path = Path(__file__).parents[1] / "icon.ico"
+    icon_img = None
     if icon_path.exists():
         try:
-            return Image.open(str(icon_path))
+            icon_img = Image.open(str(icon_path))
         except Exception:
-            pass
-    return make_icon_image(64)
+            icon_img = None
+    if icon_img is None:
+        icon_img = make_icon_image(64)
+
+    icon_img = icon_img.convert("RGBA")
+    if size is None:
+        return icon_img
+    return icon_img.resize((size, size), Image.Resampling.LANCZOS)
 
 
 # proxy lifecycle
