@@ -73,7 +73,7 @@ def _parse_version_tuple(s: str) -> tuple:
         return (0,)
     parts = []
     for seg in s.split("."):
-        digits = "".join(c for c in seg if c.isdigit())
+        digits = next((seg[:i] for i, c in enumerate(seg) if not c.isdigit()), seg)
         if digits:
             try:
                 parts.append(int(digits))
