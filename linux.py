@@ -173,7 +173,9 @@ def _edit_config_dialog() -> None:
                 messagebox.showerror("TG WS Proxy — Ошибка", merged, parent=root)
                 return
 
+            _ui_only_keys = {"appearance", "check_updates"}
             config_changed = any(merged.get(k) != cfg.get(k) for k in merged)
+            proxy_changed = any(merged.get(k) != cfg.get(k) for k in merged if k not in _ui_only_keys)
 
             if not config_changed:
                 _finish()
@@ -183,6 +185,10 @@ def _edit_config_dialog() -> None:
             _config.update(merged)
             log.info("Config saved: %s", merged)
             _tray_icon.menu = _build_menu()
+
+            if not proxy_changed:
+                _finish()
+                return
 
             do_restart = messagebox.askyesno(
                 "Перезапустить?",
