@@ -156,9 +156,15 @@ def _edit_config_dialog() -> None:
         scroll, footer = tray_settings_scroll_and_footer(ctk, frame, theme)
         widgets = install_tray_config_form(ctk, scroll, theme, cfg, DEFAULT_CONFIG, show_autostart=False)
 
+        _original_appearance = ctk.get_appearance_mode()
+
         def _finish() -> None:
             root.destroy()
             done.set()
+
+        def _cancel() -> None:
+            ctk.set_appearance_mode(_original_appearance)
+            _finish()
 
         def on_save() -> None:
             from tkinter import messagebox
@@ -166,6 +172,13 @@ def _edit_config_dialog() -> None:
             if isinstance(merged, str):
                 messagebox.showerror("TG WS Proxy — Ошибка", merged, parent=root)
                 return
+
+            config_changed = any(merged.get(k) != cfg.get(k) for k in merged)
+
+            if not config_changed:
+                _finish()
+                return
+
             save_config(merged)
             _config.update(merged)
             log.info("Config saved: %s", merged)
@@ -180,8 +193,8 @@ def _edit_config_dialog() -> None:
             if do_restart:
                 threading.Thread(target=lambda: restart_proxy(_config, _show_error), daemon=True).start()
 
-        root.protocol("WM_DELETE_WINDOW", _finish)
-        install_tray_config_buttons(ctk, footer, theme, on_save=on_save, on_cancel=_finish)
+        root.protocol("WM_DELETE_WINDOW", _cancel)
+        install_tray_config_buttons(ctk, footer, theme, on_save=on_save, on_cancel=_cancel)
 
     ctk_run_dialog(_build)
 

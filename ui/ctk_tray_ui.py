@@ -330,6 +330,7 @@ def install_tray_config_form(
     def _on_appearance_change(choice: str) -> None:
         cfg_val = _APPEARANCE_TO_CFG.get(choice, "auto")
         ctk.set_appearance_mode(_APPEARANCE_TO_CTK[cfg_val])
+        cfg["appearance"] = cfg_val
 
     ctk.CTkComboBox(
         header,
@@ -444,17 +445,27 @@ def install_tray_config_form(
         import threading as _threading
         if user_domain:
             def _worker():
-                res = _run_cfproxy_connectivity_test(user_domain)
-                if btn:
-                    btn.after(0, lambda: btn.configure(text="Тест", state="normal"))
-                    btn.after(0, lambda: _cfproxy_show_test_results(user_domain, res))
+                try:
+                    res = _run_cfproxy_connectivity_test(user_domain)
+                    if btn:
+                        btn.after(0, lambda: _cfproxy_show_test_results(user_domain, res))
+                except Exception as exc:
+                    log.error("CF proxy test failed: %s", exc)
+                finally:
+                    if btn:
+                        btn.after(0, lambda: btn.configure(text="Тест", state="normal"))
             _threading.Thread(target=_worker, daemon=True).start()
         else:
             def _worker_auto():
-                ok_domain, res = _run_cfproxy_auto_test(balancer.domains)
-                if btn:
-                    btn.after(0, lambda: btn.configure(text="Тест", state="normal"))
-                    btn.after(0, lambda: _cfproxy_show_auto_test_results(ok_domain, res))
+                try:
+                    ok_domain, res = _run_cfproxy_auto_test(balancer.domains)
+                    if btn:
+                        btn.after(0, lambda: _cfproxy_show_auto_test_results(ok_domain, res))
+                except Exception as exc:
+                    log.error("CF proxy auto-test failed: %s", exc)
+                finally:
+                    if btn:
+                        btn.after(0, lambda: btn.configure(text="Тест", state="normal"))
             _threading.Thread(target=_worker_auto, daemon=True).start()
 
     _cf_test_widget = ctk.CTkButton(
