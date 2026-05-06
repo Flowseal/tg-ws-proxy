@@ -25,7 +25,7 @@
 
 <picture>
   <source srcset="https://github.com/user-attachments/assets/17f1d15e-e1c2-41ea-a452-220d13359262" media="(prefers-color-scheme: dark)">
-  <img src="https://github.com/user-attachments/assets/4b44f839-f780-40f0-9e29-db5b12bec56b">
+  <img src="https://github.com/user-attachments/assets/8d595468-83a1-4e4f-bac4-9ce4a07027bd">
 </picture>
 
 ## Как это работает
