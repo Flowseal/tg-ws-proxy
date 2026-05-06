@@ -23,7 +23,10 @@
 
 **Локальный MTProto-прокси** для Telegram Desktop, который **ускоряет работу Telegram**, перенаправляя трафик через WebSocket-соединения. Данные передаются в том же зашифрованном виде, а для работы не нужны сторонние серверы.
 
-<img width="529" height="487" alt="image" src="https://github.com/user-attachments/assets/6a4cf683-0df8-43af-86c1-0e8f08682b62" />
+<picture>
+  <source srcset="https://github.com/user-attachments/assets/17f1d15e-e1c2-41ea-a452-220d13359262" media="(prefers-color-scheme: dark)">
+  <img src="https://github.com/user-attachments/assets/4b44f839-f780-40f0-9e29-db5b12bec56b">
+</picture>
 
 ## Как это работает
 
