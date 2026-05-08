@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import enum
 import json
 import logging
 import logging.handlers
@@ -223,6 +224,129 @@ def load_icon():
         except Exception:
             pass
     return make_icon_image(64)
+
+
+_STATUS_COLORS = {
+    "ok":    (76, 175, 80, 255),   # green  — proxy running + active connections
+    "idle":  (255, 193, 7, 255),   # amber  — proxy running, no connections
+    "error": (229, 57, 53, 255),   # red    — proxy stopped/crashed
+}
+
+
+_RENDER_SIZE = 256  # render at higher res so Windows HiDPI downscale looks sharp
+
+
+def _load_dot_image(assets: Path, status: str, size: int):
+    from PIL import Image
+
+    path = assets / f"dot_{status}.png"
+    if not path.exists():
+        return None
+    try:
+        return Image.open(str(path)).convert("RGBA").resize((size, size), Image.LANCZOS)
+    except Exception as e:
+        log.debug("Failed to load dot asset %s: %s", path, e)
+    return None
+
+
+def add_status_dot(base_img, status: str):
+    from PIL import Image, ImageDraw
+
+    size = _RENDER_SIZE
+    img = base_img.convert("RGBA").resize((size, size), Image.LANCZOS)
+
+    dot_r  = size // 6   # ~42px — proportional badge size
+    margin = size // 32  # ~8px
+    border = size // 48  # ~5px — white outline thickness
+
+    assets = Path(__file__).parents[1] / "assets"
+    dot = _load_dot_image(assets, status, dot_r * 2)
+    if dot is not None:
+        img.paste(dot, (size - dot_r * 2 - margin, size - dot_r * 2 - margin), dot)
+        return img
+
+    color = _STATUS_COLORS.get(status, _STATUS_COLORS["idle"])
+    x0 = size - dot_r * 2 - margin
+    y0 = size - dot_r * 2 - margin
+    x1 = size - margin
+    y1 = size - margin
+
+    draw = ImageDraw.Draw(img)
+    draw.ellipse(
+        [x0 - border, y0 - border, x1 + border, y1 + border],
+        fill=(255, 255, 255, 255),
+    )
+    draw.ellipse([x0, y0, x1, y1], fill=color)
+    return img
+
+
+def is_proxy_running() -> bool:
+    return _async_stop is not None
+
+
+class ProxyStatus(enum.Enum):
+    STOPPED = "error"
+    IDLE    = "idle"
+    ACTIVE  = "ok"
+
+
+class StatusManager:
+    """Watches proxy state and emits debounced status changes.
+
+    A status change is only confirmed after it holds stable for
+    DEBOUNCE_SECS — prevents icon flickering on brief connection drops.
+    """
+
+    DEBOUNCE_SECS = 2.0
+    POLL_SECS = 1.0
+
+    def __init__(
+        self,
+        on_change: Callable[[ProxyStatus, Optional["ProxyStatus"]], None],
+        on_tick: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self._on_change = on_change
+        self._on_tick = on_tick
+        self._current: Optional[ProxyStatus] = None
+        self._pending: Optional[ProxyStatus] = None
+        self._pending_since: float = 0.0
+
+    def _raw_status(self) -> ProxyStatus:
+        from proxy.stats import stats
+        if not is_proxy_running():
+            return ProxyStatus.STOPPED
+        if stats.connections_active > 0:
+            return ProxyStatus.ACTIVE
+        return ProxyStatus.IDLE
+
+    def tick(self) -> None:
+        raw = self._raw_status()
+        now = time.monotonic()
+
+        if raw == self._current:
+            self._pending = None
+            return
+
+        if raw != self._pending:
+            self._pending = raw
+            self._pending_since = now
+            return
+
+        if now - self._pending_since >= self.DEBOUNCE_SECS:
+            previous = self._current
+            self._current = self._pending
+            self._pending = None
+            self._on_change(self._current, previous)
+
+    def start(self, stop_flag: Callable[[], bool]) -> None:
+        def _work() -> None:
+            while not stop_flag():
+                self.tick()
+                if self._on_tick:
+                    self._on_tick()
+                time.sleep(self.POLL_SECS)
+
+        threading.Thread(target=_work, daemon=True, name="icon-updater").start()
 
 
 # proxy lifecycle
