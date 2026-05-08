@@ -1,7 +1,7 @@
 name: 🚀 Предложение
 title: '[Предложение] '
 description: Предложить улучшение или новую функциональность
-labels: ['type: предложение', 'status: нуждается в сортировке']
+labels: ['enhancement']
 
 body:
   - type: textarea

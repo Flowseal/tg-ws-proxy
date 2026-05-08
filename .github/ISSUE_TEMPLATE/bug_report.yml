@@ -1,7 +1,7 @@
 name: 🐛 Проблема
 title: '[Проблема] '
 description: Сообщить о проблеме
-labels: ['type: проблема', 'status: нуждается в сортировке']
+labels: ['bug']
 
 body:
   - type: input
