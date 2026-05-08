@@ -97,7 +97,6 @@ def _release_win_mutex() -> None:
 
 ICON_PATH = str(Path(__file__).parent / "icon.ico")
 
-# balloon notification via Shell_NotifyIconW with custom hBalloonIcon
 
 class _GUID(ctypes.Structure):
     _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort),
@@ -122,71 +121,28 @@ class _NOTIFYICONDATA(ctypes.Structure):
         ("hBalloonIcon",    ctypes.c_void_p),
     ]
 
-_NIM_MODIFY    = 0x00000001
-_NIF_INFO      = 0x00000010
-_NIIF_NOSOUND  = 0x00000010
-_NIIF_USER     = 0x00000004
-_NIIF_LARGE    = 0x00000020
-_IMAGE_ICON    = 1
-_LR_FILE       = 0x00000010
-_LR_DEFSIZE    = 0x00000040
+_NIM_MODIFY = 0x00000001
+_NIF_INFO   = 0x00000010
+_NIIF_NOSOUND = 0x00000010
 
 _shell32 = ctypes.windll.shell32
 
 
-def _pil_to_hicon(img, size: int = 48) -> int:
-    import io, tempfile, os
-    from PIL import Image
-    tmp = None
-    try:
-        resized = img.convert("RGBA").resize((size, size), Image.LANCZOS)
-        fd, tmp = tempfile.mkstemp(suffix=".ico")
-        os.close(fd)
-        resized.save(tmp, format="ICO", sizes=[(size, size)])
-        return ctypes.windll.user32.LoadImageW(None, tmp, _IMAGE_ICON, size, size, _LR_FILE)
-    except Exception:
-        return 0
-    finally:
-        if tmp:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-
-
-def _balloon_notify(title: str, message: str, icon=None, base_img=None) -> None:
+def _balloon_notify(title: str, message: str, icon=None) -> None:
     target = icon if icon is not None else _tray_icon
     hwnd = getattr(target, "_hwnd", None)
     if not hwnd:
         return
-    uid = 0  # pystray passes hID=id(self) but struct field is uID — ctypes ignores unknown kwargs, so uID=0
-    hicon = _pil_to_hicon(base_img) if base_img is not None else ctypes.windll.user32.LoadImageW(
-        None, ICON_PATH, _IMAGE_ICON, 48, 48, _LR_FILE,
-    )
-    # Swap tray icon to clean before showing balloon so header icon has no dot
-    nid_swap = _NOTIFYICONDATA()
-    nid_swap.cbSize = ctypes.sizeof(_NOTIFYICONDATA)
-    nid_swap.hWnd   = hwnd
-    nid_swap.uID    = uid
-    nid_swap.uFlags = 0x00000002  # NIF_ICON
-    nid_swap.hIcon  = hicon
-    _shell32.Shell_NotifyIconW(_NIM_MODIFY, ctypes.byref(nid_swap))
-
     nid = _NOTIFYICONDATA()
     nid.cbSize      = ctypes.sizeof(_NOTIFYICONDATA)
     nid.hWnd        = hwnd
-    nid.uID         = uid
+    nid.uID         = 0  # pystray registers with uID=0 (passes hID=id(self) kwarg which ctypes silently ignores)
     nid.uFlags      = _NIF_INFO
-    nid.dwInfoFlags = _NIIF_USER | _NIIF_LARGE | _NIIF_NOSOUND
+    nid.dwInfoFlags = _NIIF_NOSOUND
     nid.szInfo      = message[:255]
     nid.szInfoTitle = title[:63]
-    nid.hBalloonIcon = hicon
     _shell32.Shell_NotifyIconW(_NIM_MODIFY, ctypes.byref(nid))
-    if hicon:
-        ctypes.windll.user32.DestroyIcon(ctypes.c_void_p(hicon))
 
-
-# win32 dialogs
 
 _u32 = ctypes.windll.user32
 _u32.MessageBoxW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
@@ -382,7 +338,7 @@ def _perform_update(download_url: str, set_status=None) -> None:
     _release_win_mutex()
     stop_proxy()
 
-    # Don't reuse existing _MEI* dir
+    # prevent the new process from inheriting the old PyInstaller _MEI* temp dir
     env = os.environ.copy()
     for _k in [k for k in env if k.startswith("_PYI_") or k == "_MEIPASS"]:
         del env[_k]
@@ -437,8 +393,6 @@ def _maybe_do_update(cfg: dict, is_exiting) -> None:
     threading.Thread(target=_work, daemon=True, name="update-check").start()
 
 
-# autostart (registry)
-
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
@@ -477,8 +431,6 @@ def set_autostart_enabled(enabled: bool) -> None:
             f"с правами на реестр.\n\nОшибка: {exc}"
         )
 
-
-# tray callbacks
 
 def _on_open_in_telegram(icon=None, item=None) -> None:
     url = tg_proxy_url(_config)
@@ -554,8 +506,6 @@ def _on_exit(icon=None, item=None) -> None:
     if icon:
         icon.stop()
 
-
-# settings dialog
 
 def _edit_config_dialog() -> None:
     if not ensure_ctk_thread(ctk, _config.get("appearance", "auto")):
@@ -637,8 +587,6 @@ def _edit_config_dialog() -> None:
     ctk_run_dialog(_build)
 
 
-# first run
-
 def _show_first_run() -> None:
     ensure_dirs()
     if FIRST_RUN_MARKER.exists():
@@ -671,8 +619,6 @@ def _show_first_run() -> None:
     ctk_run_dialog(_build)
 
 
-# DC ping cache
-
 _dc_pings: dict[int, int | None] = {}
 
 
@@ -698,14 +644,12 @@ def _start_dc_pinger() -> None:
     threading.Thread(target=_work, daemon=True, name="dc-pinger").start()
 
 
-# status dot updater
-
 def _start_icon_updater() -> None:
     from proxy.stats import stats
     from proxy.utils import human_bytes
 
     _base_icon = load_icon()
-    _prev_bytes: list[int] = [0, 0]  # [up, down]
+    _prev_bytes: list[int] = [0, 0]  # [bytes_up, bytes_down] from previous tick
 
     def _on_status_change(status: ProxyStatus, previous: ProxyStatus) -> None:
         if _tray_icon is None:
@@ -716,8 +660,7 @@ def _start_icon_updater() -> None:
             pass
         if status == ProxyStatus.STOPPED and previous is not None:
             try:
-                _balloon_notify("TG WS Proxy", "Прокси остановлен", icon=_tray_icon, base_img=_base_icon)
-                _tray_icon.icon = add_status_dot(_base_icon, status.value)
+                _balloon_notify("TG WS Proxy", "Прокси остановлен", icon=_tray_icon)
             except Exception:
                 pass
 
@@ -758,8 +701,6 @@ def _start_icon_updater() -> None:
     StatusManager(_on_status_change, on_tick=_on_tick).start(lambda: _exiting)
 
 
-# tray menu
-
 def _build_menu():
     if pystray is None:
         return None
@@ -777,8 +718,6 @@ def _build_menu():
         pystray.MenuItem("Выход", _on_exit),
     )
 
-
-# entry point
 
 def run_tray() -> None:
     global _tray_icon, _config
