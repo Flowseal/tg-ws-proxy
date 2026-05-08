@@ -48,6 +48,7 @@ from utils.tray_common import (
     quit_ctk, release_lock, restart_proxy,
     save_config, start_proxy, stop_proxy, tg_proxy_url,
 )
+import utils.tray_common as _tray_common
 from ui.ctk_tray_ui import (
     install_tray_config_buttons, install_tray_config_form,
     populate_first_run_window, tray_settings_scroll_and_footer,
@@ -659,10 +660,19 @@ def _start_icon_updater() -> None:
         except Exception:
             pass
         if status == ProxyStatus.STOPPED and previous is not None:
+            reason = _tray_common._crash_reason
+            if reason == "port_busy":
+                msg = "Прокси остановлен: порт занят другим приложением"
+            elif reason:
+                msg = "Прокси упал — проверьте логи"
+            else:
+                msg = "Прокси остановлен"
             try:
-                _balloon_notify("TG WS Proxy", "Прокси остановлен", icon=_tray_icon)
+                _balloon_notify("TG WS Proxy", msg, icon=_tray_icon)
             except Exception:
                 pass
+            _prev_bytes[0] = 0
+            _prev_bytes[1] = 0
 
     def _on_tick() -> None:
         if _tray_icon is None:
@@ -673,8 +683,8 @@ def _start_icon_updater() -> None:
             for dc, ms in sorted(_dc_pings.items())
         )
 
-        speed_up   = stats.bytes_up   - _prev_bytes[0]
-        speed_down = stats.bytes_down - _prev_bytes[1]
+        speed_up   = max(0, stats.bytes_up   - _prev_bytes[0])
+        speed_down = max(0, stats.bytes_down - _prev_bytes[1])
         _prev_bytes[0] = stats.bytes_up
         _prev_bytes[1] = stats.bytes_down
 
