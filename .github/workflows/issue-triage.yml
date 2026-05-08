@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   comment:
+    if: contains(github.event.issue.labels.*.name, 'type: проблема')
     runs-on: ubuntu-latest
     steps:
       - name: Comment on new issue
