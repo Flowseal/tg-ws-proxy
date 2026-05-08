@@ -42,8 +42,9 @@ from utils.win32_theme import (
 )
 from utils.tray_common import (
     APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, IS_FROZEN, LOG_FILE,
-    acquire_lock, bootstrap, check_ipv6_warning, ctk_run_dialog,
-    ensure_ctk_thread, ensure_dirs, load_config, load_icon, log,
+    acquire_lock, add_status_dot, bootstrap, check_ipv6_warning, ctk_run_dialog,
+    ensure_ctk_thread, ensure_dirs, is_proxy_running, load_config, load_icon, log,
+    ProxyStatus, StatusManager,
     quit_ctk, release_lock, restart_proxy,
     save_config, start_proxy, stop_proxy, tg_proxy_url,
 )
@@ -95,6 +96,95 @@ def _release_win_mutex() -> None:
         _win_mutex_handle = None
 
 ICON_PATH = str(Path(__file__).parent / "icon.ico")
+
+# balloon notification via Shell_NotifyIconW with custom hBalloonIcon
+
+class _GUID(ctypes.Structure):
+    _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort),
+                ("Data3", ctypes.c_ushort), ("Data4", ctypes.c_byte * 8)]
+
+class _NOTIFYICONDATA(ctypes.Structure):
+    _fields_ = [
+        ("cbSize",          ctypes.c_uint),
+        ("hWnd",            ctypes.c_void_p),
+        ("uID",             ctypes.c_uint),
+        ("uFlags",          ctypes.c_uint),
+        ("uCallbackMessage",ctypes.c_uint),
+        ("hIcon",           ctypes.c_void_p),
+        ("szTip",           ctypes.c_wchar * 128),
+        ("dwState",         ctypes.c_uint),
+        ("dwStateMask",     ctypes.c_uint),
+        ("szInfo",          ctypes.c_wchar * 256),
+        ("uVersion",        ctypes.c_uint),
+        ("szInfoTitle",     ctypes.c_wchar * 64),
+        ("dwInfoFlags",     ctypes.c_uint),
+        ("guidItem",        _GUID),
+        ("hBalloonIcon",    ctypes.c_void_p),
+    ]
+
+_NIM_MODIFY    = 0x00000001
+_NIF_INFO      = 0x00000010
+_NIIF_NOSOUND  = 0x00000010
+_NIIF_USER     = 0x00000004
+_NIIF_LARGE    = 0x00000020
+_IMAGE_ICON    = 1
+_LR_FILE       = 0x00000010
+_LR_DEFSIZE    = 0x00000040
+
+_shell32 = ctypes.windll.shell32
+
+
+def _pil_to_hicon(img, size: int = 48) -> int:
+    import io, tempfile, os
+    from PIL import Image
+    tmp = None
+    try:
+        resized = img.convert("RGBA").resize((size, size), Image.LANCZOS)
+        fd, tmp = tempfile.mkstemp(suffix=".ico")
+        os.close(fd)
+        resized.save(tmp, format="ICO", sizes=[(size, size)])
+        return ctypes.windll.user32.LoadImageW(None, tmp, _IMAGE_ICON, size, size, _LR_FILE)
+    except Exception:
+        return 0
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def _balloon_notify(title: str, message: str, icon=None, base_img=None) -> None:
+    target = icon if icon is not None else _tray_icon
+    hwnd = getattr(target, "_hwnd", None)
+    if not hwnd:
+        return
+    uid = 0  # pystray passes hID=id(self) but struct field is uID — ctypes ignores unknown kwargs, so uID=0
+    hicon = _pil_to_hicon(base_img) if base_img is not None else ctypes.windll.user32.LoadImageW(
+        None, ICON_PATH, _IMAGE_ICON, 48, 48, _LR_FILE,
+    )
+    # Swap tray icon to clean before showing balloon so header icon has no dot
+    nid_swap = _NOTIFYICONDATA()
+    nid_swap.cbSize = ctypes.sizeof(_NOTIFYICONDATA)
+    nid_swap.hWnd   = hwnd
+    nid_swap.uID    = uid
+    nid_swap.uFlags = 0x00000002  # NIF_ICON
+    nid_swap.hIcon  = hicon
+    _shell32.Shell_NotifyIconW(_NIM_MODIFY, ctypes.byref(nid_swap))
+
+    nid = _NOTIFYICONDATA()
+    nid.cbSize      = ctypes.sizeof(_NOTIFYICONDATA)
+    nid.hWnd        = hwnd
+    nid.uID         = uid
+    nid.uFlags      = _NIF_INFO
+    nid.dwInfoFlags = _NIIF_USER | _NIIF_LARGE | _NIIF_NOSOUND
+    nid.szInfo      = message[:255]
+    nid.szInfoTitle = title[:63]
+    nid.hBalloonIcon = hicon
+    _shell32.Shell_NotifyIconW(_NIM_MODIFY, ctypes.byref(nid))
+    if hicon:
+        ctypes.windll.user32.DestroyIcon(ctypes.c_void_p(hicon))
+
 
 # win32 dialogs
 
@@ -581,6 +671,28 @@ def _show_first_run() -> None:
     ctk_run_dialog(_build)
 
 
+# status dot updater
+
+def _start_icon_updater() -> None:
+    _base_icon = load_icon()
+
+    def _on_status_change(status: ProxyStatus, previous: ProxyStatus) -> None:
+        if _tray_icon is None:
+            return
+        try:
+            _tray_icon.icon = add_status_dot(_base_icon, status.value)
+        except Exception:
+            pass
+        if status == ProxyStatus.STOPPED and previous is not None:
+            try:
+                _balloon_notify("TG WS Proxy", "Прокси остановлен", icon=_tray_icon, base_img=_base_icon)
+                _tray_icon.icon = add_status_dot(_base_icon, status.value)
+            except Exception:
+                pass
+
+    StatusManager(_on_status_change).start(lambda: _exiting)
+
+
 # tray menu
 
 def _build_menu():
@@ -629,6 +741,7 @@ def run_tray() -> None:
     check_ipv6_warning(_show_info)
 
     _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
+    _start_icon_updater()
     log.info("Tray icon running")
     _tray_icon.run()
 
