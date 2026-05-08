@@ -349,27 +349,32 @@ class StatusManager:
 
 _proxy_thread: Optional[threading.Thread] = None
 _async_stop: Optional[Tuple[asyncio.AbstractEventLoop, asyncio.Event]] = None
+_crash_reason: Optional[str] = None
 
 
 def _run_proxy_thread(on_port_busy: Callable[[str], None]) -> None:
-    global _async_stop
+    global _async_stop, _crash_reason
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     stop_ev = asyncio.Event()
     _async_stop = (loop, stop_ev)
+    _crash_reason = None
 
     try:
         loop.run_until_complete(_run(stop_event=stop_ev))
     except Exception as exc:
         log.error("Proxy thread crashed: %s", repr(exc))
         if "Address already in use" in str(exc) or "10048" in str(exc):
+            _crash_reason = "port_busy"
             on_port_busy(
                 "Не удалось запустить прокси:\n"
                 "Порт уже используется другим приложением.\n\n"
                 "Закройте приложение, использующее этот порт, "
                 "или измените порт в настройках прокси и перезапустите."
             )
+        else:
+            _crash_reason = repr(exc)
     finally:
         loop.close()
         _async_stop = None
