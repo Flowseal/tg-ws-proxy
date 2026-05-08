@@ -233,7 +233,7 @@ _STATUS_COLORS = {
 }
 
 
-_RENDER_SIZE = 256  # render at higher res so Windows HiDPI downscale looks sharp
+_RENDER_SIZE = 256  # render at high resolution so Windows HiDPI downscaling stays sharp
 
 
 def _load_dot_image(assets: Path, status: str, size: int):
@@ -291,11 +291,7 @@ class ProxyStatus(enum.Enum):
 
 
 class StatusManager:
-    """Watches proxy state and emits debounced status changes.
-
-    A status change is only confirmed after it holds stable for
-    DEBOUNCE_SECS — prevents icon flickering on brief connection drops.
-    """
+    # status change is confirmed only after it holds for DEBOUNCE_SECS — prevents icon flickering on brief connection drops
 
     DEBOUNCE_SECS = 2.0
     POLL_SECS = 1.0
