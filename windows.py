@@ -671,10 +671,41 @@ def _show_first_run() -> None:
     ctk_run_dialog(_build)
 
 
+# DC ping cache
+
+_dc_pings: dict[int, int | None] = {}
+
+
+def _ping_tcp(ip: str, port: int = 443, timeout: float = 3.0) -> int | None:
+    import socket
+    try:
+        t0 = time.monotonic()
+        with socket.create_connection((ip, port), timeout=timeout):
+            pass
+        return int((time.monotonic() - t0) * 1000)
+    except Exception:
+        return None
+
+
+def _start_dc_pinger() -> None:
+    def _work() -> None:
+        while not _exiting:
+            from proxy.config import proxy_config
+            for dc, ip in list(proxy_config.dc_redirects.items()):
+                _dc_pings[dc] = _ping_tcp(ip)
+            time.sleep(30)
+
+    threading.Thread(target=_work, daemon=True, name="dc-pinger").start()
+
+
 # status dot updater
 
 def _start_icon_updater() -> None:
+    from proxy.stats import stats
+    from proxy.utils import human_bytes
+
     _base_icon = load_icon()
+    _prev_bytes: list[int] = [0, 0]  # [up, down]
 
     def _on_status_change(status: ProxyStatus, previous: ProxyStatus) -> None:
         if _tray_icon is None:
@@ -690,7 +721,41 @@ def _start_icon_updater() -> None:
             except Exception:
                 pass
 
-    StatusManager(_on_status_change).start(lambda: _exiting)
+    def _on_tick() -> None:
+        if _tray_icon is None:
+            return
+
+        ping_str = "  ".join(
+            f"DC{dc}: {ms}ms" if ms is not None else f"DC{dc}: —"
+            for dc, ms in sorted(_dc_pings.items())
+        )
+
+        speed_up   = stats.bytes_up   - _prev_bytes[0]
+        speed_down = stats.bytes_down - _prev_bytes[1]
+        _prev_bytes[0] = stats.bytes_up
+        _prev_bytes[1] = stats.bytes_down
+
+        if not is_proxy_running():
+            title = "TG WS Proxy — не запущен"
+        elif stats.connections_active > 0:
+            title = (
+                f"TG WS Proxy\n"
+                f"Активных: {stats.connections_active}\n"
+                f"↑ {human_bytes(speed_up)}/s  ↓ {human_bytes(speed_down)}/s"
+            )
+            if ping_str:
+                title += f"\n{ping_str}"
+        else:
+            title = "TG WS Proxy"
+            if ping_str:
+                title += f"\n{ping_str}"
+
+        try:
+            _tray_icon.title = title
+        except Exception:
+            pass
+
+    StatusManager(_on_status_change, on_tick=_on_tick).start(lambda: _exiting)
 
 
 # tray menu
@@ -742,6 +807,7 @@ def run_tray() -> None:
 
     _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
     _start_icon_updater()
+    _start_dc_pinger()
     log.info("Tray icon running")
     _tray_icon.run()
 
