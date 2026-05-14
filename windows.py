@@ -481,7 +481,9 @@ def _edit_config_dialog() -> None:
         theme = ctk_theme_for_platform()
         w, h = CONFIG_DIALOG_SIZE
         if _supports_autostart():
-            h += 100
+            h += 150
+        else:
+            h += 110
 
         root = create_ctk_toplevel(
             ctk, title="TG WS Proxy — Настройки", width=w, height=h, theme=theme,
@@ -494,6 +496,7 @@ def _edit_config_dialog() -> None:
             ctk, scroll, theme, cfg, DEFAULT_CONFIG,
             show_autostart=_supports_autostart(),
             autostart_value=cfg.get("autostart", False),
+            show_mei_cleanup=True,
         )
 
         _original_appearance = ctk.get_appearance_mode()

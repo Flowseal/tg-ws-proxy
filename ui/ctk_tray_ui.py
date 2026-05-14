@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import webbrowser
 from dataclasses import dataclass
@@ -16,6 +17,8 @@ from ui.ctk_theme import (
     main_content_frame,
 )
 from ui.ctk_tooltip import attach_ctk_tooltip, attach_tooltip_to_widgets
+
+log = logging.getLogger("tg-ws-tray")
 
 _TIP_HOST = (
     "Адрес, на котором прокси принимает подключения.\n"
@@ -51,6 +54,29 @@ _TIP_AUTOSTART = (
     "Запускать TG WS Proxy при входе в Windows. "
     "Если вы переместите программу в другую папку, автозапуск сбросится"
 )
+_TIP_MEI_CLEANUP = (
+    "Убирает старые служебные папки в системной временной папке. "
+    "Часто помогает, если после обновления программа не работает."
+)
+_MEI_HEADLINE = "Если не запускается после обновления"
+_MEI_DESCRIPTION = (
+    "Иногда после установки новой версии мешают остатки старых запусков. "
+    "Кнопка ниже удалит только такие папки; открытую сейчас программу это не затронет."
+)
+_MEI_BTN_LABEL = "Удалить старые временные файлы"
+_MEI_BTN_BUSY = "Удаление…"
+_MEI_MSG_ASK_TITLE = "Удалить старые временные файлы?"
+_MEI_MSG_ASK_BODY = (
+    "Будут удалены только служебные папки от прошлых запусков (в том числе с именами вида _MEI… "
+    "во временной папке Windows).\n\n"
+    "То, что используется прямо сейчас, не будет затронуто.\n\n"
+    "Продолжить?"
+)
+_MEI_MSG_NOTHING_FOUND = (
+    "Старых служебных папок не найдено.\n\n"
+    "Если приложение все еще не работает — попробуйте перезапустить его."
+)
+_MEI_MSG_RESTART_HINT = "Если приложение все еще не работает — попробуйте перезапустить его."
 _TIP_CHECK_UPDATES = "При запуске проверять наличие обновлений"
 _TIP_CFPROXY = (
     "Использовать Cloudflare прокси для недоступных датацентров"
@@ -284,6 +310,122 @@ def _config_section(
     return inner
 
 
+def _install_mei_cleanup_block(
+    ctk: Any,
+    parent: Any,
+    theme: CtkTheme,
+    *,
+    show_inner_headline: bool,
+) -> None:
+    block = ctk.CTkFrame(parent, fg_color="transparent")
+    block.pack(fill="x")
+
+    tip_targets: list[Any] = [block]
+
+    if show_inner_headline:
+        headline = _label(
+            ctk, block, theme, _MEI_HEADLINE,
+            size=12, bold=True, secondary=False,
+        )
+        headline.pack(anchor="w", pady=(0, 4))
+        tip_targets.append(headline)
+
+    desc = _label(
+        ctk, block, theme, _MEI_DESCRIPTION,
+        size=11, justify="left", wraplength=_INNER_W,
+    )
+    desc.pack(anchor="w", pady=(0, 10) if show_inner_headline else (0, 10))
+    tip_targets.append(desc)
+
+    mei_btn_holder: list[Any] = [None]
+
+    def _on_mei_cleanup() -> None:
+        from tkinter import messagebox
+        import threading as _threading
+
+        top = block.winfo_toplevel()
+        if not messagebox.askyesno(
+            _MEI_MSG_ASK_TITLE,
+            _MEI_MSG_ASK_BODY,
+            parent=top,
+        ):
+            return
+        btn = mei_btn_holder[0]
+        if btn is not None:
+            btn.configure(state="disabled", text=_MEI_BTN_BUSY)
+
+        def _worker() -> None:
+            from utils.win_mei_cleanup import cleanup_pyinstaller_mei_dirs
+
+            try:
+                res = cleanup_pyinstaller_mei_dirs()
+            except Exception as exc:
+                log.exception("MEI cleanup failed")
+                err = str(exc)
+
+                def _err() -> None:
+                    if btn is not None:
+                        btn.configure(state="normal", text=_MEI_BTN_LABEL)
+                    messagebox.showerror(
+                        "TG WS Proxy — Ошибка",
+                        f"Не удалось выполнить очистку:\n{err}",
+                        parent=top,
+                    )
+
+                top.after(0, _err)
+                return
+
+            def _ok() -> None:
+                if btn is not None:
+                    btn.configure(state="normal", text=_MEI_BTN_LABEL)
+                if res.removed == 0 and res.failed == 0:
+                    messagebox.showinfo(
+                        "TG WS Proxy",
+                        _MEI_MSG_NOTHING_FOUND,
+                        parent=top,
+                    )
+                    return
+                lines = [
+                    f"Папка Temp: {res.temp_dir}",
+                    f"Удалено каталогов: {res.removed}.",
+                ]
+                if res.failed:
+                    lines.append(f"Не удалось удалить: {res.failed}.")
+                if res.errors:
+                    lines.append("")
+                    lines.extend(res.errors[:5])
+                    if len(res.errors) > 5:
+                        lines.append("…")
+                lines.append("")
+                lines.append(_MEI_MSG_RESTART_HINT)
+                if res.failed:
+                    messagebox.showwarning("TG WS Proxy", "\n".join(lines), parent=top)
+                else:
+                    messagebox.showinfo("TG WS Proxy", "\n".join(lines), parent=top)
+
+            top.after(0, _ok)
+
+        _threading.Thread(target=_worker, daemon=True, name="mei-cleanup").start()
+
+    mei_btn = ctk.CTkButton(
+        block,
+        text=_MEI_BTN_LABEL,
+        height=32,
+        font=(theme.ui_font_family, 13),
+        corner_radius=8,
+        fg_color=theme.tg_blue,
+        hover_color=theme.tg_blue_hover,
+        text_color="#ffffff",
+        border_width=1,
+        border_color=theme.field_border,
+        command=_on_mei_cleanup,
+    )
+    mei_btn.pack(fill="x")
+    mei_btn_holder[0] = mei_btn
+    tip_targets.append(mei_btn)
+    attach_tooltip_to_widgets(tip_targets, _TIP_MEI_CLEANUP)
+
+
 @dataclass
 class TrayConfigFormWidgets:
     host_var: Any
@@ -310,6 +452,7 @@ def install_tray_config_form(
     *,
     show_autostart: bool = False,
     autostart_value: bool = False,
+    show_mei_cleanup: bool = False,
 ) -> TrayConfigFormWidgets:
     header = ctk.CTkFrame(frame, fg_color="transparent")
     header.pack(fill="x", pady=(0, 2))
@@ -582,18 +725,28 @@ def install_tray_config_form(
     ).pack(anchor="w")
 
     autostart_var = None
-    if show_autostart:
-        sys_inner = _config_section(ctk, frame, theme, "Запуск Windows", bottom_spacer=4)
-        autostart_var = ctk.BooleanVar(value=autostart_value)
-        as_cb = _checkbox(ctk, sys_inner, theme, "Автозапуск при включении компьютера", autostart_var)
-        as_cb.pack(anchor="w", pady=(0, 4))
-        as_hint = _label(
-            ctk, sys_inner, theme,
-            "Если переместить программу в другую папку, запись автозапуска может сброситься.",
-            size=11, justify="left", wraplength=_INNER_W,
-        )
-        as_hint.pack(anchor="w")
-        attach_tooltip_to_widgets([as_cb, as_hint], _TIP_AUTOSTART)
+    if show_autostart or show_mei_cleanup:
+        sect_title = "Запуск Windows" if show_autostart else "Сборка Windows"
+        sys_inner = _config_section(ctk, frame, theme, sect_title, bottom_spacer=4)
+        if show_autostart:
+            autostart_var = ctk.BooleanVar(value=autostart_value)
+            as_cb = _checkbox(ctk, sys_inner, theme, "Автозапуск при включении компьютера", autostart_var)
+            as_cb.pack(anchor="w", pady=(0, 4))
+            as_hint = _label(
+                ctk, sys_inner, theme,
+                "Если переместить программу в другую папку, запись автозапуска может сброситься.",
+                size=11, justify="left", wraplength=_INNER_W,
+            )
+            as_hint.pack(anchor="w")
+            attach_tooltip_to_widgets([as_cb, as_hint], _TIP_AUTOSTART)
+        if show_mei_cleanup:
+            if show_autostart:
+                sep = ctk.CTkFrame(sys_inner, fg_color=theme.field_border, height=1)
+                sep.pack(fill="x", pady=(14, 12))
+            _install_mei_cleanup_block(
+                ctk, sys_inner, theme,
+                show_inner_headline=show_autostart,
+            )
 
     return TrayConfigFormWidgets(
         host_var=host_var, port_var=port_var, secret_var=secret_var,
