@@ -93,10 +93,7 @@ def _on_open_in_telegram(icon=None, item=None) -> None:
         log.info("xdg-open failed (%s), copying to clipboard", exc)
         try:
             pyperclip.copy(url)
-            _show_info(
-                "Не удалось открыть Telegram автоматически.\n\n"
-                f"Ссылка скопирована в буфер обмена, отправьте её в Telegram и нажмите по ней ЛКМ:\n{url}"
-            )
+            _notify_send("TG WS Proxy", f"Ссылка скопирована в буфер обмена:\n{url}")
         except Exception as exc2:
             log.error("Clipboard copy failed: %s", exc2)
             _show_error(f"Не удалось скопировать ссылку:\n{exc2}")
