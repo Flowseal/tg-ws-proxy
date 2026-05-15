@@ -162,23 +162,28 @@ def _on_exit(icon=None, item=None) -> None:
 # settings dialog
 
 
-def _bind_scroll_wheel(widget) -> None:
+def _fix_scroll(widget) -> None:
     try:
         canvas = widget._parent_canvas
     except AttributeError:
         return
 
-    def _up(e):
-        canvas.yview_scroll(-1, "units")
-        return "break"
+    canvas.configure(yscrollincrement=20)
 
-    def _down(e):
-        canvas.yview_scroll(1, "units")
+    _last_scroll = [0.0]
+
+    def _scroll(direction):
+        now = time.monotonic()
+        if now - _last_scroll[0] < 0.016:  # ~60 fps cap
+            return "break"
+        _last_scroll[0] = now
+        canvas.yview_scroll(direction, "units")
         return "break"
 
     def _rebind(w):
-        w.bind("<Button-4>", _up, add="+")
-        w.bind("<Button-5>", _down, add="+")
+        w.bind("<MouseWheel>", lambda e: _scroll(-1 if e.delta > 0 else 1), add="+")
+        w.bind("<Button-4>", lambda e: _scroll(-1), add="+")
+        w.bind("<Button-5>", lambda e: _scroll(1), add="+")
         for child in w.winfo_children():
             _rebind(child)
 
@@ -210,7 +215,7 @@ def _edit_config_dialog() -> None:
             show_autostart=_supports_autostart(),
             autostart_value=cfg.get("autostart", False),
         )
-        root.after(50, lambda: _bind_scroll_wheel(scroll))
+        root.after(50, lambda: _fix_scroll(scroll))
 
         _original_appearance = ctk.get_appearance_mode()
 
@@ -574,7 +579,10 @@ def run_tray() -> None:
     _show_first_run()
     check_ipv6_warning(_show_info)
 
-    _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
+    with open(os.devnull, "w") as _devnull:
+        import contextlib
+        with contextlib.redirect_stderr(_devnull):
+            _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
     _start_icon_updater()
     _start_dc_pinger()
     log.info("Tray icon running")
