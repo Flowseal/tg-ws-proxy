@@ -186,7 +186,6 @@ def _edit_config_dialog() -> None:
             ctk, scroll, theme, cfg, DEFAULT_CONFIG,
             show_autostart=_supports_autostart(),
             autostart_value=cfg.get("autostart", False),
-            autostart_allowed=True,
         )
 
         _original_appearance = ctk.get_appearance_mode()
