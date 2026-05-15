@@ -16,11 +16,12 @@ from proxy import get_link_host
 
 from utils.tray_common import (
     APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, LOG_FILE,
-    acquire_lock, bootstrap, check_ipv6_warning, ctk_run_dialog,
-    ensure_ctk_thread, ensure_dirs, load_config, load_icon, log,
-    maybe_notify_update, quit_ctk, release_lock, restart_proxy,
-    save_config, start_proxy, stop_proxy, tg_proxy_url,
+    acquire_lock, add_status_dot, bootstrap, check_ipv6_warning, ctk_run_dialog,
+    ensure_ctk_thread, ensure_dirs, is_proxy_running, load_config, load_icon, log,
+    maybe_notify_update, ProxyStatus, quit_ctk, release_lock, restart_proxy,
+    save_config, start_proxy, StatusManager, stop_proxy, tg_proxy_url,
 )
+import utils.tray_common as _tray_common
 from ui.ctk_tray_ui import (
     install_tray_config_buttons, install_tray_config_form,
     populate_first_run_window, tray_settings_scroll_and_footer,
@@ -240,6 +241,114 @@ def _show_first_run() -> None:
     ctk_run_dialog(_build)
 
 
+# notify-send
+
+def _notify_send(title: str, message: str) -> None:
+    try:
+        subprocess.Popen(
+            ["notify-send", "--app-name=TG WS Proxy", title, message],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, start_new_session=True,
+        )
+    except Exception as exc:
+        log.debug("notify-send failed: %s", exc)
+
+
+# DC pinger
+
+_dc_pings: dict[int, int | None] = {}
+
+
+def _ping_tcp(ip: str, port: int = 443, timeout: float = 3.0) -> int | None:
+    import socket
+    try:
+        t0 = time.monotonic()
+        with socket.create_connection((ip, port), timeout=timeout):
+            pass
+        return int((time.monotonic() - t0) * 1000)
+    except Exception:
+        return None
+
+
+def _start_dc_pinger() -> None:
+    def _work() -> None:
+        while not _exiting:
+            from proxy.config import proxy_config
+            for dc, ip in list(proxy_config.dc_redirects.items()):
+                _dc_pings[dc] = _ping_tcp(ip)
+            time.sleep(30)
+
+    threading.Thread(target=_work, daemon=True, name="dc-pinger").start()
+
+
+# status dot + tooltip updater
+
+def _start_icon_updater() -> None:
+    from proxy.stats import stats
+    from proxy.utils import human_bytes
+
+    _base_icon = load_icon()
+    _prev_bytes: list[int] = [0, 0]
+
+    def _on_status_change(status: ProxyStatus, previous: ProxyStatus) -> None:
+        if _tray_icon is None:
+            return
+        try:
+            _tray_icon.icon = add_status_dot(_base_icon, status.value)
+        except Exception:
+            pass
+        if status == ProxyStatus.STOPPED and previous is not None:
+            reason = _tray_common._crash_reason
+            if reason == "port_busy":
+                msg = "Прокси остановлен: порт занят другим приложением"
+            elif reason:
+                msg = "Прокси упал — проверьте логи"
+            else:
+                msg = "Прокси остановлен"
+            threading.Thread(
+                target=lambda: _notify_send("TG WS Proxy", msg),
+                daemon=True,
+            ).start()
+            _prev_bytes[0] = 0
+            _prev_bytes[1] = 0
+
+    def _on_tick() -> None:
+        if _tray_icon is None:
+            return
+
+        ping_str = "  ".join(
+            f"DC{dc}: {ms}ms" if ms is not None else f"DC{dc}: —"
+            for dc, ms in sorted(_dc_pings.items())
+        )
+
+        speed_up   = max(0, stats.bytes_up   - _prev_bytes[0])
+        speed_down = max(0, stats.bytes_down - _prev_bytes[1])
+        _prev_bytes[0] = stats.bytes_up
+        _prev_bytes[1] = stats.bytes_down
+
+        if not is_proxy_running():
+            title = "TG WS Proxy — не запущен"
+        elif stats.connections_active > 0:
+            title = (
+                f"TG WS Proxy\n"
+                f"Активных: {stats.connections_active}\n"
+                f"↑ {human_bytes(speed_up)}/s  ↓ {human_bytes(speed_down)}/s"
+            )
+            if ping_str:
+                title += f"\n{ping_str}"
+        else:
+            title = "TG WS Proxy"
+            if ping_str:
+                title += f"\n{ping_str}"
+
+        try:
+            _tray_icon.title = title
+        except Exception:
+            pass
+
+    StatusManager(_on_status_change, on_tick=_on_tick).start(lambda: _exiting)
+
+
 # tray menu
 
 
@@ -284,6 +393,8 @@ def run_tray() -> None:
     check_ipv6_warning(_show_info)
 
     _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
+    _start_icon_updater()
+    _start_dc_pinger()
     log.info("Tray icon running")
     _tray_icon.run()
 
