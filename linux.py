@@ -78,15 +78,28 @@ def _apply_window_icon(root) -> None:
 
 def _on_open_in_telegram(icon=None, item=None) -> None:
     url = tg_proxy_url(_config)
-    log.info("Copying %s", url)
+    log.info("Opening %s", url)
     try:
-        pyperclip.copy(url)
-        _show_info(
-            f"Ссылка скопирована в буфер обмена, отправьте её в Telegram и нажмите по ней ЛКМ:\n{url}"
+        env = {k: v for k, v in os.environ.items() if k not in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME")}
+        result = subprocess.run(
+            ["xdg-open", url], env=env,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=5,
         )
+        if result.returncode == 0:
+            return
+        raise RuntimeError(f"xdg-open exited with {result.returncode}")
     except Exception as exc:
-        log.error("Clipboard copy failed: %s", exc)
-        _show_error(f"Не удалось скопировать ссылку:\n{exc}")
+        log.info("xdg-open failed (%s), copying to clipboard", exc)
+        try:
+            pyperclip.copy(url)
+            _show_info(
+                "Не удалось открыть Telegram автоматически.\n\n"
+                f"Ссылка скопирована в буфер обмена, отправьте её в Telegram и нажмите по ней ЛКМ:\n{url}"
+            )
+        except Exception as exc2:
+            log.error("Clipboard copy failed: %s", exc2)
+            _show_error(f"Не удалось скопировать ссылку:\n{exc2}")
 
 
 def _on_copy_link(icon=None, item=None) -> None:
