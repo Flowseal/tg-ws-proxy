@@ -18,10 +18,10 @@ from PIL import Image, ImageTk
 from proxy import get_link_host
 
 from utils.tray_common import (
-    APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, LOG_FILE,
+    APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, IS_FROZEN, LOG_FILE,
     acquire_lock, add_status_dot, bootstrap, check_ipv6_warning, ctk_run_dialog,
     ensure_ctk_thread, ensure_dirs, is_proxy_running, load_config, load_icon, log,
-    maybe_notify_update, ProxyStatus, quit_ctk, release_lock, restart_proxy,
+    ProxyStatus, quit_ctk, release_lock, restart_proxy,
     save_config, start_proxy, StatusManager, stop_proxy, tg_proxy_url,
 )
 import utils.tray_common as _tray_common
@@ -168,10 +168,13 @@ def _edit_config_dialog() -> None:
         return
 
     cfg = dict(_config)
+    cfg["autostart"] = is_autostart_enabled()
 
     def _build(done: threading.Event) -> None:
         theme = ctk_theme_for_platform()
         w, h = CONFIG_DIALOG_SIZE
+        if _supports_autostart():
+            h += 100
         root = create_ctk_toplevel(
             ctk, title="TG WS Proxy — Настройки", width=w, height=h, theme=theme,
             after_create=_apply_window_icon,
@@ -179,7 +182,12 @@ def _edit_config_dialog() -> None:
         fpx, fpy = CONFIG_DIALOG_FRAME_PAD
         frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)
         scroll, footer = tray_settings_scroll_and_footer(ctk, frame, theme)
-        widgets = install_tray_config_form(ctk, scroll, theme, cfg, DEFAULT_CONFIG, show_autostart=False)
+        widgets = install_tray_config_form(
+            ctk, scroll, theme, cfg, DEFAULT_CONFIG,
+            show_autostart=_supports_autostart(),
+            autostart_value=cfg.get("autostart", False),
+            autostart_allowed=True,
+        )
 
         _original_appearance = ctk.get_appearance_mode()
 
@@ -193,12 +201,12 @@ def _edit_config_dialog() -> None:
 
         def on_save() -> None:
             from tkinter import messagebox
-            merged = validate_config_form(widgets, DEFAULT_CONFIG, include_autostart=False)
+            merged = validate_config_form(widgets, DEFAULT_CONFIG, include_autostart=_supports_autostart())
             if isinstance(merged, str):
                 messagebox.showerror("TG WS Proxy — Ошибка", merged, parent=root)
                 return
 
-            _ui_only_keys = {"appearance", "check_updates"}
+            _ui_only_keys = {"appearance", "autostart", "check_updates"}
             config_changed = any(merged.get(k) != cfg.get(k) for k in merged)
             proxy_changed = any(merged.get(k) != cfg.get(k) for k in merged if k not in _ui_only_keys)
 
@@ -209,6 +217,8 @@ def _edit_config_dialog() -> None:
             save_config(merged)
             _config.update(merged)
             log.info("Config saved: %s", merged)
+            if _supports_autostart():
+                set_autostart_enabled(bool(merged.get("autostart", False)))
             _tray_icon.menu = _build_menu()
 
             if not proxy_changed:
@@ -263,6 +273,131 @@ def _show_first_run() -> None:
         populate_first_run_window(ctk, root, theme, host=host, port=port, secret=secret, on_done=on_done)
 
     ctk_run_dialog(_build)
+
+
+# autostart (XDG)
+
+_XDG_AUTOSTART = Path.home() / ".config" / "autostart" / "tg-ws-proxy.desktop"
+
+_DESKTOP_TEMPLATE = """\
+[Desktop Entry]
+Type=Application
+Name=TG WS Proxy
+Exec={cmd}
+Icon=tg-ws-proxy
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+"""
+
+
+def _supports_autostart() -> bool:
+    return True
+
+
+def _autostart_command() -> str:
+    if IS_FROZEN:
+        return sys.executable
+    return f"{sys.executable} {Path(__file__).resolve()}"
+
+
+def is_autostart_enabled() -> bool:
+    return _XDG_AUTOSTART.exists()
+
+
+def set_autostart_enabled(enabled: bool, ignore_errors: bool = False) -> None:
+    try:
+        if enabled:
+            _XDG_AUTOSTART.parent.mkdir(parents=True, exist_ok=True)
+            _XDG_AUTOSTART.write_text(
+                _DESKTOP_TEMPLATE.format(cmd=_autostart_command()),
+                encoding="utf-8",
+            )
+        else:
+            _XDG_AUTOSTART.unlink(missing_ok=True)
+    except OSError as exc:
+        log.error("Failed to update autostart: %s", exc)
+        if not ignore_errors:
+            _show_error(f"Не удалось изменить автозапуск.\n\nОшибка: {exc}")
+
+
+# update check (CTK dialog)
+
+def _maybe_do_update(cfg: dict, is_exiting) -> None:
+    if not cfg.get("check_updates", True):
+        return
+
+    def _work():
+        time.sleep(1.5)
+        if is_exiting():
+            return
+        try:
+            import webbrowser
+            from proxy import __version__
+            from utils.update_check import RELEASES_PAGE_URL, get_status, run_check
+
+            run_check(__version__)
+            st = get_status()
+            if not st.get("has_update") or is_exiting():
+                return
+            url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
+            ver = st.get("latest") or "?"
+
+            if not ensure_ctk_thread(ctk, _config.get("appearance", "auto")):
+                if _ask_yes_no(
+                    f"Доступна новая версия: {ver}\n\nОткрыть страницу релиза в браузере?",
+                    "TG WS Proxy — обновление",
+                ):
+                    webbrowser.open(url)
+                return
+
+            result = {"open": False}
+
+            def _build(done: threading.Event) -> None:
+                from ui.ctk_theme import main_content_frame
+                theme = ctk_theme_for_platform()
+                root = create_ctk_toplevel(
+                    ctk, title="TG WS Proxy — обновление",
+                    width=310, height=110, theme=theme,
+                    after_create=_apply_window_icon,
+                )
+                frame = main_content_frame(ctk, root, theme, padx=16, pady=14)
+                ctk.CTkLabel(
+                    frame,
+                    text=f"Доступна новая версия: {ver}",
+                    justify="left", anchor="w", wraplength=270,
+                    font=(theme.ui_font_family, 12),
+                    text_color=theme.text_primary,
+                ).pack(fill="x", pady=(0, 10))
+                row = ctk.CTkFrame(frame, fg_color="transparent")
+                row.pack(fill="x")
+
+                def _close(open_browser: bool) -> None:
+                    result["open"] = open_browser
+                    root.destroy()
+                    done.set()
+
+                ctk.CTkButton(
+                    row, text="Страница", width=100, height=34,
+                    font=(theme.ui_font_family, 13),
+                    command=lambda: _close(True),
+                ).pack(side="left", padx=(0, 6))
+                ctk.CTkButton(
+                    row, text="Закрыть", width=100, height=34,
+                    font=(theme.ui_font_family, 13),
+                    fg_color=theme.field_bg, hover_color=theme.field_border,
+                    text_color=theme.text_primary, border_width=1, border_color=theme.field_border,
+                    command=lambda: _close(False),
+                ).pack(side="left")
+                root.protocol("WM_DELETE_WINDOW", lambda: _close(False))
+
+            ctk_run_dialog(_build)
+            if result["open"]:
+                webbrowser.open(url)
+        except Exception as exc:
+            log.warning("Update check failed: %s", repr(exc))
+
+    threading.Thread(target=_work, daemon=True, name="update-check").start()
 
 
 # notify-send
@@ -412,7 +547,7 @@ def run_tray() -> None:
         return
 
     start_proxy(_config, _show_error)
-    maybe_notify_update(_config, lambda: _exiting, _ask_yes_no)
+    _maybe_do_update(_config, lambda: _exiting)
     _show_first_run()
     check_ipv6_warning(_show_info)
 
