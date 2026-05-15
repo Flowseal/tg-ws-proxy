@@ -36,34 +36,45 @@ _tray_icon: Optional[object] = None
 _config: dict = {}
 _exiting = False
 
-# dialogs (tkinter messagebox)
-
-
-def _msgbox(kind: str, text: str, title: str, **kw):
-    import tkinter as _tk
-    from tkinter import messagebox as _mb
-
-    root = _tk.Tk()
-    root.withdraw()
-    try:
-        root.attributes("-topmost", True)
-    except Exception:
-        pass
-    result = getattr(_mb, kind)(title, text, parent=root, **kw)
-    root.destroy()
-    return result
+# dialogs
 
 
 def _show_error(text: str, title: str = "TG WS Proxy — Ошибка") -> None:
-    _msgbox("showerror", text, title)
+    try:
+        subprocess.Popen(
+            ["notify-send", "--urgency=critical", "--app-name=TG WS Proxy", title, text],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, start_new_session=True,
+        )
+    except Exception as exc:
+        log.error("notify-send (error) failed: %s", exc)
 
 
 def _show_info(text: str, title: str = "TG WS Proxy") -> None:
-    _msgbox("showinfo", text, title)
+    try:
+        subprocess.Popen(
+            ["notify-send", "--app-name=TG WS Proxy", title, text],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, start_new_session=True,
+        )
+    except Exception as exc:
+        log.debug("notify-send (info) failed: %s", exc)
 
 
 def _ask_yes_no(text: str, title: str = "TG WS Proxy") -> bool:
-    return bool(_msgbox("askyesno", text, title))
+    try:
+        result = subprocess.run(
+            ["zenity", "--question", "--title", title, "--text", text,
+             "--width=360", "--no-wrap"],
+            timeout=60,
+        )
+        return result.returncode == 0
+    except FileNotFoundError:
+        # zenity не установлен — показываем уведомление и открываем браузер
+        _show_info(text, title)
+        return True
+    except Exception:
+        return False
 
 
 def _apply_window_icon(root) -> None:
