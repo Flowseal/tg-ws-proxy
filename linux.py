@@ -162,6 +162,29 @@ def _on_exit(icon=None, item=None) -> None:
 # settings dialog
 
 
+def _bind_scroll_wheel(widget) -> None:
+    try:
+        canvas = widget._parent_canvas
+    except AttributeError:
+        return
+
+    def _up(e):
+        canvas.yview_scroll(-1, "units")
+        return "break"
+
+    def _down(e):
+        canvas.yview_scroll(1, "units")
+        return "break"
+
+    def _rebind(w):
+        w.bind("<Button-4>", _up, add="+")
+        w.bind("<Button-5>", _down, add="+")
+        for child in w.winfo_children():
+            _rebind(child)
+
+    _rebind(widget)
+
+
 def _edit_config_dialog() -> None:
     if not ensure_ctk_thread(ctk, _config.get("appearance", "auto")):
         _show_error("customtkinter не установлен.")
@@ -187,6 +210,7 @@ def _edit_config_dialog() -> None:
             show_autostart=_supports_autostart(),
             autostart_value=cfg.get("autostart", False),
         )
+        root.after(50, lambda: _bind_scroll_wheel(scroll))
 
         _original_appearance = ctk.get_appearance_mode()
 
