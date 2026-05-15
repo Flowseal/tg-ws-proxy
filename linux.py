@@ -5,7 +5,10 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Optional
+
+_ICON_PATH = str(Path(__file__).parent / "icon.ico")
 
 import customtkinter as ctk
 import pyperclip
@@ -65,7 +68,7 @@ def _ask_yes_no(text: str, title: str = "TG WS Proxy") -> bool:
     try:
         result = subprocess.run(
             ["zenity", "--question", "--title", title, "--text", text,
-             "--width=360", "--no-wrap"],
+             "--width=360", "--no-wrap", f"--window-icon={_ICON_PATH}"],
             timeout=60,
         )
         return result.returncode == 0
