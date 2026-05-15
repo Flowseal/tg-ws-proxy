@@ -168,7 +168,7 @@ def _fix_scroll(widget) -> None:
     except AttributeError:
         return
 
-    canvas.configure(yscrollincrement=20)
+    canvas.configure(yscrollincrement=40)
 
     _last_scroll = [0.0]
 
@@ -177,7 +177,7 @@ def _fix_scroll(widget) -> None:
         if now - _last_scroll[0] < 0.016:  # ~60 fps cap
             return "break"
         _last_scroll[0] = now
-        canvas.yview_scroll(direction, "units")
+        canvas.yview_scroll(direction * 2, "units")
         return "break"
 
     def _rebind(w):
@@ -579,10 +579,15 @@ def run_tray() -> None:
     _show_first_run()
     check_ipv6_warning(_show_info)
 
-    with open(os.devnull, "w") as _devnull:
-        import contextlib
-        with contextlib.redirect_stderr(_devnull):
-            _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
+    _stderr_fd = os.dup(2)
+    _devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(_devnull_fd, 2)
+    os.close(_devnull_fd)
+    try:
+        _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
+    finally:
+        os.dup2(_stderr_fd, 2)
+        os.close(_stderr_fd)
     _start_icon_updater()
     _start_dc_pinger()
     log.info("Tray icon running")
