@@ -42,13 +42,11 @@ from utils.win32_theme import (
 )
 from utils.tray_common import (
     APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, IS_FROZEN, LOG_FILE,
-    acquire_lock, add_status_dot, bootstrap, check_ipv6_warning, ctk_run_dialog,
-    ensure_ctk_thread, ensure_dirs, is_proxy_running, load_config, load_icon, log,
-    ProxyStatus, StatusManager,
+    acquire_lock, bootstrap, check_ipv6_warning, ctk_run_dialog,
+    ensure_ctk_thread, ensure_dirs, load_config, load_icon, log,
     quit_ctk, release_lock, restart_proxy,
     save_config, start_proxy, stop_proxy, tg_proxy_url,
 )
-import utils.tray_common as _tray_common
 from ui.ctk_tray_ui import (
     install_tray_config_buttons, install_tray_config_form,
     populate_first_run_window, tray_settings_scroll_and_footer,
@@ -98,52 +96,7 @@ def _release_win_mutex() -> None:
 
 ICON_PATH = str(Path(__file__).parent / "icon.ico")
 
-
-class _GUID(ctypes.Structure):
-    _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort),
-                ("Data3", ctypes.c_ushort), ("Data4", ctypes.c_byte * 8)]
-
-class _NOTIFYICONDATA(ctypes.Structure):
-    _fields_ = [
-        ("cbSize",          ctypes.c_uint),
-        ("hWnd",            ctypes.c_void_p),
-        ("uID",             ctypes.c_uint),
-        ("uFlags",          ctypes.c_uint),
-        ("uCallbackMessage",ctypes.c_uint),
-        ("hIcon",           ctypes.c_void_p),
-        ("szTip",           ctypes.c_wchar * 128),
-        ("dwState",         ctypes.c_uint),
-        ("dwStateMask",     ctypes.c_uint),
-        ("szInfo",          ctypes.c_wchar * 256),
-        ("uVersion",        ctypes.c_uint),
-        ("szInfoTitle",     ctypes.c_wchar * 64),
-        ("dwInfoFlags",     ctypes.c_uint),
-        ("guidItem",        _GUID),
-        ("hBalloonIcon",    ctypes.c_void_p),
-    ]
-
-_NIM_MODIFY = 0x00000001
-_NIF_INFO   = 0x00000010
-_NIIF_NOSOUND = 0x00000010
-
-_shell32 = ctypes.windll.shell32
-
-
-def _balloon_notify(title: str, message: str, icon=None) -> None:
-    target = icon if icon is not None else _tray_icon
-    hwnd = getattr(target, "_hwnd", None)
-    if not hwnd:
-        return
-    nid = _NOTIFYICONDATA()
-    nid.cbSize      = ctypes.sizeof(_NOTIFYICONDATA)
-    nid.hWnd        = hwnd
-    nid.uID         = 0  # pystray registers with uID=0 (passes hID=id(self) kwarg which ctypes silently ignores)
-    nid.uFlags      = _NIF_INFO
-    nid.dwInfoFlags = _NIIF_NOSOUND
-    nid.szInfo      = message[:255]
-    nid.szInfoTitle = title[:63]
-    _shell32.Shell_NotifyIconW(_NIM_MODIFY, ctypes.byref(nid))
-
+# win32 dialogs
 
 _u32 = ctypes.windll.user32
 _u32.MessageBoxW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
@@ -339,7 +292,7 @@ def _perform_update(download_url: str, set_status=None) -> None:
     _release_win_mutex()
     stop_proxy()
 
-    # prevent the new process from inheriting the old PyInstaller _MEI* temp dir
+    # Don't reuse existing _MEI* dir
     env = os.environ.copy()
     for _k in [k for k in env if k.startswith("_PYI_") or k == "_MEIPASS"]:
         del env[_k]
@@ -394,6 +347,8 @@ def _maybe_do_update(cfg: dict, is_exiting) -> None:
     threading.Thread(target=_work, daemon=True, name="update-check").start()
 
 
+# autostart (registry)
+
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
@@ -432,6 +387,8 @@ def set_autostart_enabled(enabled: bool) -> None:
             f"с правами на реестр.\n\nОшибка: {exc}"
         )
 
+
+# tray callbacks
 
 def _on_open_in_telegram(icon=None, item=None) -> None:
     url = tg_proxy_url(_config)
@@ -507,6 +464,8 @@ def _on_exit(icon=None, item=None) -> None:
     if icon:
         icon.stop()
 
+
+# settings dialog
 
 def _edit_config_dialog() -> None:
     if not ensure_ctk_thread(ctk, _config.get("appearance", "auto")):
@@ -588,6 +547,8 @@ def _edit_config_dialog() -> None:
     ctk_run_dialog(_build)
 
 
+# first run
+
 def _show_first_run() -> None:
     ensure_dirs()
     if FIRST_RUN_MARKER.exists():
@@ -620,96 +581,7 @@ def _show_first_run() -> None:
     ctk_run_dialog(_build)
 
 
-_dc_pings: dict[int, int | None] = {}
-
-
-def _ping_tcp(ip: str, port: int = 443, timeout: float = 3.0) -> int | None:
-    import socket
-    try:
-        t0 = time.monotonic()
-        with socket.create_connection((ip, port), timeout=timeout):
-            pass
-        return int((time.monotonic() - t0) * 1000)
-    except Exception:
-        return None
-
-
-def _start_dc_pinger() -> None:
-    def _work() -> None:
-        while not _exiting:
-            from proxy.config import proxy_config
-            for dc, ip in list(proxy_config.dc_redirects.items()):
-                _dc_pings[dc] = _ping_tcp(ip)
-            time.sleep(30)
-
-    threading.Thread(target=_work, daemon=True, name="dc-pinger").start()
-
-
-def _start_icon_updater() -> None:
-    from proxy.stats import stats
-    from proxy.utils import human_bytes
-
-    _base_icon = load_icon()
-    _prev_bytes: list[int] = [0, 0]  # [bytes_up, bytes_down] from previous tick
-
-    def _on_status_change(status: ProxyStatus, previous: ProxyStatus) -> None:
-        if _tray_icon is None:
-            return
-        try:
-            _tray_icon.icon = add_status_dot(_base_icon, status.value)
-        except Exception:
-            pass
-        if status == ProxyStatus.STOPPED and previous is not None:
-            reason = _tray_common._crash_reason
-            if reason == "port_busy":
-                msg = "Прокси остановлен: порт занят другим приложением"
-            elif reason:
-                msg = "Прокси упал — проверьте логи"
-            else:
-                msg = "Прокси остановлен"
-            try:
-                _balloon_notify("TG WS Proxy", msg, icon=_tray_icon)
-            except Exception:
-                pass
-            _prev_bytes[0] = 0
-            _prev_bytes[1] = 0
-
-    def _on_tick() -> None:
-        if _tray_icon is None:
-            return
-
-        ping_str = "  ".join(
-            f"DC{dc}: {ms}ms" if ms is not None else f"DC{dc}: —"
-            for dc, ms in sorted(_dc_pings.items())
-        )
-
-        speed_up   = max(0, stats.bytes_up   - _prev_bytes[0])
-        speed_down = max(0, stats.bytes_down - _prev_bytes[1])
-        _prev_bytes[0] = stats.bytes_up
-        _prev_bytes[1] = stats.bytes_down
-
-        if not is_proxy_running():
-            title = "TG WS Proxy — не запущен"
-        elif stats.connections_active > 0:
-            title = (
-                f"TG WS Proxy\n"
-                f"Активных: {stats.connections_active}\n"
-                f"↑ {human_bytes(speed_up)}/s  ↓ {human_bytes(speed_down)}/s"
-            )
-            if ping_str:
-                title += f"\n{ping_str}"
-        else:
-            title = "TG WS Proxy"
-            if ping_str:
-                title += f"\n{ping_str}"
-
-        try:
-            _tray_icon.title = title
-        except Exception:
-            pass
-
-    StatusManager(_on_status_change, on_tick=_on_tick).start(lambda: _exiting)
-
+# tray menu
 
 def _build_menu():
     if pystray is None:
@@ -728,6 +600,8 @@ def _build_menu():
         pystray.MenuItem("Выход", _on_exit),
     )
 
+
+# entry point
 
 def run_tray() -> None:
     global _tray_icon, _config
@@ -755,8 +629,6 @@ def run_tray() -> None:
     check_ipv6_warning(_show_info)
 
     _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
-    _start_icon_updater()
-    _start_dc_pinger()
     log.info("Tray icon running")
     _tray_icon.run()
 
