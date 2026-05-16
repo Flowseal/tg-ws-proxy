@@ -83,8 +83,11 @@ def _ask_yes_no(text: str, title: str = "TG WS Proxy") -> bool:
 def _apply_window_icon(root) -> None:
     icon_img = load_icon()
     if icon_img:
-        root._ctk_icon_photo = ImageTk.PhotoImage(icon_img.resize((64, 64)))
-        root.iconphoto(False, root._ctk_icon_photo)
+        try:
+            root._ctk_icon_photo = ImageTk.PhotoImage(icon_img.resize((64, 64)))
+            root.iconphoto(False, root._ctk_icon_photo)
+        except (ImportError, Exception) as exc:
+            log.debug("iconphoto failed: %s", exc)
 
 
 # tray callbacks
@@ -173,6 +176,14 @@ def _fix_scroll(widget) -> None:
     _last_scroll = [0.0]
 
     def _scroll(direction):
+        # Only scroll when pointer is inside the scrollable canvas area
+        try:
+            px, py = canvas.winfo_pointerxy()
+            cx, cy = canvas.winfo_rootx(), canvas.winfo_rooty()
+            if not (cx <= px <= cx + canvas.winfo_width() and cy <= py <= cy + canvas.winfo_height()):
+                return
+        except Exception:
+            return
         now = time.monotonic()
         if now - _last_scroll[0] < 0.016:  # ~60 fps cap
             return "break"
@@ -180,14 +191,10 @@ def _fix_scroll(widget) -> None:
         canvas.yview_scroll(direction * 2, "units")
         return "break"
 
-    def _rebind(w):
-        w.bind("<MouseWheel>", lambda e: _scroll(-1 if e.delta > 0 else 1), add="+")
-        w.bind("<Button-4>", lambda e: _scroll(-1), add="+")
-        w.bind("<Button-5>", lambda e: _scroll(1), add="+")
-        for child in w.winfo_children():
-            _rebind(child)
-
-    _rebind(widget)
+    # bind_all ensures events are caught even when focus is on child widgets (e.g. CTkEntry)
+    canvas.bind_all("<MouseWheel>", lambda e: _scroll(-1 if e.delta > 0 else 1))
+    canvas.bind_all("<Button-4>", lambda e: _scroll(-1))
+    canvas.bind_all("<Button-5>", lambda e: _scroll(1))
 
 
 def _edit_config_dialog() -> None:
@@ -215,7 +222,7 @@ def _edit_config_dialog() -> None:
             show_autostart=_supports_autostart(),
             autostart_value=cfg.get("autostart", False),
         )
-        root.after(50, lambda: _fix_scroll(scroll))
+        _fix_scroll(scroll)
 
         _original_appearance = ctk.get_appearance_mode()
 
