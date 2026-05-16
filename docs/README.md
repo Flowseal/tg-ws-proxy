@@ -1,7 +1,7 @@
 <div align="center">
 	<br />
 	<p>
-		<img width="1729" height="910" alt="tgwsproxy" src="https://github.com/user-attachments/assets/86c230be-3286-4da9-8a30-1c781bee44e6" />
+		<img width="1729" height="910" alt="tgwsproxy" src="./images/workflow.png" />
 	</p>
 </div>
 
@@ -33,8 +33,8 @@
 **Локальный MTProto-прокси** для Telegram Desktop, который **ускоряет работу Telegram**, перенаправляя трафик через WebSocket-соединения. Данные передаются в том же зашифрованном виде, а для работы не нужны сторонние серверы.
 
 <picture>
-  <source srcset="https://github.com/user-attachments/assets/17f1d15e-e1c2-41ea-a452-220d13359262" media="(prefers-color-scheme: dark)">
-  <img src="https://github.com/user-attachments/assets/8d595468-83a1-4e4f-bac4-9ce4a07027bd">
+  <source srcset="./images/preview-dark.png" media="(prefers-color-scheme: dark)">
+  <img src="./images/preview-white.png">
 </picture>
 
 ## Навигация
