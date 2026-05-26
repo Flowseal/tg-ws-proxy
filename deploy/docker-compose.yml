@@ -1,0 +1,13 @@
+services:
+  tg-ws-proxy:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: tg-ws-proxy:local
+    container_name: tg-ws-proxy
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${TG_WS_PROXY_PORT:-1443}:${TG_WS_PROXY_PORT:-1443}/tcp"
+

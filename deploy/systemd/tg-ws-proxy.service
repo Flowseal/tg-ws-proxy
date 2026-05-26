@@ -1,0 +1,21 @@
+[Unit]
+Description=TG WS Proxy headless service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tgwsproxy
+Group=tgwsproxy
+WorkingDirectory=/opt/tg-ws-proxy-core
+EnvironmentFile=/etc/tg-ws-proxy.env
+ExecStart=/bin/sh /opt/tg-ws-vps/deploy/systemd/run-headless.sh
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

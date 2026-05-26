@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily TG WS Proxy auto-update
+
+[Timer]
+OnCalendar=*-*-* 04:17:00
+RandomizedDelaySec=45m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+
