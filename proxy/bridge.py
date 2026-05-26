@@ -2,7 +2,7 @@ import asyncio
 import logging
 import struct
 
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from ._aes import Cipher, algorithms, modes
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
 

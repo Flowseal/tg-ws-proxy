@@ -14,7 +14,7 @@ import socket as _socket
 from collections import deque
 from typing import Dict, List, Optional, Set, Tuple
 
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from ._aes import Cipher, algorithms, modes
 
 if __name__ == '__main__' and (__package__ is None or __package__ == ''):
     _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
