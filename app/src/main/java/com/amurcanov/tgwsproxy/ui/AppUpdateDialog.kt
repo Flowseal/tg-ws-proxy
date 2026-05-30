@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -37,13 +38,13 @@ fun AppUpdateDialog(
     onUpdate: () -> Unit
 ) {
     val isTagOnly = release.source == RemoteVersionSource.Tag
-    val title = if (isTagOnly) "Найден новый tag" else "Доступно обновление"
+    val title = if (isTagOnly) stringResource(com.amurcanov.tgwsproxy.R.string.update_new_tag_title) else stringResource(com.amurcanov.tgwsproxy.R.string.update_available_title)
     val description = if (isTagOnly) {
-        "На GitHub обнаружен более новый tag ${release.versionTag}. Похоже, опубликованный release ещё не догнал его."
+        stringResource(com.amurcanov.tgwsproxy.R.string.update_new_tag_description, release.versionTag)
     } else {
-        "Вышла новая версия приложения ${release.versionTag}. Можно открыть страницу релиза и обновиться вручную."
+        stringResource(com.amurcanov.tgwsproxy.R.string.update_available_description, release.versionTag)
     }
-    val actionLabel = "Обновить"
+    val actionLabel = stringResource(com.amurcanov.tgwsproxy.R.string.update_action)
 
     Dialog(
         onDismissRequest = {},
@@ -110,7 +111,7 @@ fun AppUpdateDialog(
                         shape = RoundedCornerShape(22.dp)
                     ) {
                         Text(
-                            text = "Позже",
+                            text = stringResource(com.amurcanov.tgwsproxy.R.string.later),
                             fontWeight = FontWeight.SemiBold
                         )
                     }

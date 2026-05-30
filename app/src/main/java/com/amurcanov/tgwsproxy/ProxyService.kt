@@ -127,7 +127,7 @@ class ProxyService : Service() {
         lastCfDomain = cfDomain
         lastSecretKey = secretKey
         notificationStartedAtMs = System.currentTimeMillis()
-        lastNotificationContent = "Запуск прокси..."
+        lastNotificationContent = getString(R.string.notification_starting)
         lastNotificationAtMs = notificationStartedAtMs
 
         val notification = createNotification(lastNotificationContent)
@@ -154,7 +154,7 @@ class ProxyService : Service() {
                 if (result != 0) {
                     Log.e(TAG, "StartProxy returned error code: $result")
                     serviceScope.launch {
-                        updateNotification("Ошибка запуска (код: $result)", force = true)
+                        updateNotification(getString(R.string.notification_start_error_code, result), force = true)
                         delay(3000)
                         stopProxy()
                     }
@@ -162,7 +162,7 @@ class ProxyService : Service() {
             } catch (e: Throwable) {
                 Log.e(TAG, "Failed to start proxy via JNA", e)
                 serviceScope.launch {
-                    updateNotification("Ошибка: ${e.message}", force = true)
+                    updateNotification(getString(R.string.notification_error, e.message ?: ""), force = true)
                     delay(3000)
                     stopProxy()
                 }
@@ -182,11 +182,11 @@ class ProxyService : Service() {
                     isPortOpen("127.0.0.1", port, 2000)
                 }
                 if (isListening) {
-                    updateNotification("Прокси работает", force = true)
+                    updateNotification(getString(R.string.notification_running), force = true)
                     Log.i(TAG, "Proxy verified: listening on port $port")
                 } else {
                     Log.e(TAG, "Proxy NOT listening on port $port after ${STARTUP_CHECK_DELAY_MS}ms")
-                    updateNotification("⚠ Прокси не отвечает", force = true)
+                    updateNotification(getString(R.string.notification_not_responding), force = true)
                     // Don't stop — it might start slightly later; let the user decide
                 }
             }
@@ -214,7 +214,7 @@ class ProxyService : Service() {
                         
                         val totalBytes = parseHumanBytes(upRaw) + parseHumanBytes(downRaw)
                         val active = activeConns.toIntOrNull() ?: 0
-                        val text = "Трафик: ${formatBytes(totalBytes)} · $active сесс."
+                        val text = getString(R.string.notification_traffic, formatBytes(totalBytes), active)
                         updateNotification(text)
                     } catch (e: Exception) {
                         Log.w(TAG, "Stats update failed", e)
@@ -264,7 +264,7 @@ class ProxyService : Service() {
 
         restartJob = serviceScope.launch {
             Log.i(TAG, "Restarting proxy from notification")
-            updateNotification("Перезапуск прокси...", force = true)
+            updateNotification(getString(R.string.notification_restarting), force = true)
 
             watchdogJob?.cancel()
             watchdogJob = null
@@ -324,7 +324,7 @@ class ProxyService : Service() {
         statsJob?.cancel()
         statsJob = null
         serviceScope.launch {
-            updateNotification("Остановка прокси...", force = true)
+            updateNotification(getString(R.string.notification_stopping), force = true)
             requestNativeStop("stop")
             releaseWakeLock()
             updateRunningState(false)
@@ -438,10 +438,10 @@ class ProxyService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val serviceChannel = NotificationChannel(
                 CHANNEL_ID,
-                "Фоновый Прокси",
+                getString(R.string.notification_channel_name),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Уведомление о работе прокси-сервера"
+                description = getString(R.string.notification_channel_description)
                 setShowBadge(false)
                 setSound(null, null)
                 enableVibration(false)
@@ -480,8 +480,8 @@ class ProxyService : Service() {
             .setContentText(content)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(openPendingIntent) // Tap notification → open app
-            .addAction(android.R.drawable.ic_popup_sync, "Перезапуск", restartPendingIntent)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Отключить", stopPendingIntent)
+            .addAction(android.R.drawable.ic_popup_sync, getString(R.string.notification_restart), restartPendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, getString(R.string.notification_disconnect), stopPendingIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)

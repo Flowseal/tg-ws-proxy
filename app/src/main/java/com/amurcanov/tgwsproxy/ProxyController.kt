@@ -18,7 +18,7 @@ object ProxyController {
         val port = portText.toIntOrNull()
         if (port == null) {
             if (showInvalidPortToast) {
-                Toast.makeText(context, "Неверный порт", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.invalid_port), Toast.LENGTH_SHORT).show()
             }
             ProxyTileService.requestSync(context)
             return false

@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -45,11 +46,12 @@ fun LogsTab(settingsStore: SettingsStore) {
     val savedError by settingsStore.logShowError.collectAsStateWithLifecycle(initialValue = SettingsStore.DEFAULT_LOG_SHOW_ERROR)
     val savedNull by settingsStore.logShowNull.collectAsStateWithLifecycle(initialValue = false)
 
-    val filteredLogs = remember(currentLogs, savedInfo, savedError, savedNull) {
+    val nullLogsDisabled = stringResource(com.amurcanov.tgwsproxy.R.string.null_logs_disabled)
+    val filteredLogs = remember(currentLogs, savedInfo, savedError, savedNull, nullLogsDisabled) {
         if (savedNull) {
             listOf(LogEntry(
                 key = "null_msg",
-                message = "NULL - логи отключены",
+                message = nullLogsDisabled,
                 count = 1,
                 isError = false,
                 priority = 4,
@@ -88,22 +90,22 @@ fun LogsTab(settingsStore: SettingsStore) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                "Лог событий",
+                stringResource(com.amurcanov.tgwsproxy.R.string.event_log),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.onSurface
             )
             Row {
                 IconButton(onClick = { LogManager.clearLogs() }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Очистить", tint = MaterialTheme.colorScheme.primary)
+                    Icon(Icons.Default.Delete, contentDescription = stringResource(com.amurcanov.tgwsproxy.R.string.clear), tint = MaterialTheme.colorScheme.primary)
                 }
                 IconButton(onClick = {
                     val text = filteredLogs.joinToString("\n") { "${it.message} (x${it.count})" }
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     val clip = ClipData.newPlainText("TgWsProxy Logs", text)
                     clipboard.setPrimaryClip(clip)
-                    Toast.makeText(context, "Скопировано", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, context.getString(com.amurcanov.tgwsproxy.R.string.copied), Toast.LENGTH_SHORT).show()
                 }) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = "Копировать", tint = MaterialTheme.colorScheme.primary)
+                    Icon(Icons.Default.ContentCopy, contentDescription = stringResource(com.amurcanov.tgwsproxy.R.string.copy), tint = MaterialTheme.colorScheme.primary)
                 }
             }
         }
