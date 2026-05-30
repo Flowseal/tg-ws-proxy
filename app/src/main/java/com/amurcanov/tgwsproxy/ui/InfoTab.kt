@@ -2,6 +2,7 @@ package com.amurcanov.tgwsproxy.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Context
 import android.os.Build
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
@@ -71,6 +72,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -140,33 +142,23 @@ fun InfoTab(settingsStore: SettingsStore) {
     val updateLastError by settingsStore.updateLastError.collectAsStateWithLifecycle(initialValue = "")
     val currentLogs by LogManager.logs.collectAsStateWithLifecycle()
     val currentVersion = remember { "v${BuildConfig.VERSION_NAME.removePrefix("v")}" }
-    val updateStatusSubtitle = remember(isCheckingUpdates, updateLatestVersion, updateLastError, currentVersion) {
-        when {
-            isCheckingUpdates -> "Проверяем GitHub releases..."
-            updateLatestVersion.isNotBlank() && isNewerVersion(currentVersion, updateLatestVersion) ->
-                "На GitHub доступна версия $updateLatestVersion"
-            updateLatestVersion.isNotBlank() -> "Последняя версия: $updateLatestVersion"
-            updateLastError.isNotBlank() -> "Последняя проверка завершилась ошибкой"
-            else -> "Проверить GitHub вручную"
-        }
+    val updateStatusSubtitle = when {
+        isCheckingUpdates -> stringResource(R.string.update_checking)
+        updateLatestVersion.isNotBlank() && isNewerVersion(currentVersion, updateLatestVersion) ->
+            stringResource(R.string.update_available_on_github, updateLatestVersion)
+        updateLatestVersion.isNotBlank() -> stringResource(R.string.update_latest_version, updateLatestVersion)
+        updateLastError.isNotBlank() -> stringResource(R.string.update_last_check_failed)
+        else -> stringResource(R.string.update_check_manually)
     }
-    val reportText = remember(
-        savedPort,
-        savedPoolSize,
-        savedCfEnabled,
-        savedCustomCfDomainEnabled,
-        savedCustomCfDomain,
-        currentLogs
-    ) {
-        buildSupportReport(
-            port = savedPort,
-            poolSize = savedPoolSize,
-            cfEnabled = savedCfEnabled,
-            customCfDomainEnabled = savedCustomCfDomainEnabled,
-            customCfDomain = savedCustomCfDomain,
-            logs = currentLogs
-        )
-    }
+    val reportText = buildSupportReport(
+        port = savedPort,
+        poolSize = savedPoolSize,
+        cfEnabled = savedCfEnabled,
+        customCfDomainEnabled = savedCustomCfDomainEnabled,
+        customCfDomain = savedCustomCfDomain,
+        logs = currentLogs,
+        context = context
+    )
 
     Column(
         modifier = Modifier
@@ -183,7 +175,7 @@ fun InfoTab(settingsStore: SettingsStore) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Информация",
+                text = stringResource(R.string.info),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -192,8 +184,8 @@ fun InfoTab(settingsStore: SettingsStore) {
         InfoHeroCard(onSupportClick = { showDonateDialog = true })
 
         ExpandableSectionCard(
-            title = "Действия",
-            itemCount = "4 пункта",
+            title = stringResource(R.string.actions),
+            itemCount = stringResource(R.string.items_count, 4),
             expanded = actionsExpanded,
             onToggle = { actionsExpanded = !actionsExpanded },
             icon = {
@@ -210,8 +202,8 @@ fun InfoTab(settingsStore: SettingsStore) {
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 InfoActionTile(
-                    title = "Поднять вопрос",
-                    subtitle = "Открыть GitHub issue",
+                    title = stringResource(R.string.raise_issue),
+                    subtitle = stringResource(R.string.open_github_issue),
                     modifier = Modifier.weight(1f),
                     onClick = { openUrlInBrowser(context, AndroidForkIssuesUrl) },
                     icon = {
@@ -225,13 +217,13 @@ fun InfoTab(settingsStore: SettingsStore) {
                 )
 
                 InfoActionTile(
-                    title = "Собрать отчёт",
-                    subtitle = "Android, ABI, настройки, ошибки",
+                    title = stringResource(R.string.build_report),
+                    subtitle = stringResource(R.string.report_subtitle),
                     modifier = Modifier.weight(1f),
                     onClick = {
                         val clipboard = context.getSystemService(ClipboardManager::class.java)
                         clipboard?.setPrimaryClip(ClipData.newPlainText("TgWsProxy Report", reportText))
-                        Toast.makeText(context, "Отчёт сформирован и скопирован", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, context.getString(R.string.report_copied), Toast.LENGTH_SHORT).show()
                     },
                     icon = {
                         Icon(
@@ -245,8 +237,8 @@ fun InfoTab(settingsStore: SettingsStore) {
             }
 
             WideActionTile(
-                title = "Справка",
-                subtitle = "Коротко про Cloudflare, пул WS, ручные DC и долгий запуск",
+                title = stringResource(R.string.help),
+                subtitle = stringResource(R.string.help_subtitle),
                 onClick = { showHelpDialog = true },
                 icon = {
                     Icon(
@@ -259,7 +251,7 @@ fun InfoTab(settingsStore: SettingsStore) {
             )
 
             WideActionTile(
-                title = "Проверить обновления",
+                title = stringResource(R.string.check_updates),
                 subtitle = updateStatusSubtitle,
                 onClick = {
                     if (isCheckingUpdates) return@WideActionTile
@@ -270,15 +262,15 @@ fun InfoTab(settingsStore: SettingsStore) {
                         settingsStore.saveUpdateState(
                             lastCheckAt = checkedAt,
                             latestVersion = release?.versionTag ?: "",
-                            error = if (release == null) "Не удалось проверить" else ""
+                            error = if (release == null) context.getString(R.string.update_check_failed_short) else ""
                         )
                         isCheckingUpdates = false
 
                         if (release == null) {
                             val message = if (updateLatestVersion.isNotBlank()) {
-                                "Не удалось проверить. Последняя известная версия: $updateLatestVersion"
+                                context.getString(R.string.update_check_failed_known, updateLatestVersion)
                             } else {
-                                "Не удалось проверить обновления"
+                                context.getString(R.string.update_check_failed)
                             }
                             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                             return@launch
@@ -290,7 +282,7 @@ fun InfoTab(settingsStore: SettingsStore) {
                         } else {
                             Toast.makeText(
                                 context,
-                                "У вас уже последняя версия: ${release.versionTag}",
+                                context.getString(R.string.update_already_latest, release.versionTag),
                                 Toast.LENGTH_SHORT
                             ).show()
                         }
@@ -308,8 +300,8 @@ fun InfoTab(settingsStore: SettingsStore) {
         }
 
         ExpandableSectionCard(
-            title = "О проекте",
-            itemCount = "4 ссылки",
+            title = stringResource(R.string.about_project),
+            itemCount = stringResource(R.string.links_count, 4),
             expanded = projectExpanded,
             onToggle = { projectExpanded = !projectExpanded },
             icon = {
@@ -322,8 +314,8 @@ fun InfoTab(settingsStore: SettingsStore) {
             }
         ) {
             ProjectLinkRow(
-                title = "Автор Android-версии",
-                subtitle = "GitHub профиль amurcanov",
+                title = stringResource(R.string.android_author),
+                subtitle = stringResource(R.string.android_author_subtitle),
                 onClick = { openUrlInBrowser(context, DeveloperProfileUrl) },
                 icon = {
                     Icon(
@@ -336,8 +328,8 @@ fun InfoTab(settingsStore: SettingsStore) {
             )
 
             ProjectLinkRow(
-                title = "Репозиторий Android-форка",
-                subtitle = "Исходники и релизы этого приложения",
+                title = stringResource(R.string.android_fork_repo),
+                subtitle = stringResource(R.string.android_fork_repo_subtitle),
                 onClick = { openUrlInBrowser(context, AndroidForkRepoUrl) },
                 icon = {
                     Icon(
@@ -350,8 +342,8 @@ fun InfoTab(settingsStore: SettingsStore) {
             )
 
             ProjectLinkRow(
-                title = "Оригинальный tg-ws-proxy",
-                subtitle = "Исходная идея и upstream от Flowseal",
+                title = stringResource(R.string.original_tg_ws_proxy),
+                subtitle = stringResource(R.string.original_tg_ws_proxy_subtitle),
                 onClick = { openUrlInBrowser(context, OriginalProjectUrl) },
                 icon = {
                     Icon(
@@ -364,8 +356,8 @@ fun InfoTab(settingsStore: SettingsStore) {
             )
 
             ProjectLinkRow(
-                title = "Полезный материал",
-                subtitle = "Заметки по работе прокси от IMDelewer",
+                title = stringResource(R.string.useful_material),
+                subtitle = stringResource(R.string.useful_material_subtitle),
                 onClick = { openUrlInBrowser(context, ProxyReferenceUrl) },
                 icon = {
                     Icon(
@@ -391,7 +383,7 @@ fun InfoTab(settingsStore: SettingsStore) {
             release = release,
             onPostpone = {
                 pendingManualRelease = null
-                Toast.makeText(context, "Обновление отложено на 24 часа.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.update_postponed_24h), Toast.LENGTH_SHORT).show()
                 scope.launch {
                     val now = System.currentTimeMillis()
                     settingsStore.saveUpdatePostpone(
@@ -441,7 +433,7 @@ fun InfoTab(settingsStore: SettingsStore) {
                     Spacer(Modifier.height(28.dp))
 
                     Text(
-                        "Справка",
+                        stringResource(R.string.help),
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Black,
                         color = MaterialTheme.colorScheme.primary
@@ -455,38 +447,38 @@ fun InfoTab(settingsStore: SettingsStore) {
                         verticalArrangement = Arrangement.spacedBy(20.dp)
                     ) {
                         HelpSection(
-                            title = "Авто / Адреса датацентров",
-                            text = "При включенном CloudFlare ручные адреса DC обычно не нужны: прокси использует CF-маршрут. Если CloudFlare выключен, соединение идёт напрямую на Telegram DC, и тогда можно задать адреса вручную. В обычном режиме чаще всего достаточно DC2 и DC4; остальные адреса нужны в основном для ручной настройки и диагностики."
+                            title = stringResource(R.string.help_auto_dc_title),
+                            text = stringResource(R.string.help_auto_dc_text)
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                         HelpSection(
                             title = "CloudFlare CDN",
-                            text = "Этот режим направляет соединение через WebSocket-домены за Cloudflare. На части мобильных сетей он работает стабильнее, но итог зависит от маршрута, DNS и конкретного провайдера. Если на вашей сети подключение стало дольше или менее стабильным, имеет смысл сравнить работу с выключенным CF."
+                            text = stringResource(R.string.help_cloudflare_text)
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                         HelpSection(
-                            title = "Пул WS",
-                            text = "Количество заранее подготовленных WebSocket-соединений. Больший пул может уменьшить задержку при первом подключении и загрузке медиа, но увеличивает число фоновых соединений. Для большинства сценариев достаточно 2-4; повышать значение стоит только если реально видна польза на вашей сети."
+                            title = stringResource(R.string.ws_pool),
+                            text = stringResource(R.string.help_ws_pool_text)
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                         HelpSection(
-                            title = "Секретный ключ",
-                            text = "Специальный 16-байтовый ключ шифрования MTProto. Меняйте его только в случае, если старой ссылкой для подключения завладели посторонние."
+                            title = stringResource(R.string.secret_key),
+                            text = stringResource(R.string.help_secret_key_text)
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                         HelpSection(
-                            title = "Экспериментальный режим",
-                            text = "Открывает ручную настройку всех обычных и media-датацентров: DC1, DC3, DC5, DC203 и их media-вариантов. Он нужен для диагностики, тестов и нестандартных маршрутов. Если у вас нет явной задачи под ручную маршрутизацию, лучше держать этот режим выключенным."
+                            title = stringResource(R.string.experimental_mode),
+                            text = stringResource(R.string.help_experimental_text)
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                         HelpSection(
-                            title = "Автозапуск",
-                            text = "Включает попытку поднять прокси автоматически после перезагрузки устройства. Это удобно, если вы используете локальный прокси постоянно. На некоторых прошивках запуск может произойти не мгновенно: система иногда завершает его только после полной загрузки Android или первого разблокирования."
+                            title = stringResource(R.string.autostart),
+                            text = stringResource(R.string.help_autostart_text)
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                         HelpSection(
-                            title = "Если долго подключается",
-                            text = "Если после запуска прокси Telegram долго висит на подключении, это обычно означает неудачный текущий маршрут, а не падение приложения. В такой ситуации полезно быстро перезапустить прокси и сравнить поведение с включенным и выключенным CloudFlare."
+                            title = stringResource(R.string.help_slow_connect_title),
+                            text = stringResource(R.string.help_slow_connect_text)
                         )
                     }
 
@@ -499,7 +491,7 @@ fun InfoTab(settingsStore: SettingsStore) {
                             .height(52.dp),
                         shape = RoundedCornerShape(24.dp)
                     ) {
-                        Text("Понятно", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text(stringResource(R.string.understood), fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     }
 
                     Spacer(Modifier.height(28.dp))
@@ -595,7 +587,7 @@ private fun InfoHeroCard(onSupportClick: () -> Unit) {
                         color = titleColor
                     )
                     Text(
-                        text = "Локальный MTProto-прокси для Android с прямым маршрутом и Cloudflare-режимом. Удобен для сетей, где Telegram грузится нестабильно или упирается в маршрут.",
+                        text = stringResource(R.string.hero_description),
                         style = MaterialTheme.typography.bodyMedium,
                         color = colors.onSurfaceVariant,
                         lineHeight = 21.sp
@@ -620,7 +612,7 @@ private fun InfoHeroCard(onSupportClick: () -> Unit) {
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "Поддержать развитие",
+                        text = stringResource(R.string.support_development),
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp
                     )
@@ -979,7 +971,7 @@ private fun SupportAccentCard(onClick: () -> Unit) {
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = "Поддержка проекта",
+                            text = stringResource(R.string.support_project),
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
                             color = colors.onSurface
@@ -989,13 +981,13 @@ private fun SupportAccentCard(onClick: () -> Unit) {
 
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        text = "Если приложение тебе реально помогает, проект можно поддержать.",
+                        text = stringResource(R.string.support_title),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Black,
                         color = colors.onSurface
                     )
                     Text(
-                        text = "Внутри есть варианты доната для автора Android-версии и для автора оригинальной идеи.",
+                        text = stringResource(R.string.support_subtitle),
                         style = MaterialTheme.typography.bodyMedium,
                         color = colors.onSurfaceVariant,
                         lineHeight = 21.sp
@@ -1020,7 +1012,7 @@ private fun SupportAccentCard(onClick: () -> Unit) {
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Открыть варианты доната",
+                        text = stringResource(R.string.open_donation_options),
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp
                     )
@@ -1036,7 +1028,8 @@ private fun buildSupportReport(
     cfEnabled: Boolean,
     customCfDomainEnabled: Boolean,
     customCfDomain: String,
-    logs: List<LogEntry>
+    logs: List<LogEntry>,
+    context: Context
 ): String {
     val androidVersion = Build.VERSION.RELEASE ?: "?"
     val sdkInt = Build.VERSION.SDK_INT
@@ -1065,9 +1058,9 @@ private fun buildSupportReport(
     } else {
         "n/a"
     }
-    val mode = if (cfEnabled) "Cloudflare" else "Прямой"
+    val mode = if (cfEnabled) "Cloudflare" else context.getString(R.string.report_mode_direct)
     val cfDomainLine = if (cfEnabled && customCfDomainEnabled && customCfDomain.isNotBlank()) {
-        "\nCF-домен: ${customCfDomain.trim()}"
+        "\n${context.getString(R.string.report_cf_domain, customCfDomain.trim())}"
     } else {
         ""
     }
@@ -1078,7 +1071,7 @@ private fun buildSupportReport(
         .take(10)
 
     val errorsBlock = if (recentErrors.isEmpty()) {
-        "нет"
+        context.getString(R.string.none_lower)
     } else {
         recentErrors.joinToString("\n") { entry ->
             val level = when (entry.priority) {
@@ -1091,13 +1084,13 @@ private fun buildSupportReport(
     }
 
     return buildString {
-        appendLine("Версия приложения: ${BuildConfig.VERSION_NAME}")
-        appendLine("Андроид: $androidVersion (SDK $sdkInt)")
-        appendLine("Устройство: $manufacturer / $brand / $model")
-        appendLine("Код устройства: $device")
-        appendLine("Продукт: $product")
+        appendLine(context.getString(R.string.report_app_version, BuildConfig.VERSION_NAME))
+        appendLine(context.getString(R.string.report_android, androidVersion, sdkInt))
+        appendLine(context.getString(R.string.report_device, manufacturer, brand, model))
+        appendLine(context.getString(R.string.report_device_code, device))
+        appendLine(context.getString(R.string.report_product, product))
         appendLine("ABI: $primaryAbi")
-        appendLine("Все ABI: $supportedAbis")
+        appendLine(context.getString(R.string.report_all_abi, supportedAbis))
         appendLine("32-bit ABI: $supported32Abis")
         appendLine("64-bit ABI: $supported64Abis")
         appendLine("SoC: $socManufacturer / $socModel")
@@ -1107,14 +1100,14 @@ private fun buildSupportReport(
         appendLine("Build ID: $buildId")
         appendLine("Build type: $buildType")
         appendLine("Fingerprint: $buildFingerprint")
-        appendLine("Настройки:")
-        appendLine("Режим: $mode")
-        appendLine("WS-пул: $poolSize")
-        append("Порт: ${port.trim().ifBlank { "1443" }}")
+        appendLine(context.getString(R.string.report_settings))
+        appendLine(context.getString(R.string.report_mode, mode))
+        appendLine(context.getString(R.string.report_ws_pool, poolSize))
+        append(context.getString(R.string.report_port, port.trim().ifBlank { "1443" }))
         append(cfDomainLine)
         appendLine()
         appendLine()
-        appendLine("Последние ошибки:")
+        appendLine(context.getString(R.string.report_recent_errors))
         append(errorsBlock)
     }.trim()
 }
@@ -1147,7 +1140,7 @@ private fun DonateDialog(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        text = "Донат разработчикам",
+                        text = stringResource(R.string.donate_developers),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Black,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -1156,13 +1149,13 @@ private fun DonateDialog(
                     FilledTonalIconButton(onClick = onDismiss) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Закрыть"
+                            contentDescription = stringResource(R.string.close)
                         )
                     }
                 }
 
                 DonateSection(
-                    title = "Задонатить автору данного андроид приложения вы можете тут",
+                    title = stringResource(R.string.donate_android_author),
                     buttonColor = AppColors.donate,
                     onClick = { openUrlInBrowser(context, AndroidAppDonateUrl) }
                 ) {
@@ -1179,7 +1172,7 @@ private fun DonateDialog(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
 
                 DonateSection(
-                    title = "Задонатить автору оригинальной идеи вы можете тут",
+                    title = stringResource(R.string.donate_original_author),
                     buttonColor = OriginalIdeaDonateColor,
                     onClick = { openUrlInBrowser(context, OriginalIdeaDonateUrl) }
                 ) {

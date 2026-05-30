@@ -1,5 +1,6 @@
 package com.amurcanov.tgwsproxy
 
+import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -27,12 +28,20 @@ fun updateIntervalHoursToMillis(hours: Int): Long? = when {
     else -> hours * 60L * 60L * 1000L
 }
 
+fun updateIntervalLabel(context: Context, hours: Int): String = when (hours) {
+    7 -> context.getString(R.string.interval_7h)
+    24 -> context.getString(R.string.interval_24h)
+    48 -> context.getString(R.string.interval_48h)
+    UPDATE_CHECK_NEVER -> context.getString(R.string.interval_never)
+    else -> context.getString(R.string.interval_hours, hours)
+}
+
 fun updateIntervalLabel(hours: Int): String = when (hours) {
-    7 -> "7 ч"
-    24 -> "24 ч"
-    48 -> "48 ч"
-    UPDATE_CHECK_NEVER -> "Никогда"
-    else -> "$hours ч"
+    7 -> "7 h"
+    24 -> "24 h"
+    48 -> "48 h"
+    UPDATE_CHECK_NEVER -> "Never"
+    else -> "$hours h"
 }
 
 data class AppReleaseInfo(

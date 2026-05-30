@@ -82,7 +82,7 @@ class ProxyTileService : TileService() {
                 Tile.STATE_INACTIVE
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                subtitle = if (state == Tile.STATE_ACTIVE) "Подключен" else "Отключен"
+                subtitle = if (state == Tile.STATE_ACTIVE) getString(R.string.tile_connected) else getString(R.string.tile_disconnected)
             }
             contentDescription = label
             updateTile()

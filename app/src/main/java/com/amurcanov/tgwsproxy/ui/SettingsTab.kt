@@ -25,6 +25,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -81,7 +82,7 @@ fun openTelegram(context: Context, url: String) {
         fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(fallbackIntent)
     } catch (_: Exception) {
-        Toast.makeText(context, "Telegram не найден!", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, context.getString(com.amurcanov.tgwsproxy.R.string.telegram_not_found), Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -210,7 +211,7 @@ fun SettingsTab(settingsStore: SettingsStore) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Настройки",
+                text = stringResource(com.amurcanov.tgwsproxy.R.string.settings),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -226,7 +227,7 @@ fun SettingsTab(settingsStore: SettingsStore) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Default.Public, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                     Text(
-                        "Подключение",
+                        stringResource(com.amurcanov.tgwsproxy.R.string.connection),
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.SemiBold
@@ -235,7 +236,7 @@ fun SettingsTab(settingsStore: SettingsStore) {
                 OutlinedTextField(
                     value = portText,
                     onValueChange = { portText = it; scheduleSave() },
-                    label = { Text("Порт") },
+                    label = { Text(stringResource(com.amurcanov.tgwsproxy.R.string.port)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -262,10 +263,10 @@ fun SettingsTab(settingsStore: SettingsStore) {
                     Icon(Icons.Default.Settings, null, Modifier.size(20.dp))
                     if (cfEnabled) {
                         Spacer(Modifier.width(8.dp))
-                        Text("Авто (Включён CF)", fontWeight = FontWeight.SemiBold)
+                        Text(stringResource(com.amurcanov.tgwsproxy.R.string.auto_cf_enabled), fontWeight = FontWeight.SemiBold)
                     } else {
                         Spacer(Modifier.width(8.dp))
-                        Text("Настроить адреса DC", fontWeight = FontWeight.SemiBold)
+                        Text(stringResource(com.amurcanov.tgwsproxy.R.string.configure_dc_addresses), fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -279,7 +280,7 @@ fun SettingsTab(settingsStore: SettingsStore) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Default.Layers, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                     Text(
-                        "Пул WS",
+                        stringResource(com.amurcanov.tgwsproxy.R.string.ws_pool),
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.SemiBold
@@ -320,7 +321,7 @@ fun SettingsTab(settingsStore: SettingsStore) {
                         modifier = Modifier.size(20.dp)
                     )
                     Text(
-                        "Секретный ключ",
+                        stringResource(com.amurcanov.tgwsproxy.R.string.secret_key),
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.SemiBold
@@ -406,7 +407,7 @@ fun SettingsTab(settingsStore: SettingsStore) {
                         modifier = Modifier.size(20.dp)
                     )
                     Text(
-                        "Автозапуск",
+                        stringResource(com.amurcanov.tgwsproxy.R.string.autostart),
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.SemiBold
@@ -496,7 +497,7 @@ private fun IpSetupDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    "Адреса датацентров",
+                    stringResource(com.amurcanov.tgwsproxy.R.string.dc_addresses),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -542,7 +543,7 @@ private fun IpSetupDialog(
 
                         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
-                        Text("Медиа датацентры", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(stringResource(com.amurcanov.tgwsproxy.R.string.media_dcs), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
                         dcInput("DC1m", dc1mText, onDc1mChange)
                         dcInput("DC2m", dc2mText, onDc2mChange)
@@ -562,7 +563,7 @@ private fun IpSetupDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "Экспериментальный режим",
+                        stringResource(com.amurcanov.tgwsproxy.R.string.experimental_mode),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -577,7 +578,7 @@ private fun IpSetupDialog(
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                     shape = RoundedCornerShape(24.dp)
                 ) {
-                    Text("Готово", fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(com.amurcanov.tgwsproxy.R.string.done), fontWeight = FontWeight.SemiBold)
                 }
             }
         }

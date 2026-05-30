@@ -19,6 +19,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -125,7 +126,7 @@ fun FloatingToolbar(
             ) {
                 Icon(
                     painter = painterResource(id = R.drawable.ic_palette),
-                    contentDescription = "Тема",
+                    contentDescription = stringResource(R.string.theme),
                     modifier = Modifier.size(22.dp),
                     tint = MaterialTheme.colorScheme.onPrimaryContainer
                 )
@@ -161,7 +162,7 @@ fun FloatingToolbar(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
-                        "Тема",
+                        stringResource(R.string.theme),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.SemiBold,
@@ -170,19 +171,19 @@ fun FloatingToolbar(
 
                     ThemeOption(
                         icon = R.drawable.ic_auto,
-                        label = "Системная",
+                        label = stringResource(R.string.theme_system),
                         selected = currentTheme == "system",
                         onClick = { onThemeChange("system"); isExpanded = false }
                     )
                     ThemeOption(
                         icon = R.drawable.ic_light_mode,
-                        label = "Светлая",
+                        label = stringResource(R.string.theme_light),
                         selected = currentTheme == "light",
                         onClick = { onThemeChange("light"); isExpanded = false }
                     )
                     ThemeOption(
                         icon = R.drawable.ic_dark_mode,
-                        label = "Тёмная",
+                        label = stringResource(R.string.theme_dark),
                         selected = currentTheme == "dark",
                         onClick = { onThemeChange("dark"); isExpanded = false }
                     )
@@ -199,7 +200,7 @@ fun FloatingToolbar(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "Динамические",
+                            stringResource(R.string.dynamic_colors),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium,
                             color = if (supportsDynamicColor) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
@@ -216,7 +217,7 @@ fun FloatingToolbar(
                         Column {
                             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                             Text(
-                                "Палитра",
+                                stringResource(R.string.palette),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(bottom = 6.dp, start = 4.dp)

@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.luminance
 
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -154,7 +155,7 @@ class MainActivity : ComponentActivity() {
                     intent.data = Uri.parse("package:$packageName")
                     startActivity(intent)
                 } catch (_: Exception) {
-                    Toast.makeText(this, "Не удалось запросить работу в фоне", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, getString(R.string.background_request_failed), Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -185,14 +186,12 @@ fun MainContent(settingsStore: SettingsStore) {
     val currentVersion = remember { "v${BuildConfig.VERSION_NAME.removePrefix("v")}" }
     val currentUpdatePostponeUntil by rememberUpdatedState(updatePostponeUntil)
     val currentUpdatePostponeVersion by rememberUpdatedState(updatePostponeVersion)
-    val navItems = remember {
-        listOf(
-            NavItem("Прокси", Icons.Default.PowerSettingsNew),
-            NavItem("Настройки", Icons.Default.Settings),
-            NavItem("Логи", Icons.Default.Terminal),
-            NavItem("Инфо", Icons.Default.Info)
-        )
-    }
+    val navItems = listOf(
+        NavItem(stringResource(R.string.nav_proxy), Icons.Default.PowerSettingsNew),
+        NavItem(stringResource(R.string.settings), Icons.Default.Settings),
+        NavItem(stringResource(R.string.nav_logs), Icons.Default.Terminal),
+        NavItem(stringResource(R.string.info), Icons.Default.Info)
+    )
     val safeBottomInset = with(density) { WindowInsets.safeDrawing.getBottom(density).toDp() }
     val navOverlayReserve = safeBottomInset + 96.dp
 
@@ -223,7 +222,7 @@ fun MainContent(settingsStore: SettingsStore) {
         settingsStore.saveUpdateState(
             lastCheckAt = checkedAt,
             latestVersion = release?.versionTag ?: "",
-            error = if (release == null) "Не удалось проверить" else ""
+            error = if (release == null) context.getString(R.string.update_check_failed_short) else ""
         )
 
         if (release == null) {
@@ -330,7 +329,7 @@ fun MainContent(settingsStore: SettingsStore) {
             release = release,
             onPostpone = {
                 pendingRelease = null
-                Toast.makeText(context, "Обновление отложено на 24 часа.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.update_postponed_24h), Toast.LENGTH_SHORT).show()
                 scope.launch {
                     val now = System.currentTimeMillis()
                     settingsStore.saveUpdatePostpone(
@@ -741,13 +740,10 @@ object LogManager {
         val emojiRegex = Regex("[\\x{1F300}-\\x{1F5FF}\\x{1F900}-\\x{1F9FF}\\x{1F600}-\\x{1F64F}\\x{1F680}-\\x{1F6FF}\\x{2600}-\\x{26FF}\\x{2700}-\\x{27BF}\\x{1F1E6}-\\x{1F1FF}\\x{1F191}-\\x{1F251}\\x{1F004}\\x{1F0CF}\\x{1F170}-\\x{1F171}\\x{1F17E}-\\x{1F17F}\\x{1F18E}\\x{3030}\\x{2B50}\\x{2B55}\\x{2934}-\\x{2935}\\x{2B05}-\\x{2B07}\\x{2B1B}-\\x{2B1C}\\x{3297}\\x{3299}\\x{303D}\\x{00A9}\\x{00AE}\\x{2122}\\x{23F3}\\x{24C2}\\x{23E9}-\\x{23EF}\\x{25B6}\\x{23F8}-\\x{23FA}⚠✅❌⚡🔥🔄🔗]")
         message = message.replace(emojiRegex, "").trim()
 
-        val isEssential = message.contains("Пул", ignoreCase = true) ||
-                          message.contains("Ключ:", ignoreCase = true) ||
-                          message.contains("запущен", ignoreCase = true) ||
-                          message.contains("Адрес:", ignoreCase = true) ||
-                          message.contains("ошибка", ignoreCase = true) ||
-                          message.contains("провалены", ignoreCase = true) ||
-                          message.contains("заблокирован", ignoreCase = true)
+        val isEssential = listOf(
+            "pool", "key:", "started", "address:", "error", "failed", "blocked",
+            "Пул", "Ключ:", "запущен", "Адрес:", "ошибка", "провалены", "заблокирован"
+        ).any { marker -> message.contains(marker, ignoreCase = true) }
 
         return LogEntry(
             key = "log_${nextKey.getAndIncrement()}",

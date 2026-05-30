@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -74,9 +75,9 @@ fun ConnectionTab(settingsStore: SettingsStore) {
 
     var isStarting by remember { mutableStateOf(false) }
     val statusText = when {
-        isStarting -> "Подключение"
-        isRunning -> "Подключено"
-        else -> "Отключено"
+        isStarting -> stringResource(R.string.status_connecting)
+        isRunning -> stringResource(R.string.status_connected)
+        else -> stringResource(R.string.status_disconnected)
     }
 
     LaunchedEffect(isRunning) {
@@ -146,7 +147,7 @@ fun ConnectionTab(settingsStore: SettingsStore) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Запуск",
+                text = stringResource(R.string.section_launch),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -212,7 +213,7 @@ fun ConnectionTab(settingsStore: SettingsStore) {
                             )
                         ) {
                             Text(
-                                "Применить в Telegram",
+                                stringResource(R.string.apply_in_telegram),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -229,7 +230,7 @@ fun ConnectionTab(settingsStore: SettingsStore) {
                             onClick = {
                                 val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                                 cb.setPrimaryClip(android.content.ClipData.newPlainText("Proxy", proxyUrl))
-                                Toast.makeText(context, "Скопировано", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, context.getString(R.string.copied), Toast.LENGTH_SHORT).show()
                             },
                             shape = RoundedCornerShape(24.dp),
                             color = MaterialTheme.colorScheme.surface,
@@ -253,7 +254,7 @@ fun ConnectionTab(settingsStore: SettingsStore) {
                                 )
                                 Icon(
                                     Icons.Default.ContentCopy,
-                                    contentDescription = "Скопировать",
+                                    contentDescription = stringResource(R.string.copy),
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp)
                                 )
@@ -287,21 +288,21 @@ private fun ProxyStatusPanel(
             verticalAlignment = Alignment.CenterVertically
         ) {
             ProxyStatusItem(
-                text = if (cfEnabled) "CF" else "Прямое",
+                text = if (cfEnabled) "CF" else stringResource(R.string.direct_mode),
                 modifier = Modifier
                     .weight(0.9f)
                     .padding(horizontal = 6.dp, vertical = 8.dp)
             )
             ProxyStatusDivider()
             ProxyStatusItem(
-                text = "Пул x$poolSize",
+                text = stringResource(R.string.pool_short, poolSize),
                 modifier = Modifier
                     .weight(1.05f)
                     .padding(horizontal = 6.dp, vertical = 8.dp)
             )
             ProxyStatusDivider()
             ProxyStatusItem(
-                text = "Порт $port",
+                text = stringResource(R.string.port_short, port),
                 modifier = Modifier
                     .weight(1.35f)
                     .padding(horizontal = 6.dp, vertical = 8.dp)
