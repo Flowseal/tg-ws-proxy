@@ -186,6 +186,15 @@ def start_cfproxy_domain_refresh() -> None:
     threading.Thread(target=_loop, daemon=True, name='cfproxy-domains-refresh').start()
 
 
+def _validate_ip(ip_s: str) -> None:
+    try:
+        _socket.inet_pton(_socket.AF_INET, ip_s)
+        return
+    except OSError:
+        pass
+    _socket.inet_pton(_socket.AF_INET6, ip_s)
+
+
 def parse_dc_ip_list(dc_ip_list: List[str]) -> Dict[int, str]:
     dc_redirects: Dict[int, str] = {}
     for entry in dc_ip_list:
@@ -195,7 +204,7 @@ def parse_dc_ip_list(dc_ip_list: List[str]) -> Dict[int, str]:
         dc_s, ip_s = entry.split(':', 1)
         try:
             dc_n = int(dc_s)
-            _socket.inet_aton(ip_s)
+            _validate_ip(ip_s)
         except (ValueError, OSError):
             raise ValueError(f"Invalid --dc-ip {entry!r}")
         dc_redirects[dc_n] = ip_s
