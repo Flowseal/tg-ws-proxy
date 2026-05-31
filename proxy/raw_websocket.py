@@ -154,6 +154,13 @@ class RawWebSocket:
                 self._build_frame(self.OP_BINARY, part, mask=True))
         await self.writer.drain()
 
+    async def send_ping(self, payload: bytes = b''):
+        if self._closed:
+            raise ConnectionError("WebSocket closed")
+        frame = self._build_frame(self.OP_PING, payload, mask=True)
+        self.writer.write(frame)
+        await self.writer.drain()
+
     async def recv(self) -> Optional[bytes]:
         while not self._closed:
             opcode, payload = await self._read_frame()
