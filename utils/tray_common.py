@@ -17,6 +17,7 @@ import psutil
 from proxy import __version__, get_link_host, parse_dc_ip_list, proxy_config, coerce_domain_list
 from proxy.tg_ws_proxy import _run
 from utils.default_config import default_tray_config
+from utils.diagnostics import diagnose_listen_error
 
 log = logging.getLogger("tg-ws-tray")
 
@@ -243,13 +244,9 @@ def _run_proxy_thread(on_port_busy: Callable[[str], None]) -> None:
         loop.run_until_complete(_run(stop_event=stop_ev))
     except Exception as exc:
         log.error("Proxy thread crashed: %s", repr(exc))
-        if "Address already in use" in str(exc) or "10048" in str(exc):
-            on_port_busy(
-                "Не удалось запустить прокси:\n"
-                "Порт уже используется другим приложением.\n\n"
-                "Закройте приложение, использующее этот порт, "
-                "или измените порт в настройках прокси и перезапустите."
-            )
+        msg = diagnose_listen_error(exc)
+        if msg:
+            on_port_busy(msg)
     finally:
         loop.close()
         _async_stop = None

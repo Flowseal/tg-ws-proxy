@@ -32,6 +32,7 @@ from utils.tray_common import (
     LOG_FILE, acquire_lock, apply_proxy_config, ensure_dirs, load_config,
     log, release_lock, save_config, setup_logging, stop_proxy, tg_proxy_url,
 )
+from utils.diagnostics import diagnose_listen_error
 
 MENUBAR_ICON_PATH = APP_DIR / "menubar_icon.png"
 
@@ -184,13 +185,9 @@ def _run_proxy_thread() -> None:
         loop.run_until_complete(_run(stop_event=stop_ev))
     except Exception as exc:
         log.error("Proxy thread crashed: %s", exc)
-        if "Address already in use" in str(exc):
-            _show_error(
-                "Не удалось запустить прокси:\n"
-                "Порт уже используется другим приложением.\n\n"
-                "Закройте приложение, использующее этот порт, "
-                "или измените порт в настройках прокси и перезапустите."
-            )
+        msg = diagnose_listen_error(exc)
+        if msg:
+            _show_error(msg)
     finally:
         loop.close()
         _async_stop = None
