@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Tuple, Set
 
 from .raw_websocket import RawWebSocket, WsHandshakeError
 from .stats import stats
-from .config import proxy_config
+from .config import proxy_config, resolve_dc_ip
 from .utils import ws_domains, DC_DEFAULT_IPS
 
 log = logging.getLogger('tg-mtproto-proxy')
@@ -97,13 +97,17 @@ class _WsPool:
             pass
 
     async def warmup(self):
-        for dc, target_ip in proxy_config.dc_redirects.items():
-            if target_ip is None:
-                continue
+        dcs = set(proxy_config.dc_redirects) | set(proxy_config.media_redirects)
+        for dc in dcs:
             for is_media in (False, True):
+                target_ip = resolve_dc_ip(proxy_config.dc_redirects,
+                                          proxy_config.media_redirects,
+                                          dc, is_media)
+                if target_ip is None:
+                    continue
                 domains = ws_domains(dc, is_media)
                 self._schedule_refill((dc, is_media), target_ip, domains)
-        log.info("WS pool warmup started for %d DC(s)", len(proxy_config.dc_redirects))
+        log.info("WS pool warmup started for %d DC(s)", len(dcs))
 
     def reset(self):
         self._idle.clear()

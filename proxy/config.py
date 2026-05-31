@@ -6,7 +6,7 @@ import socket as _socket
 import threading
 
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 from urllib.request import Request
 
 from .balancer import balancer
@@ -55,6 +55,7 @@ class ProxyConfig:
     host: str = '127.0.0.1'
     secret: str = field(default_factory=lambda: os.urandom(16).hex())
     dc_redirects: Dict[int, str] = field(default_factory=lambda: {2: '149.154.167.220', 4: '149.154.167.220'})
+    media_redirects: Dict[int, str] = field(default_factory=dict)
     buffer_size: int = 256 * 1024
     pool_size: int = 4
     fallback_cfproxy: bool = True
@@ -186,17 +187,35 @@ def start_cfproxy_domain_refresh() -> None:
     threading.Thread(target=_loop, daemon=True, name='cfproxy-domains-refresh').start()
 
 
-def parse_dc_ip_list(dc_ip_list: List[str]) -> Dict[int, str]:
+def parse_dc_ip_list(
+        dc_ip_list: List[str]) -> Tuple[Dict[int, str], Dict[int, str]]:
     dc_redirects: Dict[int, str] = {}
+    media_redirects: Dict[int, str] = {}
     for entry in dc_ip_list:
         if ':' not in entry:
             raise ValueError(
                 f"Invalid --dc-ip format {entry!r}, expected DC:IP")
         dc_s, ip_s = entry.split(':', 1)
+        is_media = dc_s.endswith('m')
+        if is_media:
+            dc_s = dc_s[:-1]
         try:
             dc_n = int(dc_s)
             _socket.inet_aton(ip_s)
         except (ValueError, OSError):
             raise ValueError(f"Invalid --dc-ip {entry!r}")
-        dc_redirects[dc_n] = ip_s
-    return dc_redirects
+        if is_media:
+            media_redirects[dc_n] = ip_s
+        else:
+            dc_redirects[dc_n] = ip_s
+    return dc_redirects, media_redirects
+
+
+def resolve_dc_ip(dc_redirects: Dict[int, str],
+                  media_redirects: Dict[int, str],
+                  dc: int, is_media: bool) -> Optional[str]:
+    if is_media:
+        ip = media_redirects.get(dc)
+        if ip is not None:
+            return ip
+    return dc_redirects.get(dc)

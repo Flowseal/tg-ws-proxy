@@ -22,7 +22,7 @@ if __name__ == '__main__' and (__package__ is None or __package__ == ''):
 
 from .utils import *
 from .stats import stats
-from .config import proxy_config, parse_dc_ip_list, start_cfproxy_domain_refresh, coerce_domain_list
+from .config import proxy_config, parse_dc_ip_list, resolve_dc_ip, start_cfproxy_domain_refresh, coerce_domain_list
 from .bridge import MsgSplitter, CryptoCtx, do_fallback, bridge_ws_reencrypt
 from .raw_websocket import RawWebSocket, WsHandshakeError, set_sock_opts
 from .fake_tls import proxy_to_masking_domain, verify_client_hello, build_server_hello, FakeTlsStream, TLS_RECORD_HANDSHAKE
@@ -290,9 +290,13 @@ async def _handle_client(reader, writer, secret: bytes):
         dc_key = f'{dc}{"m" if is_media else ""}'
         media_tag = " media" if is_media else ""
 
+        # Resolve target IP (media-aware) and fall back when unavailable.
+        target = resolve_dc_ip(proxy_config.dc_redirects,
+                               proxy_config.media_redirects, dc, is_media)
+
         # Fallback if DC not in config or WS blacklisted for this DC/is_media
-        if dc not in proxy_config.dc_redirects or dc_key in ws_blacklist:
-            if dc not in proxy_config.dc_redirects:
+        if target is None or dc_key in ws_blacklist:
+            if target is None:
                 log.info("[%s] DC%d not in config -> fallback",
                          label, dc)
             else:
@@ -317,7 +321,6 @@ async def _handle_client(reader, writer, secret: bytes):
         ws_timeout = WS_FAIL_TIMEOUT if now < fail_until else 10.0
 
         domains = ws_domains(dc, is_media)
-        target = proxy_config.dc_redirects[dc]
         ws = None
         ws_failed_redirect = False
         all_redirects = True
@@ -483,6 +486,9 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     for dc in sorted(proxy_config.dc_redirects.keys()):
         ip = proxy_config.dc_redirects.get(dc)
         log.info("    DC%d: %s", dc, ip)
+    for dc in sorted(proxy_config.media_redirects.keys()):
+        ip = proxy_config.media_redirects.get(dc)
+        log.info("    DC%d media: %s", dc, ip)
     if proxy_config.fallback_cfproxy:
         user_domain = "user" if proxy_config.cfproxy_user_domains else "auto"
         log.info("  CF proxy:      enabled (%s)", user_domain)
@@ -561,7 +567,10 @@ def main():
                     help='MTProto proxy secret (32 hex chars). '
                          'Auto-generated if not provided.')
     ap.add_argument('--dc-ip', metavar='DC:IP', action='append',
-                    help='Target IP for a DC, e.g. --dc-ip 2:149.154.167.220')
+                    help='Target IP for a DC, e.g. --dc-ip 2:149.154.167.220. '
+                         'Suffix the DC with "m" for a media-only override, '
+                         'e.g. --dc-ip 2m:149.154.167.220 (falls back to the '
+                         'plain DC IP when omitted).')
     ap.add_argument('-v', '--verbose', action='store_true',
                     help='Debug logging')
     ap.add_argument('--log-file', type=str, default=None, metavar='PATH',
@@ -598,7 +607,7 @@ def main():
         args.dc_ip = ['2:149.154.167.220', '4:149.154.167.220']
 
     try:
-        dc_redirects = parse_dc_ip_list(args.dc_ip)
+        dc_redirects, media_redirects = parse_dc_ip_list(args.dc_ip)
     except ValueError as e:
         log.error(str(e))
         sys.exit(1)
@@ -621,6 +630,7 @@ def main():
     proxy_config.host = args.host
     proxy_config.secret = secret_hex
     proxy_config.dc_redirects = dc_redirects
+    proxy_config.media_redirects = media_redirects
     proxy_config.buffer_size = max(4, args.buf_kb) * 1024
     proxy_config.pool_size = max(0, args.pool_size)
     proxy_config.fallback_cfproxy = not args.no_cfproxy

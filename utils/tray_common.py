@@ -258,7 +258,7 @@ def _run_proxy_thread(on_port_busy: Callable[[str], None]) -> None:
 def apply_proxy_config(cfg: dict) -> bool:
     dc_ip_list = cfg.get("dc_ip", DEFAULT_CONFIG["dc_ip"])
     try:
-        dc_redirects = parse_dc_ip_list(dc_ip_list)
+        dc_redirects, media_redirects = parse_dc_ip_list(dc_ip_list)
     except ValueError as e:
         log.error("Bad config dc_ip: %s", e)
         return False
@@ -268,6 +268,7 @@ def apply_proxy_config(cfg: dict) -> bool:
     pc.host = cfg.get("host", DEFAULT_CONFIG["host"])
     pc.secret = cfg.get("secret", DEFAULT_CONFIG["secret"])
     pc.dc_redirects = dc_redirects
+    pc.media_redirects = media_redirects
     pc.buffer_size = max(4, cfg.get("buf_kb", DEFAULT_CONFIG["buf_kb"])) * 1024
     pc.pool_size = max(0, cfg.get("pool_size", DEFAULT_CONFIG["pool_size"]))
     pc.fallback_cfproxy = cfg.get("cfproxy", DEFAULT_CONFIG["cfproxy"])
