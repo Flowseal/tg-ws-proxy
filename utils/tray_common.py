@@ -17,6 +17,7 @@ import psutil
 from proxy import __version__, get_link_host, parse_dc_ip_list, proxy_config, coerce_domain_list
 from proxy.tg_ws_proxy import _run
 from utils.default_config import default_tray_config
+from utils.logging_setup import build_log_handler
 
 log = logging.getLogger("tg-ws-tray")
 
@@ -155,12 +156,7 @@ def setup_logging(verbose: bool = False, log_max_mb: float = 5) -> None:
     root.setLevel(level)
     logging.getLogger('asyncio').setLevel(logging.WARNING)
 
-    fh = logging.handlers.RotatingFileHandler(
-        str(LOG_FILE),
-        maxBytes=max(32 * 1024, int(log_max_mb * 1024 * 1024)),
-        backupCount=0,
-        encoding="utf-8",
-    )
+    fh = build_log_handler(str(LOG_FILE), log_max_mb=log_max_mb, backups=1)
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(logging.Formatter(_LOG_FMT_FILE, datefmt="%Y-%m-%d %H:%M:%S"))
     root.addHandler(fh)
