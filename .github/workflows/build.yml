@@ -17,7 +17,7 @@ permissions:
   contents: write
 
 jobs:
-  build-windows:
+  build-windows-x64:
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -68,13 +68,72 @@ jobs:
           "
 
       - name: Rename artifact
-        run: mv dist/TgWsProxy.exe dist/TgWsProxy_windows.exe
+        run: mv dist/TgWsProxy.exe dist/TgWsProxy_windows_x64.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: TgWsProxy
-          path: dist/TgWsProxy_windows.exe
+          name: TgWsProxy-windows-x64
+          path: dist/TgWsProxy_windows_x64.exe
+
+  build-windows-arm64:
+    runs-on: windows-11-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          architecture: arm64
+          cache: "pip"
+
+      - name: Install ARM64 OpenSSL
+        shell: pwsh
+        run: |
+          vcpkg install openssl:arm64-windows-static
+          $opensslDir = "$env:VCPKG_INSTALLATION_ROOT\installed\arm64-windows-static"
+          "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
+          "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+
+      - name: Install dependencies & pyinstaller
+        run: pip install . "pyinstaller==6.13.0"
+
+      - name: Build EXE with PyInstaller
+        run: pyinstaller packaging/windows.spec --noconfirm
+
+      - name: Strip Rich PE header
+        shell: bash
+        run: |
+          python -c "
+          import struct, pathlib
+          exe = pathlib.Path('dist/TgWsProxy.exe')
+          data = bytearray(exe.read_bytes())
+          rich = data.find(b'Rich')
+          if rich == -1:
+              print('Rich header not found, skipping')
+              raise SystemExit(0)
+          ck = struct.unpack_from('<I', data, rich + 4)[0]
+          dans = struct.pack('<I', 0x536E6144 ^ ck)
+          ds = data.find(dans)
+          if ds == -1:
+              print('DanS marker not found, skipping')
+              raise SystemExit(0)
+          data[ds:rich + 8] = b'\x00' * (rich + 8 - ds)
+          exe.write_bytes(data)
+          print(f'Stripped Rich header: offset {ds}..{rich+8}')
+          "
+
+      - name: Rename artifact
+        run: mv dist/TgWsProxy.exe dist/TgWsProxy_windows_arm64.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: TgWsProxy-windows-arm64
+          path: dist/TgWsProxy_windows_arm64.exe
 
   build-win7:
     runs-on: windows-latest
@@ -439,7 +498,7 @@ jobs:
             dist/TgWsProxy_linux_amd64.rpm
 
   release:
-    needs: [build-windows, build-win7, build-macos, build-linux]
+    needs: [build-windows-x64, build-windows-arm64, build-win7, build-macos, build-linux]
     runs-on: ubuntu-latest
     if: ${{ github.event.inputs.make_release == 'true' }}
     steps:
@@ -462,7 +521,8 @@ jobs:
             > Не можете скачать?
             > Добавьте `185.199.109.133 release-assets.githubusercontent.com` в hosts или воспользуйтесь зеркалом: https://sourceforge.net/projects/tg-ws-proxy.mirror/files/
           files: |
-            dist/TgWsProxy_windows.exe
+            dist/TgWsProxy_windows_x64.exe
+            dist/TgWsProxy_windows_arm64.exe
             dist/TgWsProxy_windows_7_64bit.exe
             dist/TgWsProxy_windows_7_32bit.exe
             dist/TgWsProxy_macos_universal.dmg

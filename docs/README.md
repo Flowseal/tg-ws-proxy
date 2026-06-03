@@ -55,7 +55,8 @@
 
 Перейдите на [страницу релизов](https://github.com/Flowseal/tg-ws-proxy/releases) и скачайте:
 
-- `TgWsProxy_windows.exe` (Windows 10+)
+- `TgWsProxy_windows_x64.exe` (Windows 10+ x64)
+- `TgWsProxy_windows_arm64.exe` (Windows 10+ ARM64)
 - `TgWsProxy_windows_7_64bit.exe` (Windows 7 x64)
 - `TgWsProxy_windows_7_32bit.exe` (Windows 7 x32)
 
@@ -116,7 +117,8 @@ Telegram Desktop → MTProto Proxy (127.0.0.1:1443) → WebSocket → Telegram D
 
 Минимально поддерживаемые версии ОС для текущих бинарных сборок:
 
-- Windows 10+ для `TgWsProxy_windows.exe`
+- Windows 10+ x64 для `TgWsProxy_windows_x64.exe`
+- Windows 10+ ARM64 для `TgWsProxy_windows_arm64.exe`
 - Windows 7 (x64) для `TgWsProxy_windows_7_64bit.exe`
 - Windows 7 (x32) для `TgWsProxy_windows_7_32bit.exe`
 - Intel macOS 10.15+
