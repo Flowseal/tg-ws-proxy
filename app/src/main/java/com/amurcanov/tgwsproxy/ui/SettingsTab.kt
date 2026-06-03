@@ -3,6 +3,7 @@ package com.amurcanov.tgwsproxy.ui
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.ActivityNotFoundException
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
@@ -39,23 +40,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-val telegramApps = listOf(
-    "org.telegram.messenger",
-    "org.thunderdog.challegram",
-    "com.radolyn.ayugram",
-    "app.exteragram.messenger",
-    "ir.ilmili.telegraph",
-    "org.telegram.plus",
-    "tw.nekomimi.nekogram",
-    "tw.nekomimi.nekogramx",
-    "org.telegram.mdgram",
-    "com.iMe.android",
-    "app.nicegram",
-    "org.telegram.bgram",
-    "cc.modery.cherrygram",
-    "io.github.nextalone.nagram"
-)
-
 private fun generateRandomSecret(): String {
     val bytes = ByteArray(16)
     java.security.SecureRandom().nextBytes(bytes)
@@ -63,26 +47,16 @@ private fun generateRandomSecret(): String {
 }
 
 fun openTelegram(context: Context, url: String) {
-    val pm = context.packageManager
-    val uri = Uri.parse(url)
-    for (pkg in telegramApps) {
-        try {
-            pm.getPackageInfo(pkg, 0)
-            val intent = Intent(Intent.ACTION_VIEW, uri)
-            intent.setPackage(pkg)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(intent)
-            return
-        } catch (_: PackageManager.NameNotFoundException) {
-        } catch (_: Exception) {
-        }
-    }
     try {
-        val fallbackIntent = Intent(Intent.ACTION_VIEW, uri)
-        fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(fallbackIntent)
-    } catch (_: Exception) {
-        Toast.makeText(context, context.getString(com.amurcanov.tgwsproxy.R.string.telegram_not_found), Toast.LENGTH_SHORT).show()
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    } catch (_: ActivityNotFoundException) {
+        Toast.makeText(
+            context,
+            com.amurcanov.tgwsproxy.R.string.telegram_not_found,
+            Toast.LENGTH_SHORT
+        ).show()
     }
 }
 
