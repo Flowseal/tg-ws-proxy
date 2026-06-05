@@ -78,6 +78,9 @@ jobs:
 
   build-windows-arm64:
     runs-on: windows-11-arm
+    env:
+      CRYPTOGRAPHY_VERSION: "46.0.5"
+      ARM64_WHEELHOUSE: wheelhouse-arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -89,7 +92,15 @@ jobs:
           architecture: arm64
           cache: "pip"
 
+      - name: Restore ARM64 cryptography wheel
+        id: cryptography-wheel-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ARM64_WHEELHOUSE }}
+          key: windows-arm64-py311-cryptography-${{ env.CRYPTOGRAPHY_VERSION }}-${{ hashFiles('pyproject.toml', '.github/workflows/build.yml') }}
+
       - name: Install ARM64 OpenSSL
+        if: steps.cryptography-wheel-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           vcpkg install openssl:arm64-windows-static
@@ -98,8 +109,14 @@ jobs:
           "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
 
+      - name: Build ARM64 cryptography wheel
+        if: steps.cryptography-wheel-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir $env:ARM64_WHEELHOUSE
+          pip wheel --no-deps --wheel-dir $env:ARM64_WHEELHOUSE "cryptography==$env:CRYPTOGRAPHY_VERSION"
+
       - name: Install dependencies & pyinstaller
-        run: pip install . "pyinstaller==6.13.0"
+        run: pip install --find-links $env:ARM64_WHEELHOUSE . "pyinstaller==6.13.0"
 
       - name: Build EXE with PyInstaller
         run: pyinstaller packaging/windows.spec --noconfirm
