@@ -29,7 +29,7 @@ _CFPROXY_ENC: List[str] = [
     'clngqrflngqin.com',
     'tjacxbqtj.com',
     'bxaxtxmrw.com',
-    'dmohrsgmohcrwb.com'
+    'dmohrsgmohcrwb.com',
     'vwbmtmoi.com',
     'khgrre.com',
     'ulihssf.com',
