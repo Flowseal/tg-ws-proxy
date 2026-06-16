@@ -20,16 +20,16 @@ CFPROXY_DOMAINS_URL = (
 )
 
 _CFPROXY_ENC: List[str] = [
-    'virkgj.com', 
-    'vmmzovy.com', 
-    'mkuosckvso.com', 
-    'zaewayzmplad.com', 
+    'virkgj.com',
+    'vmmzovy.com',
+    'mkuosckvso.com',
+    'zaewayzmplad.com',
     'twdmbzcm.com',
     'awzwsldi.com',
     'clngqrflngqin.com',
     'tjacxbqtj.com',
     'bxaxtxmrw.com',
-    'dmohrsgmohcrwb.com'
+    'dmohrsgmohcrwb.com',
     'vwbmtmoi.com',
     'khgrre.com',
     'ulihssf.com',
