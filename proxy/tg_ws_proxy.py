@@ -592,6 +592,10 @@ def main():
     ap.add_argument('--proxy-protocol', action='store_true',
                     help='Accept PROXY protocol v1 header '
                          '(for use behind nginx/haproxy with proxy_protocol on)')
+    ap.add_argument('--ws-keepalive', type=float, default=30.0, metavar='SEC',
+                    help='Seconds between WebSocket keepalive PINGs to the '
+                         'upstream (default 30, 0 to disable). Keeps idle '
+                         'sessions alive through NAT/firewall timeouts.')
     args = ap.parse_args()
 
     if not args.dc_ip:
@@ -628,6 +632,7 @@ def main():
     proxy_config.cfproxy_worker_domains = coerce_domain_list(args.cfproxy_worker_domain)
     proxy_config.fake_tls_domain = args.fake_tls_domain.strip()
     proxy_config.proxy_protocol = args.proxy_protocol
+    proxy_config.ws_keepalive_interval = max(0.0, args.ws_keepalive)
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
     log_fmt = logging.Formatter('%(asctime)s  %(levelname)-5s  %(message)s',
