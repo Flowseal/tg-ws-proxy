@@ -626,9 +626,9 @@ def run_menubar() -> None:
         return
 
     _start_proxy()
-    _maybe_notify_update_async()
     _show_first_run()
     _check_ipv6_warning()
+    _maybe_notify_update_async()
 
     _app = TgWsProxyApp()
     log.info("Menubar app running")

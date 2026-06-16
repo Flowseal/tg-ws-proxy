@@ -624,9 +624,9 @@ def run_tray() -> None:
         return
 
     start_proxy(_config, _show_error)
-    _maybe_do_update(_config, lambda: _exiting)
     _show_first_run()
     check_ipv6_warning(_show_info)
+    _maybe_do_update(_config, lambda: _exiting)
 
     _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
     log.info("Tray icon running")
