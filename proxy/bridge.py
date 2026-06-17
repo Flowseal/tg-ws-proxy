@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import struct
+import random
 
 from typing import List, Optional
 from urllib.parse import urlencode
@@ -179,6 +180,8 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
     worker_domains = proxy_config.cfproxy_worker_domains
     if not worker_domains:
         return False
+    
+    random.shuffle(worker_domains)
 
     for worker_domain in worker_domains:
         ws = await cf_worker_pool.get(dc, worker_domain, fallback_dst)

