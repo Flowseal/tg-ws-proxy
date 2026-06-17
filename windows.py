@@ -68,10 +68,17 @@ _ERROR_ALREADY_EXISTS = 183
 def _acquire_win_mutex() -> bool | None:
     global _win_mutex_handle
     try:
+        import hashlib
+        if bool(getattr(sys, "frozen", False)):
+            exe_path = str(Path(sys.executable).parent)
+        else:
+            exe_path = str(Path(__file__).resolve().parent)
+        folder_hash = hashlib.md5(exe_path.encode()).hexdigest()[:8]
+        mutex_name = f"Local\\TgWsProxy_{folder_hash}"
         kernel32 = ctypes.windll.kernel32
         kernel32.CreateMutexW.restype = ctypes.c_void_p
         kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
-        handle = kernel32.CreateMutexW(None, True, "Local\\TgWsProxy_SingleInstance")
+        handle = kernel32.CreateMutexW(None, True, mutex_name)
         if kernel32.GetLastError() == _ERROR_ALREADY_EXISTS:
             kernel32.CloseHandle(ctypes.c_void_p(handle))
             return False
