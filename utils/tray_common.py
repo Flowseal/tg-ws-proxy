@@ -25,10 +25,14 @@ APP_NAME = "TgWsProxy"
 
 def _app_dir() -> Path:
     if sys.platform == "win32":
-        return Path(os.environ.get("APPDATA", Path.home())) / APP_NAME
-    if sys.platform == "darwin":
+        if bool(getattr(sys, "frozen", False)):
+            return Path(sys.executable).parent / APP_NAME
+        else:
+            return Path(__file__).resolve().parent.parent / APP_NAME
+    elif sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / APP_NAME
-    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP_NAME
+    else:
+        return Path.home() / ".config" / APP_NAME
 
 
 APP_DIR = _app_dir()
