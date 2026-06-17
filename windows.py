@@ -623,10 +623,16 @@ def run_tray() -> None:
             stop_proxy()
         return
 
+    # Capture before _show_first_run touches the marker.
+    first_launch = not FIRST_RUN_MARKER.exists()
+
     start_proxy(_config, _show_error)
     _show_first_run()
     check_ipv6_warning(_show_info)
     _maybe_do_update(_config, lambda: _exiting)
+
+    if not first_launch and _config.get("open_settings_on_start", True):
+        threading.Thread(target=_edit_config_dialog, daemon=True).start()
 
     _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
     log.info("Tray icon running")

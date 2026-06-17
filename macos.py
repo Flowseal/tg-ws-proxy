@@ -625,10 +625,16 @@ def run_menubar() -> None:
             _stop_proxy()
         return
 
+    # Capture before _show_first_run touches the marker.
+    first_launch = not FIRST_RUN_MARKER.exists()
+
     _start_proxy()
     _show_first_run()
     _check_ipv6_warning()
     _maybe_notify_update_async()
+
+    if not first_launch and _config.get("open_settings_on_start", True):
+        threading.Thread(target=_edit_config_dialog, daemon=True).start()
 
     _app = TgWsProxyApp()
     log.info("Menubar app running")
