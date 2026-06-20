@@ -15,9 +15,10 @@ except ImportError:
     rumps = None
 
 try:
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image
+    from utils.app_icon import render_app_icon
 except ImportError:
-    Image = ImageDraw = ImageFont = None
+    Image = render_app_icon = None
 
 try:
     import pyperclip
@@ -142,28 +143,12 @@ def _ask_cfworker_domain(default: str) -> Optional[str]:
 
 
 def _make_menubar_icon(size: int = 44):
-    if Image is None:
+    if render_app_icon is None:
         return None
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    margin = size // 11
-    draw.ellipse([margin, margin, size - margin, size - margin], fill=(0, 0, 0, 255))
-    try:
-        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", size=int(size * 0.55))
-    except Exception:
-        font = ImageFont.load_default()
-    bbox = draw.textbbox((0, 0), "T", font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(
-        ((size - tw) // 2 - bbox[0], (size - th) // 2 - bbox[1]),
-        "T", fill=(255, 255, 255, 255), font=font,
-    )
-    return img
+    return render_app_icon(size)
 
 
 def _ensure_menubar_icon() -> None:
-    if MENUBAR_ICON_PATH.exists():
-        return
     ensure_dirs()
     img = _make_menubar_icon(44)
     if img:
