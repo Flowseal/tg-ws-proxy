@@ -275,7 +275,7 @@ jobs:
       - name: Create macOS icon
         run: |
           set -euo pipefail
-          python3.12 packaging/macos_icon.py icon.icns
+          python3.12 macos.py --render-app-icon icon.icns
 
       - name: Build app with PyInstaller
         run: python3.12 -m PyInstaller packaging/macos.spec --noconfirm
@@ -311,7 +311,6 @@ jobs:
       - name: Create DMG
         run: |
           set -euo pipefail
-          python3.12 packaging/dmg/make_background.py packaging/dmg/assets
           packaging/dmg/build_dmg.sh \
             "dist/TG WS Proxy.app" \
             "TG WS Proxy" \

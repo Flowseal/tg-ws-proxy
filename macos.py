@@ -10,15 +10,51 @@ from pathlib import Path
 from typing import Optional
 
 try:
+    from PIL import Image, ImageDraw, ImageFont
+except ImportError:
+    Image = ImageDraw = ImageFont = None
+
+
+def render_app_icon(size: int):
+    scale = size / 1024
+    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    outer = tuple(round(value * scale) for value in (92, 92, 932, 932))
+    draw.ellipse(outer, fill=(0, 151, 221, 255))
+    try:
+        font = ImageFont.truetype(
+            "/System/Library/Fonts/Helvetica.ttc",
+            round(430 * scale),
+        )
+    except Exception:
+        font = ImageFont.load_default()
+    box = draw.textbbox((0, 0), "T", font=font)
+    width = box[2] - box[0]
+    height = box[3] - box[1]
+    draw.text(
+        (
+            (size - width) / 2 - box[0],
+            (size - height) / 2 - box[1] - round(10 * scale),
+        ),
+        "T",
+        font=font,
+        fill=(255, 255, 255, 255),
+    )
+    return image
+
+
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--render-app-icon":
+    if Image is None:
+        raise SystemExit("Pillow is required to render the macOS app icon")
+    output_path = sys.argv[2] if len(sys.argv) > 2 else "icon.icns"
+    render_app_icon(1024).save(output_path, format="ICNS")
+    raise SystemExit(0)
+
+
+try:
     import rumps
 except ImportError:
     rumps = None
-
-try:
-    from PIL import Image
-    from utils.app_icon import render_app_icon
-except ImportError:
-    Image = render_app_icon = None
 
 try:
     import pyperclip
@@ -143,7 +179,7 @@ def _ask_cfworker_domain(default: str) -> Optional[str]:
 
 
 def _make_menubar_icon(size: int = 44):
-    if render_app_icon is None:
+    if Image is None:
         return None
     return render_app_icon(size)
 

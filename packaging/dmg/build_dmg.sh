@@ -18,9 +18,12 @@ WORK="$(mktemp -d)"
 STAGE="$WORK/stage"
 RW_DMG="$WORK/rw.dmg"
 MOUNT="/Volumes/$VOL_NAME"
+DEVICE=""
 
 cleanup() {
-  hdiutil detach "$MOUNT" -force >/dev/null 2>&1 || true
+  if [ -n "$DEVICE" ]; then
+    hdiutil detach "$DEVICE" -force >/dev/null 2>&1 || true
+  fi
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -34,8 +37,6 @@ tiffutil -cathidpicheck \
   "$ASSETS_DIR/background-light@2x.png" \
   -out "$STAGE/.background/background.tiff"
 
-hdiutil detach "$MOUNT" -force >/dev/null 2>&1 || true
-
 hdiutil create \
   -volname "$VOL_NAME" \
   -srcfolder "$STAGE" \
@@ -44,8 +45,15 @@ hdiutil create \
   -ov \
   "$RW_DMG"
 
-DEVICE="$(hdiutil attach -readwrite -noverify -noautoopen "$RW_DMG" \
-  | grep -E '^/dev/' | head -n1 | awk '{print $1}')"
+DEVICE="$(hdiutil attach \
+  -readwrite \
+  -noverify \
+  -noautoopen \
+  -mountpoint "$MOUNT" \
+  "$RW_DMG" \
+  | awk '/^\/dev\// { print $1; exit }')"
+test -n "$DEVICE"
+test -d "$MOUNT/$APP_NAME"
 
 sleep 2
 
@@ -77,6 +85,7 @@ sync
 
 hdiutil detach "$DEVICE" -force >/dev/null 2>&1 \
   || { sleep 3; hdiutil detach "$DEVICE" -force; }
+DEVICE=""
 
 rm -f "$OUT_DMG"
 hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 -ov -o "$OUT_DMG"
