@@ -8,6 +8,8 @@ import sys
 import os
 from typing import Any, Dict
 
+from ui.i18n import LocaleEnum
+
 _TRAY_DEFAULTS_COMMON: Dict[str, Any] = {
     "port": 1443,
     "host": "127.0.0.1",
@@ -21,7 +23,7 @@ _TRAY_DEFAULTS_COMMON: Dict[str, Any] = {
     "cfproxy_user_domain": [],
     "cfproxy_worker_domain": [],
     "ws_keepalive_interval": 30,
-    "language": "auto",
+    "language": LocaleEnum.auto.value,
 }
 
 

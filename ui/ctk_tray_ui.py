@@ -869,7 +869,7 @@ def validate_config_form(
     if widgets.appearance_var is not None:
         new_cfg["appearance"] = _appearance_to_cfg(widgets.appearance_var.get())
     if widgets.language_var is not None:
-        new_cfg["language"] = language_from_label(widgets.language_var.get())
+        new_cfg["language"] = language_from_label(widgets.language_var.get()).value
     return new_cfg
 
 
