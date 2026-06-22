@@ -116,4 +116,3 @@ def label_from_language(value: str) -> str:
 
 
 set_language("auto")
-refresh_language_option_maps()

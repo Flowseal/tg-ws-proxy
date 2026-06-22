@@ -30,7 +30,7 @@ from ui.ctk_theme import (
     CONFIG_DIALOG_FRAME_PAD, CONFIG_DIALOG_SIZE, FIRST_RUN_SIZE,
     create_ctk_toplevel, ctk_theme_for_platform, main_content_frame,
 )
-from ui.i18n import refresh_language_option_maps, set_language, t
+from ui.i18n import set_language, t
 
 _tray_icon: Optional[object] = None
 _config: dict = {}
@@ -170,7 +170,6 @@ def _edit_config_dialog() -> None:
 
         def _restore_ui_locale() -> None:
             set_language(_original_language)
-            refresh_language_option_maps()
             _refresh_tray_menu()
 
         def _finish() -> None:
@@ -201,7 +200,6 @@ def _edit_config_dialog() -> None:
             save_config(merged)
             _config.update(merged)
             set_language(merged.get("language", "auto"))
-            refresh_language_option_maps()
             log.info("Config saved: %s", merged)
             _tray_icon.menu = _build_menu()
 

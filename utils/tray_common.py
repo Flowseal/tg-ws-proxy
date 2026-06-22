@@ -181,10 +181,9 @@ def release_lock() -> None:
 # config
 
 def _apply_ui_language(cfg: dict) -> None:
-    from ui.i18n import refresh_language_option_maps, set_language
+    from ui.i18n import set_language
 
     set_language(cfg.get("language", "auto"))
-    refresh_language_option_maps()
 
 
 def load_config() -> dict:

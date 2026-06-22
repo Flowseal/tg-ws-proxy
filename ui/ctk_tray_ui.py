@@ -21,7 +21,6 @@ from ui.i18n import (
     label_from_language,
     language_from_label,
     language_option_labels,
-    refresh_language_option_maps,
     set_language,
     t,
 )
