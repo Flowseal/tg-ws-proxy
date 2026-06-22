@@ -15,6 +15,7 @@
   "settings.title": "Settings",
   "settings.language": "Language",
 
+  "section.interface": "Interface",
   "section.mtproto": "MTProto Connection",
   "section.dc": "Telegram Data Centers (DC → IP)",
   "section.cfproxy": "Cloudflare Proxy",

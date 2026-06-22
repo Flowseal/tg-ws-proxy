@@ -486,14 +486,26 @@ def _edit_config_dialog() -> None:
         fpx, fpy = CONFIG_DIALOG_FRAME_PAD
         frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)
         scroll, footer = tray_settings_scroll_and_footer(ctk, frame, theme)
+
+        def _refresh_tray_menu() -> None:
+            if _tray_icon is not None:
+                _tray_icon.menu = _build_menu()
+
+        _original_language = _config.get("language", "auto")
+
         widgets = install_tray_config_form(
             ctk, scroll, theme, cfg, DEFAULT_CONFIG,
             show_autostart=_supports_autostart(),
             autostart_value=cfg.get("autostart", False),
+            on_language_change=_refresh_tray_menu,
         )
 
         _original_appearance = ctk.get_appearance_mode()
-        _original_language = cfg.get("language", "auto")
+
+        def _restore_ui_locale() -> None:
+            set_language(_original_language)
+            refresh_language_option_maps()
+            _refresh_tray_menu()
 
         def _finish() -> None:
             root.destroy()
@@ -501,8 +513,7 @@ def _edit_config_dialog() -> None:
 
         def _cancel() -> None:
             ctk.set_appearance_mode(_original_appearance)
-            set_language(_original_language)
-            refresh_language_option_maps()
+            _restore_ui_locale()
             _finish()
 
         def on_save() -> None:
@@ -513,10 +524,11 @@ def _edit_config_dialog() -> None:
                 return
 
             _ui_only_keys = {"appearance", "autostart", "check_updates", "language"}
-            config_changed = any(merged.get(k) != cfg.get(k) for k in merged)
-            proxy_changed = any(merged.get(k) != cfg.get(k) for k in merged if k not in _ui_only_keys)
+            config_changed = any(merged.get(k) != _config.get(k) for k in merged)
+            proxy_changed = any(merged.get(k) != _config.get(k) for k in merged if k not in _ui_only_keys)
 
             if not config_changed:
+                _restore_ui_locale()
                 _finish()
                 return
 

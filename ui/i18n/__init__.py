@@ -1,4 +1,3 @@
-"""UI localization: JSON catalogs per language, easy to extend with new locale files."""
 from __future__ import annotations
 
 import json
@@ -116,6 +115,5 @@ def label_from_language(value: str) -> str:
     return _LANGUAGE_TO_LABEL.get(value, _LANGUAGE_TO_LABEL.get("auto", "Auto"))
 
 
-# Bootstrap with default locale so imports before load_config still work.
 set_language("auto")
 refresh_language_option_maps()
