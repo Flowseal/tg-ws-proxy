@@ -18,10 +18,11 @@ class LocaleEnum(str, Enum):
     def parse(cls, value: LocaleInput) -> LocaleEnum:
         if isinstance(value, cls):
             return value
+        
         try:
             return cls(value)
         except ValueError:
-            return cls.russian
+            return _DEFAULT_LOCALE
 
 
 _LOCALES_DIR = Path(__file__).resolve().parent
@@ -29,6 +30,7 @@ _DEFAULT_LOCALE = LocaleEnum.russian
 
 _translations: Dict[str, str] = {}
 _current_lang: LocaleEnum = _DEFAULT_LOCALE
+_config_value: LocaleEnum = _DEFAULT_LOCALE
 
 _LANGUAGE_TO_LABEL: Dict[LocaleEnum, str] = {}
 _LABEL_TO_LANGUAGE: Dict[str, LocaleEnum] = {}
@@ -51,6 +53,38 @@ def content_locales() -> Tuple[LocaleEnum, ...]:
         for stem in _locale_json_files()
         if stem in LocaleEnum._value2member_map_
     )
+
+
+def detect_system_language() -> LocaleEnum:
+    """Pick the best locale from available catalogs, else Russian."""
+    available = content_locales()
+    if not available:
+        return _DEFAULT_LOCALE
+
+    for getter in (locale.getlocale, locale.getdefaultlocale):
+        try:
+            loc = getter()
+            if loc and loc[0]:
+                code = loc[0].split("_")[0].lower()
+                try:
+                    candidate = LocaleEnum(code)
+                    if candidate in available:
+                        return candidate
+                except ValueError:
+                    pass
+        except Exception:
+            pass
+    for env_key in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        val = os.environ.get(env_key, "")
+        if val:
+            code = val.split(".")[0].split("_")[0].lower()
+            try:
+                candidate = LocaleEnum(code)
+                if candidate in available:
+                    return candidate
+            except ValueError:
+                pass
+    return _DEFAULT_LOCALE
 
 
 def resolve_language(config_value: LocaleInput) -> LocaleEnum:
@@ -96,7 +130,8 @@ def t(key: str, **kwargs: Any) -> str:
 def language_option_labels() -> List[Tuple[LocaleEnum, str]]:
     """Config values and display labels for the language combobox."""
     return [
-        (locale, t(f"language.{locale.value}")) for locale in content_locales()
+        (loc, t(f"language.{loc.value}"))
+        for loc in content_locales()
     ]
 
 
@@ -115,15 +150,15 @@ def refresh_language_option_maps() -> None:
 
 
 def language_from_label(label: str) -> LocaleEnum:
-    return _LABEL_TO_LANGUAGE.get(label, LocaleEnum.russian)
+    return _LABEL_TO_LANGUAGE.get(label, _DEFAULT_LOCALE)
 
 
 def label_from_language(value: LocaleInput) -> str:
     loc = LocaleEnum.parse(value)
     return _LANGUAGE_TO_LABEL.get(
         loc,
-        _LANGUAGE_TO_LABEL.get(LocaleEnum.russian, "ru"),
+        _LANGUAGE_TO_LABEL.get(_DEFAULT_LOCALE, _DEFAULT_LOCALE.value),
     )
 
 
-set_language(LocaleEnum.russian)
+set_language(detect_system_language())

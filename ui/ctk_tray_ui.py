@@ -364,7 +364,7 @@ def install_tray_config_form(
     autostart_value: bool = False,
     on_language_change: Optional[Callable[[], None]] = None,
 ) -> TrayConfigFormWidgets:
-    lang_cfg = cfg.get("language", default_config.get("language", "russian"))
+    lang_cfg = cfg.get("language", default_config["language"])
     set_language(lang_cfg)
 
     header = ctk.CTkFrame(frame, fg_color="transparent")

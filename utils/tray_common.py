@@ -183,7 +183,7 @@ def release_lock() -> None:
 def _apply_ui_language(cfg: dict) -> None:
     from ui.i18n import set_language
 
-    set_language(cfg.get("language", "auto"))
+    set_language(cfg.get("language", DEFAULT_CONFIG["language"]))
 
 
 def load_config() -> dict:

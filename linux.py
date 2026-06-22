@@ -158,7 +158,7 @@ def _edit_config_dialog() -> None:
             if _tray_icon is not None:
                 _tray_icon.menu = _build_menu()
 
-        _original_language = _config.get("language", "auto")
+        _original_language = _config.get("language", DEFAULT_CONFIG["language"])
 
         widgets = install_tray_config_form(
             ctk, scroll, theme, cfg, DEFAULT_CONFIG,
@@ -199,7 +199,7 @@ def _edit_config_dialog() -> None:
 
             save_config(merged)
             _config.update(merged)
-            set_language(merged.get("language", "auto"))
+            set_language(merged.get("language", DEFAULT_CONFIG["language"]))
             log.info("Config saved: %s", merged)
             _tray_icon.menu = _build_menu()
 
