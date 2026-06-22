@@ -14,6 +14,7 @@
 
   "settings.title": "Settings",
   "settings.language": "Language",
+  "settings.theme": "Theme",
 
   "section.interface": "Interface",
   "section.mtproto": "MTProto Connection",

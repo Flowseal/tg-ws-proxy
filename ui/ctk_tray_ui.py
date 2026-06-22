@@ -364,7 +364,7 @@ def install_tray_config_form(
     autostart_value: bool = False,
     on_language_change: Optional[Callable[[], None]] = None,
 ) -> TrayConfigFormWidgets:
-    lang_cfg = cfg.get("language", default_config.get("language", "auto"))
+    lang_cfg = cfg.get("language", default_config.get("language", "russian"))
     set_language(lang_cfg)
 
     header = ctk.CTkFrame(frame, fg_color="transparent")
@@ -389,26 +389,6 @@ def install_tray_config_form(
         ctk.set_appearance_mode(_APPEARANCE_TO_CTK[cfg_val])
         cfg["appearance"] = cfg_val
 
-    ctk.CTkComboBox(
-        header,
-        values=_appearance_options(),
-        variable=appearance_var,
-        width=102,
-        height=28,
-        font=(theme.ui_font_family, 12),
-        text_color=theme.text_secondary,
-        fg_color=theme.field_bg,
-        border_color=theme.field_border,
-        button_color=theme.field_border,
-        button_hover_color=theme.text_secondary,
-        dropdown_fg_color=theme.field_bg,
-        dropdown_text_color=theme.text_primary,
-        dropdown_hover_color=theme.field_border,
-        corner_radius=8,
-        state="readonly",
-        command=_on_appearance_change,
-    ).pack(side="right")
-
     ctk.CTkButton(
         header, text="Donate ♥", width=90, height=28,
         font=(theme.ui_font_family, 13, "bold"), corner_radius=8,
@@ -424,13 +404,37 @@ def install_tray_config_form(
     language_var = ctk.StringVar(value=label_from_language(lang_cfg))
     lang_row = ctk.CTkFrame(ui_inner, fg_color="transparent")
     lang_row.pack(fill="x")
-    _label(ctk, lang_row, theme, t("settings.language"), size=11).pack(anchor="w", pady=(0, 2))
+    
+    _label(ctk, lang_row, theme, t("settings.theme"), size=11).pack(anchor="w", pady=(0, 2))
+    theme_combo = ctk.CTkComboBox(
+        lang_row,
+        values=_appearance_options(),
+        variable=appearance_var,
+        height=32,
+        font=(theme.ui_font_family, 12),
+        text_color=theme.text_primary,
+        fg_color=theme.bg,
+        border_color=theme.field_border,
+        button_color=theme.field_border,
+        button_hover_color=theme.text_secondary,
+        dropdown_fg_color=theme.field_bg,
+        dropdown_text_color=theme.text_primary,
+        dropdown_hover_color=theme.field_border,
+        corner_radius=8,
+        state="readonly",
+        command=_on_appearance_change,
+    )
+    theme_combo.pack(fill="x")
+
+    _label(ctk, lang_row, theme, t("settings.language"), size=11).pack(
+        anchor="w", pady=(0, 2)
+    )
     language_combo = ctk.CTkComboBox(
         lang_row,
         values=[label for _, label in language_option_labels()],
         variable=language_var,
         height=32,
-        font=(theme.ui_font_family, 13),
+        font=(theme.ui_font_family, 12),
         text_color=theme.text_primary,
         fg_color=theme.bg,
         border_color=theme.field_border,

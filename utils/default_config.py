@@ -23,7 +23,7 @@ _TRAY_DEFAULTS_COMMON: Dict[str, Any] = {
     "cfproxy_user_domain": [],
     "cfproxy_worker_domain": [],
     "ws_keepalive_interval": 30,
-    "language": LocaleEnum.auto.value,
+    "language": LocaleEnum.russian.value,
 }
 
 
