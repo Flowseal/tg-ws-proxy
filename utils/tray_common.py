@@ -364,6 +364,9 @@ def stop_proxy() -> None:
         loop.call_soon_threadsafe(stop_ev.set)
         if _proxy_thread:
             _proxy_thread.join(timeout=5)
+            if _proxy_thread.is_alive():
+                log.warning("Proxy thread did not stop within timeout; "
+                            "port may still be in use")
     _proxy_thread = None
     log.info("Proxy stopped")
 
@@ -371,7 +374,7 @@ def stop_proxy() -> None:
 def restart_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
     log.info("Restarting proxy...")
     stop_proxy()
-    time.sleep(0.3)
+    time.sleep(1.0)
     start_proxy(cfg, on_error)
 
 

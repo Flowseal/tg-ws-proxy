@@ -521,14 +521,19 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if stop_task in done:
-                    server.close()
-                    await server.wait_closed()
+                    for task in list(_client_tasks):
+                        task.cancel()
+                    if _client_tasks:
+                        await asyncio.gather(
+                            *_client_tasks, return_exceptions=True)
                     if not serve_task.done():
                         serve_task.cancel()
                         try:
                             await serve_task
                         except asyncio.CancelledError:
                             pass
+                    server.close()
+                    await server.wait_closed()
                 else:
                     stop_task.cancel()
                     try:
