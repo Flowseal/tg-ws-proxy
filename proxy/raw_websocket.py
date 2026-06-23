@@ -1,12 +1,16 @@
 import os
+import sys
 import ssl
 import base64
 import struct
 import asyncio
+import logging
 import socket as _socket
 
 from typing import List, Optional, Tuple
 from .config import proxy_config
+
+log = logging.getLogger('tg-mtproto-proxy')
 
 
 _st_BB = struct.Struct('>BB')
@@ -46,16 +50,52 @@ def _xor_mask(data: bytes, mask: bytes) -> bytes:
             int.from_bytes(mask_rep, 'big')).to_bytes(n, 'big')
 
 
+def _enable_tcp_keepalive(sock, idle: float):
+    """Enable OS-level TCP keepalive (idle in seconds).
+
+    Probes live below TLS, so unlike WebSocket PINGs they are invisible to
+    Telegram and keep NAT mappings warm without tripping a disconnect (#646).
+    """
+    idle = max(1, int(idle))
+    try:
+        sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_KEEPALIVE, 1)
+    except (OSError, AttributeError):
+        return
+    log.debug("TCP keepalive enabled on upstream (idle=%ds)", idle)
+
+    if sys.platform == 'win32':
+        # ioctl args: (onoff, idle_ms, interval_ms); probe count fixed by OS.
+        try:
+            sock.ioctl(_socket.SIO_KEEPALIVE_VALS,
+                       (1, idle * 1000, idle * 1000))
+        except (OSError, AttributeError, ValueError):
+            pass
+        return
+
+    # Linux: TCP_KEEPIDLE/INTVL/CNT. macOS: TCP_KEEPALIVE is the idle time.
+    for opt_name, value in (('TCP_KEEPIDLE', idle),
+                            ('TCP_KEEPALIVE', idle),
+                            ('TCP_KEEPINTVL', idle),
+                            ('TCP_KEEPCNT', 4)):
+        opt = getattr(_socket, opt_name, None)
+        if opt is None:
+            continue
+        try:
+            sock.setsockopt(_socket.IPPROTO_TCP, opt, value)
+        except (OSError, AttributeError):
+            pass
+
+
 def set_sock_opts(transport, buffer_size):
     sock = transport.get_extra_info('socket')
     if sock is None:
         return
-    
+
     try:
         sock.setsockopt(_socket.IPPROTO_TCP, _socket.TCP_NODELAY, 1)
     except (OSError, AttributeError):
         pass
-    
+
     try:
         sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_RCVBUF, buffer_size)
         sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_SNDBUF, buffer_size)
@@ -86,6 +126,10 @@ class RawWebSocket:
             timeout=min(timeout, 10))
         
         set_sock_opts(writer.transport, proxy_config.buffer_size)
+        if proxy_config.keepalive_mode == 'tcp':
+            sock = writer.transport.get_extra_info('socket')
+            if sock is not None:
+                _enable_tcp_keepalive(sock, proxy_config.keepalive_interval)
 
         ws_key = base64.b64encode(os.urandom(16)).decode()
 

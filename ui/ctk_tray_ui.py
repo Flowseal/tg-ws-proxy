@@ -50,6 +50,18 @@ _TIP_POOL = (
 _TIP_LOG_MB = (
     "Максимальный размер файла лога; при достижении лимита файл перезаписывается"
 )
+_TIP_KEEPALIVE = (
+    "Держит соединение с Telegram «тёплым», чтобы NAT/файрвол не рвал "
+    "простаивающие сессии.\n"
+    "TCP — на уровне ОС, незаметно для Telegram (рекомендуется).\n"
+    "WebSocket — старый режим через PING-кадры; часть серверов Telegram "
+    "из-за него рвёт соединение.\n"
+    "Выключен — keepalive не используется."
+)
+_TIP_KEEPALIVE_INTERVAL = (
+    "Интервал keepalive в секундах.\n"
+    "Для TCP — время простоя до проб, для WebSocket — период между PING"
+)
 _TIP_AUTOSTART = (
     "Запускать TG WS Proxy при входе в Windows. "
     "Если вы переместите программу в другую папку, автозапуск сбросится"
@@ -270,6 +282,14 @@ _APPEARANCE_FROM_CFG = {"auto": "Авто", "light": "Светлая", "dark": "
 _APPEARANCE_TO_CFG = {"Авто": "auto", "Светлая": "light", "Тёмная": "dark"}
 _APPEARANCE_TO_CTK = {"auto": "system", "light": "Light", "dark": "Dark"}
 
+_KEEPALIVE_OPTIONS = ["Выключен", "TCP (рекомендуется)", "WebSocket"]
+_KEEPALIVE_FROM_CFG = {
+    "off": "Выключен", "tcp": "TCP (рекомендуется)", "ws": "WebSocket",
+}
+_KEEPALIVE_TO_CFG = {
+    "Выключен": "off", "TCP (рекомендуется)": "tcp", "WebSocket": "ws",
+}
+
 
 def _entry(ctk, parent, theme, *, var=None, width=0, height=36, radius=10, **kw):
     opts = dict(
@@ -374,6 +394,8 @@ class TrayConfigFormWidgets:
     cfproxy_user_domain_var: Optional[Any] = None
     cfproxy_worker_domain_var: Optional[Any] = None
     appearance_var: Optional[Any] = None
+    keepalive_mode_var: Optional[Any] = None
+    keepalive_interval_var: Optional[Any] = None
 
 
 def install_tray_config_form(
@@ -706,6 +728,46 @@ def install_tray_config_form(
     adv_entries = list(adv_frame.winfo_children())
     adv_keys = ("buf_kb", "pool_size", "log_max_mb")
 
+    ka_frame = ctk.CTkFrame(log_inner, fg_color="transparent")
+    ka_frame.pack(fill="x", pady=(8, 0))
+    ka_l = _label(ctk, ka_frame, theme, "Keepalive соединений", size=11)
+    ka_l.pack(anchor="w", pady=(0, 2))
+    keepalive_mode_var = ctk.StringVar(
+        value=_KEEPALIVE_FROM_CFG.get(
+            str(cfg.get("keepalive_mode",
+                        default_config.get("keepalive_mode", "tcp"))).lower(),
+            "TCP (рекомендуется)")
+    )
+    ka_combo = ctk.CTkComboBox(
+        ka_frame, values=_KEEPALIVE_OPTIONS, variable=keepalive_mode_var,
+        width=_INNER_W, height=32, font=(theme.ui_font_family, 12),
+        text_color=theme.text_primary, fg_color=theme.field_bg,
+        border_color=theme.field_border, button_color=theme.field_border,
+        button_hover_color=theme.text_secondary,
+        dropdown_fg_color=theme.field_bg, dropdown_text_color=theme.text_primary,
+        dropdown_hover_color=theme.field_border, corner_radius=8,
+        state="readonly",
+    )
+    ka_combo.pack(fill="x")
+    attach_tooltip_to_widgets([ka_l, ka_combo, ka_frame], _TIP_KEEPALIVE)
+
+    ka_int_col = ctk.CTkFrame(log_inner, fg_color="transparent")
+    ka_int_col.pack(fill="x", pady=(5, 0))
+    ka_int_l = _label(ctk, ka_int_col, theme,
+                      "Keepalive: интервал, сек (по умолчанию 30)", size=11)
+    ka_int_l.pack(anchor="w", pady=(0, 2))
+    keepalive_interval_var = ctk.StringVar(
+        value=str(cfg.get("keepalive_interval",
+                          default_config.get("keepalive_interval", 30)))
+    )
+    ka_int_e = _entry(
+        ctk, ka_int_col, theme, width=_INNER_W, height=32, radius=8,
+        textvariable=keepalive_interval_var,
+    )
+    ka_int_e.pack(fill="x")
+    attach_tooltip_to_widgets([ka_int_l, ka_int_e, ka_int_col],
+                              _TIP_KEEPALIVE_INTERVAL)
+
     upd_inner = _config_section(ctk, frame, theme, "Обновления")
     st = get_status()
     check_updates_var = ctk.BooleanVar(
@@ -768,6 +830,8 @@ def install_tray_config_form(
         cfproxy_user_domain_var=cfproxy_user_domain_var,
         cfproxy_worker_domain_var=cfproxy_worker_domain_var,
         appearance_var=appearance_var,
+        keepalive_mode_var=keepalive_mode_var,
+        keepalive_interval_var=keepalive_interval_var,
     )
 
 
@@ -852,6 +916,16 @@ def validate_config_form(
         new_cfg["cfproxy_worker_domain"] = coerce_domain_list(widgets.cfproxy_worker_domain_var.get())
     if widgets.appearance_var is not None:
         new_cfg["appearance"] = _APPEARANCE_TO_CFG.get(widgets.appearance_var.get(), "auto")
+    if widgets.keepalive_mode_var is not None:
+        new_cfg["keepalive_mode"] = _KEEPALIVE_TO_CFG.get(
+            widgets.keepalive_mode_var.get(), "tcp")
+    if widgets.keepalive_interval_var is not None:
+        try:
+            new_cfg["keepalive_interval"] = max(
+                1.0, float(widgets.keepalive_interval_var.get().strip()))
+        except (ValueError, AttributeError):
+            new_cfg["keepalive_interval"] = default_config.get(
+                "keepalive_interval", 30)
     return new_cfg
 
 

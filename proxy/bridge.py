@@ -357,15 +357,16 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
 
     tasks = [asyncio.create_task(tcp_to_ws()),
              asyncio.create_task(ws_to_tcp())]
-    keepalive = asyncio.create_task(
-        _ws_keepalive(ws, proxy_config.ws_keepalive_interval))
+    # 'tcp' mode keeps the link warm via SO_KEEPALIVE set at connect time.
+    if proxy_config.keepalive_mode == 'ws':
+        tasks.append(asyncio.create_task(
+            _ws_keepalive(ws, proxy_config.keepalive_interval)))
     try:
         await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     finally:
-        keepalive.cancel()
         for t in tasks:
             t.cancel()
-        for t in (*tasks, keepalive):
+        for t in tasks:
             try:
                 await t
             except BaseException:

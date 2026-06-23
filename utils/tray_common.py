@@ -180,12 +180,34 @@ def release_lock() -> None:
 
 # config
 
+_KEEPALIVE_MODES = ("off", "tcp", "ws")
+
+
+def _migrate_keepalive_keys(data: dict) -> None:
+    """Map the legacy ``ws_keepalive_interval`` key onto the mode model (-> tcp)."""
+    if "keepalive_mode" in data:
+        return
+    legacy = data.pop("ws_keepalive_interval", None)
+    if legacy is None:
+        return
+    try:
+        legacy = float(legacy)
+    except (TypeError, ValueError):
+        legacy = 0
+    if legacy > 0:
+        data["keepalive_mode"] = "tcp"
+        data["keepalive_interval"] = legacy
+    else:
+        data["keepalive_mode"] = "off"
+
+
 def load_config() -> dict:
     ensure_dirs()
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            _migrate_keepalive_keys(data)
             for k, v in DEFAULT_CONFIG.items():
                 data.setdefault(k, v)
             return data
@@ -324,7 +346,16 @@ def apply_proxy_config(cfg: dict) -> bool:
     pc.fallback_cfproxy = cfg.get("cfproxy", DEFAULT_CONFIG["cfproxy"])
     pc.cfproxy_user_domains = coerce_domain_list(cfg.get("cfproxy_user_domain", DEFAULT_CONFIG["cfproxy_user_domain"]))
     pc.cfproxy_worker_domains = coerce_domain_list(cfg.get("cfproxy_worker_domain", DEFAULT_CONFIG["cfproxy_worker_domain"]))
-    pc.ws_keepalive_interval = max(0, cfg.get("ws_keepalive_interval", DEFAULT_CONFIG["ws_keepalive_interval"]))
+
+    mode = str(cfg.get("keepalive_mode", DEFAULT_CONFIG["keepalive_mode"])).lower()
+    if mode not in _KEEPALIVE_MODES:
+        mode = DEFAULT_CONFIG["keepalive_mode"]
+    pc.keepalive_mode = mode
+    try:
+        interval = float(cfg.get("keepalive_interval", DEFAULT_CONFIG["keepalive_interval"]))
+    except (TypeError, ValueError):
+        interval = float(DEFAULT_CONFIG["keepalive_interval"])
+    pc.keepalive_interval = max(1.0, interval)
     return True
 
 

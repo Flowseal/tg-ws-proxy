@@ -489,6 +489,11 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     if proxy_config.cfproxy_worker_domains:
         log.info("  CF worker:     enabled (%s)",
                  ", ".join(proxy_config.cfproxy_worker_domains))
+    if proxy_config.keepalive_mode == 'off':
+        log.info("  Keepalive:     off")
+    else:
+        log.info("  Keepalive:     %s (%.0fs)",
+                 proxy_config.keepalive_mode, proxy_config.keepalive_interval)
     log.info("=" * 60)
     log.info("  Connect:")
     if ftls:
@@ -593,11 +598,28 @@ def main():
     ap.add_argument('--proxy-protocol', action='store_true',
                     help='Accept PROXY protocol v1 header '
                          '(for use behind nginx/haproxy with proxy_protocol on)')
-    ap.add_argument('--ws-keepalive', type=float, default=30.0, metavar='SEC',
-                    help='Seconds between WebSocket keepalive PINGs to the '
-                         'upstream (default 30, 0 to disable). Keeps idle '
-                         'sessions alive through NAT/firewall timeouts.')
+    ap.add_argument('--keepalive', choices=('off', 'tcp', 'ws'), default='tcp',
+                    help='Upstream keepalive mode (default tcp). "tcp" uses '
+                         'OS-level SO_KEEPALIVE (transparent to Telegram), '
+                         '"ws" sends WebSocket PING frames (legacy; may be '
+                         'closed by /apiws), "off" disables keepalive.')
+    ap.add_argument('--keepalive-interval', type=float, default=30.0,
+                    metavar='SEC',
+                    help='Keepalive idle interval in seconds (default 30). '
+                         'For tcp: idle time before probes; for ws: interval '
+                         'between PINGs. Keeps idle sessions alive through '
+                         'NAT/firewall timeouts (issue #646).')
+    ap.add_argument('--ws-keepalive', type=float, default=None, metavar='SEC',
+                    help='Deprecated alias: sets --keepalive ws with the given '
+                         'interval (0 disables). Prefer --keepalive.')
     args = ap.parse_args()
+
+    if args.ws_keepalive is not None:
+        if args.ws_keepalive > 0:
+            args.keepalive = 'ws'
+            args.keepalive_interval = args.ws_keepalive
+        else:
+            args.keepalive = 'off'
 
     if not args.dc_ip:
         args.dc_ip = ['2:149.154.167.220', '4:149.154.167.220']
@@ -633,7 +655,8 @@ def main():
     proxy_config.cfproxy_worker_domains = coerce_domain_list(args.cfproxy_worker_domain)
     proxy_config.fake_tls_domain = args.fake_tls_domain.strip()
     proxy_config.proxy_protocol = args.proxy_protocol
-    proxy_config.ws_keepalive_interval = max(0, args.ws_keepalive)
+    proxy_config.keepalive_mode = args.keepalive
+    proxy_config.keepalive_interval = max(1.0, args.keepalive_interval)
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
     log_fmt = logging.Formatter('%(asctime)s  %(levelname)-5s  %(message)s',

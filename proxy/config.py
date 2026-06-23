@@ -67,7 +67,9 @@ class ProxyConfig:
     cfproxy_worker_domains: List[str] = field(default_factory=list)
     fake_tls_domain: str = ''
     proxy_protocol: bool = False
-    ws_keepalive_interval: float = 30.0
+    # Upstream keepalive: 'tcp' (SO_KEEPALIVE), 'ws' (WebSocket PING), 'off'.
+    keepalive_mode: str = 'tcp'
+    keepalive_interval: float = 30.0
 
 
 proxy_config = ProxyConfig()
