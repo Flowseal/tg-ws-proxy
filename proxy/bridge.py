@@ -266,26 +266,6 @@ async def _tcp_fallback(reader, writer, dst, port, relay_init, label, ctx: Crypt
     return True
 
 
-async def _ws_keepalive(ws, interval: float):
-    """Send periodic WS PING frames to keep the upstream flow warm.
-
-    A non-positive interval disables keepalive. The loop exits on send
-    failure so a dead upstream is detected promptly instead of lingering
-    until the next client packet (see issue #646).
-    """
-    if interval <= 0:
-        return
-    
-    interval = max(1.0, interval)  # reasonable minimum
-
-    try:
-        while True:
-            await asyncio.sleep(interval)
-            await ws.send_ping()
-    except (asyncio.CancelledError, ConnectionError, OSError):
-        return
-
-
 async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
                                ctx: CryptoCtx,
                                dc=None, is_media=False,
@@ -357,15 +337,12 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
 
     tasks = [asyncio.create_task(tcp_to_ws()),
              asyncio.create_task(ws_to_tcp())]
-    keepalive = asyncio.create_task(
-        _ws_keepalive(ws, proxy_config.ws_keepalive_interval))
     try:
         await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     finally:
-        keepalive.cancel()
         for t in tasks:
             t.cancel()
-        for t in (*tasks, keepalive):
+        for t in tasks:
             try:
                 await t
             except BaseException:
