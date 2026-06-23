@@ -12,6 +12,8 @@ block_cipher = None
 import customtkinter
 ctk_path = os.path.dirname(customtkinter.__file__)
 
+_i18n_path = os.path.join(os.path.dirname(SPEC), os.pardir, 'ui', 'i18n')
+
 # Collect gi (PyGObject) submodules and data so pystray._appindicator works
 gi_hiddenimports = collect_submodules('gi')
 gi_datas = collect_data_files('gi')
@@ -26,7 +28,7 @@ a = Analysis(
     [os.path.join(os.path.dirname(SPEC), os.pardir, 'linux.py')],
     pathex=[],
     binaries=[],
-    datas=[(ctk_path, 'customtkinter/')] + gi_datas + typelib_datas,
+    datas=[(ctk_path, 'customtkinter/'), (_i18n_path, 'ui/i18n')] + gi_datas + typelib_datas,
     hiddenimports=[
         'pystray._appindicator',
         'PIL._tkinter_finder',

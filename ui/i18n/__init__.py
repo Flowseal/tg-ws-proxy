@@ -26,7 +26,7 @@ class LocaleEnum(str, Enum):
 
 
 _LOCALES_DIR = Path(__file__).resolve().parent
-_DEFAULT_LOCALE = LocaleEnum.russian
+_DEFAULT_LOCALE = LocaleEnum.english
 
 _translations: Dict[str, str] = {}
 _current_lang: LocaleEnum = _DEFAULT_LOCALE
@@ -137,10 +137,11 @@ def language_option_labels() -> List[Tuple[LocaleEnum, str]]:
 
 def language_label_for_config(value: LocaleInput) -> str:
     loc = LocaleEnum.parse(value)
-    for cfg_val, label in language_option_labels():
+    labels = language_option_labels()
+    for cfg_val, label in labels:
         if cfg_val == loc:
             return label
-    return language_option_labels()[0][1]
+    return labels[0][1] if labels else _DEFAULT_LOCALE.value
 
 
 def refresh_language_option_maps() -> None:

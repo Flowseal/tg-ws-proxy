@@ -194,17 +194,18 @@ def _apply_ui_language(cfg: dict) -> None:
 
 def load_config() -> dict:
     ensure_dirs()
+    cfg: Optional[dict] = None
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             for k, v in DEFAULT_CONFIG.items():
                 data.setdefault(k, v)
-            _apply_ui_language(data)
-            return data
+            cfg = data
         except Exception as exc:
             log.warning("Failed to load config: %s", repr(exc))
-    cfg = dict(DEFAULT_CONFIG)
+    if cfg is None:
+        cfg = dict(DEFAULT_CONFIG)
     _apply_ui_language(cfg)
     return cfg
 
@@ -369,6 +370,9 @@ def stop_proxy() -> None:
         loop.call_soon_threadsafe(stop_ev.set)
         if _proxy_thread:
             _proxy_thread.join(timeout=5)
+            if _proxy_thread.is_alive():
+                log.warning("Proxy thread did not stop within timeout; "
+                            "port may still be in use")
     _proxy_thread = None
     log.info("Proxy stopped")
 
@@ -376,7 +380,7 @@ def stop_proxy() -> None:
 def restart_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
     log.info("Restarting proxy...")
     stop_proxy()
-    time.sleep(0.3)
+    time.sleep(1.0)
     start_proxy(cfg, on_error)
 
 

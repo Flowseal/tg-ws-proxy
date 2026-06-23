@@ -834,6 +834,16 @@ def merge_adv_from_form(
             base[key] = default_config[key]
 
 
+def _dc_validation_message(error: ValueError) -> str:
+    exc_entry = getattr(error, "entry", None)
+    if exc_entry is None:
+        return str(error)
+    kind = getattr(error, "kind", "invalid")
+    if kind == "format":
+        return t("validation.dc_format", entry=exc_entry)
+    return t("validation.dc_invalid", entry=exc_entry)
+
+
 def validate_config_form(
     widgets: TrayConfigFormWidgets,
     default_config: dict,
@@ -863,14 +873,7 @@ def validate_config_form(
     try:
         parse_dc_ip_list(lines)
     except ValueError as e:
-        msg = str(e)
-        if "expected DC:IP" in msg:
-            entry = msg.split("format ", 1)[-1].rstrip(")")
-            return t("validation.dc_format", entry=entry.strip("'"))
-        if msg.startswith("Invalid --dc-ip "):
-            entry = msg.split(" ", 2)[-1]
-            return t("validation.dc_invalid", entry=entry)
-        return msg
+        return _dc_validation_message(e)
 
     secret_val = widgets.secret_var.get().strip()
     if len(secret_val) != 32:

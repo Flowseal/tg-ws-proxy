@@ -5,11 +5,13 @@ import os
 
 block_cipher = None
 
+_i18n_path = os.path.join(os.path.dirname(SPEC), os.pardir, 'ui', 'i18n')
+
 a = Analysis(
     [os.path.join(os.path.dirname(SPEC), os.pardir, 'macos.py')],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[(_i18n_path, 'ui/i18n')],
     hiddenimports=[
         'rumps',
         'objc',

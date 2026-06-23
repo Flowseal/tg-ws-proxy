@@ -76,6 +76,7 @@
   "connectivity.cfproxy_title": "CF-прокси",
   "connectivity.cfworker_title": "CF Worker",
   "connectivity.timeout": "таймаут",
+  "connectivity.no_response": "нет ответа",
   "connectivity.available": "{title}: доступен",
   "connectivity.unavailable": "{title}: недоступен",
   "connectivity.all_ok": "{title}: всё работает",

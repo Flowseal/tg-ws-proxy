@@ -76,6 +76,7 @@
   "connectivity.cfproxy_title": "CF Proxy",
   "connectivity.cfworker_title": "CF Worker",
   "connectivity.timeout": "timeout",
+  "connectivity.no_response": "no response",
   "connectivity.available": "{title}: available",
   "connectivity.unavailable": "{title}: unavailable",
   "connectivity.all_ok": "{title}: all working",
