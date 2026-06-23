@@ -351,22 +351,37 @@ def _maybe_do_update(cfg: dict, is_exiting) -> None:
 
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
+# Passed in the autostart registry command so a launch started by the OS at
+# login can be told apart from the user double-clicking the exe.
+_AUTOSTART_FLAG = "--autostart"
+
 
 def _supports_autostart() -> bool:
     return IS_FROZEN
 
 
 def _autostart_command() -> str:
-    return f'"{sys.executable}"'
+    return f'"{sys.executable}" {_AUTOSTART_FLAG}'
 
 
-def is_autostart_enabled() -> bool:
+def _autostart_raw_value() -> Optional[str]:
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY, 0, winreg.KEY_READ) as k:
             val, _ = winreg.QueryValueEx(k, APP_NAME)
-        return str(val).strip() == _autostart_command().strip()
+        return str(val)
     except (FileNotFoundError, OSError):
-        return False
+        return None
+
+
+def is_autostart_enabled() -> bool:
+    # Lenient on trailing args so legacy entries (written before the
+    # --autostart flag existed) still read as enabled.
+    val = _autostart_raw_value()
+    return val is not None and val.strip().startswith(f'"{sys.executable}"')
+
+
+def launched_via_autostart() -> bool:
+    return _AUTOSTART_FLAG in sys.argv
 
 
 def set_autostart_enabled(enabled: bool) -> None:
@@ -623,10 +638,24 @@ def run_tray() -> None:
             stop_proxy()
         return
 
+    # Capture before _show_first_run touches the marker.
+    first_launch = not FIRST_RUN_MARKER.exists()
+
     start_proxy(_config, _show_error)
-    _maybe_do_update(_config, lambda: _exiting)
     _show_first_run()
     check_ipv6_warning(_show_info)
+    _maybe_do_update(_config, lambda: _exiting)
+
+    # Upgrade legacy autostart entries so future OS-launched starts carry the
+    # flag and can be distinguished from a manual exe launch.
+    if _supports_autostart() and is_autostart_enabled():
+        raw = _autostart_raw_value()
+        if raw is not None and raw.strip() != _autostart_command():
+            set_autostart_enabled(True)
+
+    if (not first_launch and not launched_via_autostart()
+            and _config.get("open_settings_on_start", True)):
+        threading.Thread(target=_edit_config_dialog, daemon=True).start()
 
     _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
     log.info("Tray icon running")
