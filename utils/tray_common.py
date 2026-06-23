@@ -186,6 +186,12 @@ def release_lock() -> None:
 
 # config
 
+def _apply_ui_language(cfg: dict) -> None:
+    from ui.i18n import set_language
+
+    set_language(cfg.get("language", DEFAULT_CONFIG["language"]))
+
+
 def load_config() -> dict:
     ensure_dirs()
     if CONFIG_FILE.exists():
@@ -194,10 +200,13 @@ def load_config() -> dict:
                 data = json.load(f)
             for k, v in DEFAULT_CONFIG.items():
                 data.setdefault(k, v)
+            _apply_ui_language(data)
             return data
         except Exception as exc:
             log.warning("Failed to load config: %s", repr(exc))
-    return dict(DEFAULT_CONFIG)
+    cfg = dict(DEFAULT_CONFIG)
+    _apply_ui_language(cfg)
+    return cfg
 
 
 def save_config(cfg: dict) -> None:
@@ -341,7 +350,8 @@ def start_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
         return
 
     if not apply_proxy_config(cfg):
-        on_error("Ошибка конфигурации DC → IP.")
+        from ui.i18n import t
+        on_error(t("error.dc_config"))
         return
 
     pc = proxy_config
@@ -378,19 +388,6 @@ def tg_proxy_url(cfg: dict) -> str:
     return f"tg://proxy?server={link_host}&port={port}&secret=dd{secret}"
 
 
-_IPV6_WARNING = (
-    "На вашем компьютере включена поддержка подключения по IPv6.\n\n"
-    "Telegram может пытаться подключаться через IPv6, "
-    "что не поддерживается и может привести к ошибкам.\n\n"
-    "Если прокси не работает или в логах присутствуют ошибки, "
-    "связанные с попытками подключения по IPv6 - "
-    "попробуйте отключить в настройках прокси Telegram попытку соединения "
-    "по IPv6. Если данная мера не помогает, попробуйте отключить IPv6 "
-    "в системе.\n\n"
-    "Это предупреждение будет показано только один раз."
-)
-
-
 def _has_ipv6() -> bool:
     try:
         for addr in _socket.getaddrinfo(_socket.gethostname(), None, _socket.AF_INET6):
@@ -413,8 +410,10 @@ def check_ipv6_warning(show_info: Callable[[str, str], None]) -> None:
     if IPV6_WARN_MARKER.exists() or not _has_ipv6():
         return
     IPV6_WARN_MARKER.touch()
+    from ui.i18n import t
+
     threading.Thread(
-        target=lambda: show_info(_IPV6_WARNING, "TG WS Proxy"),
+        target=lambda: show_info(t("ipv6.warning"), t("app.name")),
         daemon=True,
     ).start()
 
@@ -443,9 +442,11 @@ def maybe_notify_update(
                 return
             url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
             ver = st.get("latest") or "?"
+            from ui.i18n import t
+
             if ask_open(
-                f"Доступна новая версия: {ver}\n\nОткрыть страницу релиза в браузере?",
-                "TG WS Proxy — обновление",
+                t("update.ask_open", version=ver),
+                t("app.update_title"),
             ):
                 webbrowser.open(url)
         except Exception as exc:

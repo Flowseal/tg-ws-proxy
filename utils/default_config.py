@@ -8,6 +8,8 @@ import sys
 import os
 from typing import Any, Dict
 
+from ui.i18n import detect_system_language
+
 _TRAY_DEFAULTS_COMMON: Dict[str, Any] = {
     "port": 1443,
     "host": "127.0.0.1",
@@ -20,13 +22,14 @@ _TRAY_DEFAULTS_COMMON: Dict[str, Any] = {
     "cfproxy": True,
     "cfproxy_user_domain": [],
     "cfproxy_worker_domain": [],
-    "ws_keepalive_interval": 30
+    "ws_keepalive_interval": 30,
 }
 
 
 def default_tray_config() -> Dict[str, Any]:
     cfg = dict(_TRAY_DEFAULTS_COMMON)
     cfg["secret"] = os.urandom(16).hex()
+    cfg["language"] = detect_system_language().value
 
     if sys.platform == "win32":
         cfg["autostart"] = False

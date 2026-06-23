@@ -1,5 +1,6 @@
 import os
 import ssl
+import logging
 import base64
 import struct
 import asyncio
@@ -7,6 +8,8 @@ import socket as _socket
 
 from typing import List, Optional, Tuple
 from .config import proxy_config
+
+log = logging.getLogger('tg-mtproto-proxy')
 
 
 _st_BB = struct.Struct('>BB')
@@ -154,19 +157,15 @@ class RawWebSocket:
                 self._build_frame(self.OP_BINARY, part, mask=True))
         await self.writer.drain()
 
-    async def send_ping(self, payload: bytes = b''):
-        if self._closed:
-            raise ConnectionError("WebSocket closed")
-        frame = self._build_frame(self.OP_PING, payload, mask=True)
-        self.writer.write(frame)
-        await self.writer.drain()
-
     async def recv(self) -> Optional[bytes]:
         while not self._closed:
             opcode, payload = await self._read_frame()
 
             if opcode == self.OP_CLOSE:
                 self._closed = True
+                code, reason = self._parse_close(payload)
+                log.debug("WS OP_CLOSE from upstream: code=%s reason=%r",
+                          code, reason)
                 try:
                     self.writer.write(self._build_frame(
                         self.OP_CLOSE,
@@ -208,6 +207,25 @@ class RawWebSocket:
             await self.writer.wait_closed()
         except Exception:
             pass
+
+    _WS_CLOSE_REASONS = {
+        1000: 'normal', 1001: 'going_away', 1002: 'protocol_error',
+        1003: 'unsupported_data', 1006: 'abnormal', 1007: 'bad_data',
+        1008: 'policy_violation', 1009: 'too_big', 1010: 'missing_extension',
+        1011: 'internal_error',
+    }
+
+    @classmethod
+    def _parse_close(cls, payload: Optional[bytes]) -> Tuple[Optional[int], str]:
+        if not payload or len(payload) < 2:
+            return None, ''
+        try:
+            code = int.from_bytes(payload[:2], 'big')
+            text = payload[2:].decode('utf-8', errors='replace')
+            name = cls._WS_CLOSE_REASONS.get(code)
+            return code, f"{text} ({name})" if name else text
+        except Exception:
+            return None, ''
 
     @staticmethod
     def _build_frame(opcode: int, data: bytes,

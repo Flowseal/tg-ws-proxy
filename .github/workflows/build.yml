@@ -272,30 +272,10 @@ jobs:
           python3.12 -m pip install .
           python3.12 -m pip install pyinstaller==6.13.0
 
-      - name: Create macOS icon from ICO
+      - name: Create macOS icon
         run: |
           set -euo pipefail
-          python3.12 - <<'PY'
-          from PIL import Image
-
-          image = Image.open('icon.ico')
-          image = image.resize((1024, 1024), Image.LANCZOS)
-          image.save('icon_1024.png', 'PNG')
-          PY
-
-          mkdir -p icon.iconset
-          sips -z 16 16 icon_1024.png --out icon.iconset/icon_16x16.png
-          sips -z 32 32 icon_1024.png --out icon.iconset/icon_16x16@2x.png
-          sips -z 32 32 icon_1024.png --out icon.iconset/icon_32x32.png
-          sips -z 64 64 icon_1024.png --out icon.iconset/icon_32x32@2x.png
-          sips -z 128 128 icon_1024.png --out icon.iconset/icon_128x128.png
-          sips -z 256 256 icon_1024.png --out icon.iconset/icon_128x128@2x.png
-          sips -z 256 256 icon_1024.png --out icon.iconset/icon_256x256.png
-          sips -z 512 512 icon_1024.png --out icon.iconset/icon_256x256@2x.png
-          sips -z 512 512 icon_1024.png --out icon.iconset/icon_512x512.png
-          sips -z 1024 1024 icon_1024.png --out icon.iconset/icon_512x512@2x.png
-          iconutil -c icns icon.iconset -o icon.icns
-          rm -rf icon.iconset icon_1024.png
+          python3.12 macos.py --render-app-icon icon.icns
 
       - name: Build app with PyInstaller
         run: python3.12 -m PyInstaller packaging/macos.spec --noconfirm
@@ -303,6 +283,11 @@ jobs:
       - name: Validate universal2 app bundle
         run: |
           set -euo pipefail
+          ICON_FILE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' \
+            'dist/TG WS Proxy.app/Contents/Info.plist')"
+          test -n "$ICON_FILE"
+          test -f "dist/TG WS Proxy.app/Contents/Resources/$ICON_FILE"
+
           found=0
           while IFS= read -r -d '' file; do
             if file "$file" | grep -q "Mach-O"; then
@@ -326,22 +311,31 @@ jobs:
       - name: Create DMG
         run: |
           set -euo pipefail
-          APP_NAME="TG WS Proxy"
-          DMG_TEMP="dist/dmg_temp"
-
-          rm -rf "$DMG_TEMP"
-          mkdir -p "$DMG_TEMP"
-          cp -R "dist/${APP_NAME}.app" "$DMG_TEMP/"
-          ln -s /Applications "$DMG_TEMP/Applications"
-
-          hdiutil create \
-            -volname "$APP_NAME" \
-            -srcfolder "$DMG_TEMP" \
-            -ov \
-            -format UDZO \
+          packaging/dmg/build_dmg.sh \
+            "dist/TG WS Proxy.app" \
+            "TG WS Proxy" \
             "dist/TgWsProxy_macos_universal.dmg"
 
-          rm -rf "$DMG_TEMP"
+      - name: Validate DMG
+        run: |
+          set -euo pipefail
+          for DMG in "dist/TgWsProxy_macos_universal.dmg"; do
+            MOUNT_DIR="$(mktemp -d)"
+            DEVICE="$(hdiutil attach \
+              -readonly \
+              -nobrowse \
+              -mountpoint "$MOUNT_DIR" \
+              "$DMG" \
+              | awk '/^\/dev\// { print $1; exit }')"
+
+            test -d "$MOUNT_DIR/TG WS Proxy.app"
+            test -L "$MOUNT_DIR/Applications"
+            test "$(readlink "$MOUNT_DIR/Applications")" = "/Applications"
+            test -f "$MOUNT_DIR/.background/background.tiff"
+            test -f "$MOUNT_DIR/.DS_Store"
+            hdiutil detach "$DEVICE"
+            rmdir "$MOUNT_DIR"
+          done
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

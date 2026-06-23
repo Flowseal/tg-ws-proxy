@@ -30,6 +30,7 @@ from ui.ctk_theme import (
     CONFIG_DIALOG_FRAME_PAD, CONFIG_DIALOG_SIZE, FIRST_RUN_SIZE,
     create_ctk_toplevel, ctk_theme_for_platform, main_content_frame,
 )
+from ui.i18n import set_language, t
 
 _tray_icon: Optional[object] = None
 _config: dict = {}
@@ -53,16 +54,16 @@ def _msgbox(kind: str, text: str, title: str, **kw):
     return result
 
 
-def _show_error(text: str, title: str = "TG WS Proxy — Ошибка") -> None:
-    _msgbox("showerror", text, title)
+def _show_error(text: str, title: Optional[str] = None) -> None:
+    _msgbox("showerror", text, title or t("app.error_title"))
 
 
-def _show_info(text: str, title: str = "TG WS Proxy") -> None:
-    _msgbox("showinfo", text, title)
+def _show_info(text: str, title: Optional[str] = None) -> None:
+    _msgbox("showinfo", text, title or t("app.name"))
 
 
-def _ask_yes_no(text: str, title: str = "TG WS Proxy") -> bool:
-    return bool(_msgbox("askyesno", text, title))
+def _ask_yes_no(text: str, title: Optional[str] = None) -> bool:
+    return bool(_msgbox("askyesno", text, title or t("app.name")))
 
 
 def _apply_window_icon(root) -> None:
@@ -80,12 +81,10 @@ def _on_open_in_telegram(icon=None, item=None) -> None:
     log.info("Copying %s", url)
     try:
         pyperclip.copy(url)
-        _show_info(
-            f"Ссылка скопирована в буфер обмена, отправьте её в Telegram и нажмите по ней ЛКМ:\n{url}"
-        )
+        _show_info(t("dialog.copy_ok", url=url))
     except Exception as exc:
         log.error("Clipboard copy failed: %s", exc)
-        _show_error(f"Не удалось скопировать ссылку:\n{exc}")
+        _show_error(t("dialog.copy_fail", error=exc))
 
 
 def _on_copy_link(icon=None, item=None) -> None:
@@ -95,7 +94,7 @@ def _on_copy_link(icon=None, item=None) -> None:
         pyperclip.copy(url)
     except Exception as exc:
         log.error("Clipboard copy failed: %s", exc)
-        _show_error(f"Не удалось скопировать ссылку:\n{exc}")
+        _show_error(t("dialog.copy_fail", error=exc))
 
 
 def _on_restart(icon=None, item=None) -> None:
@@ -118,7 +117,7 @@ def _on_open_logs(icon=None, item=None) -> None:
             stdin=subprocess.DEVNULL, start_new_session=True,
         )
     else:
-        _show_info("Файл логов ещё не создан.")
+        _show_info(t("dialog.log_not_found"))
 
 
 def _on_exit(icon=None, item=None) -> None:
@@ -139,7 +138,7 @@ def _on_exit(icon=None, item=None) -> None:
 
 def _edit_config_dialog() -> None:
     if not ensure_ctk_thread(ctk, _config.get("appearance", "auto")):
-        _show_error("customtkinter не установлен.")
+        _show_error(t("dialog.ctk_missing"))
         return
 
     cfg = dict(_config)
@@ -148,15 +147,30 @@ def _edit_config_dialog() -> None:
         theme = ctk_theme_for_platform()
         w, h = CONFIG_DIALOG_SIZE
         root = create_ctk_toplevel(
-            ctk, title="TG WS Proxy — Настройки", width=w, height=h, theme=theme,
+            ctk, title=t("app.settings_title"), width=w, height=h, theme=theme,
             after_create=_apply_window_icon,
         )
         fpx, fpy = CONFIG_DIALOG_FRAME_PAD
         frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)
         scroll, footer = tray_settings_scroll_and_footer(ctk, frame, theme)
-        widgets = install_tray_config_form(ctk, scroll, theme, cfg, DEFAULT_CONFIG, show_autostart=False)
+
+        def _refresh_tray_menu() -> None:
+            if _tray_icon is not None:
+                _tray_icon.menu = _build_menu()
+
+        _original_language = _config.get("language", DEFAULT_CONFIG["language"])
+
+        widgets = install_tray_config_form(
+            ctk, scroll, theme, cfg, DEFAULT_CONFIG,
+            show_autostart=False,
+            on_language_change=_refresh_tray_menu,
+        )
 
         _original_appearance = ctk.get_appearance_mode()
+
+        def _restore_ui_locale() -> None:
+            set_language(_original_language)
+            _refresh_tray_menu()
 
         def _finish() -> None:
             root.destroy()
@@ -164,25 +178,28 @@ def _edit_config_dialog() -> None:
 
         def _cancel() -> None:
             ctk.set_appearance_mode(_original_appearance)
+            _restore_ui_locale()
             _finish()
 
         def on_save() -> None:
             from tkinter import messagebox
             merged = validate_config_form(widgets, DEFAULT_CONFIG, include_autostart=False)
             if isinstance(merged, str):
-                messagebox.showerror("TG WS Proxy — Ошибка", merged, parent=root)
+                messagebox.showerror(t("app.error_title"), merged, parent=root)
                 return
 
-            _ui_only_keys = {"appearance", "check_updates"}
-            config_changed = any(merged.get(k) != cfg.get(k) for k in merged)
-            proxy_changed = any(merged.get(k) != cfg.get(k) for k in merged if k not in _ui_only_keys)
+            _ui_only_keys = {"appearance", "check_updates", "language"}
+            config_changed = any(merged.get(k) != _config.get(k) for k in merged)
+            proxy_changed = any(merged.get(k) != _config.get(k) for k in merged if k not in _ui_only_keys)
 
             if not config_changed:
+                _restore_ui_locale()
                 _finish()
                 return
 
             save_config(merged)
             _config.update(merged)
+            set_language(merged.get("language", DEFAULT_CONFIG["language"]))
             log.info("Config saved: %s", merged)
             _tray_icon.menu = _build_menu()
 
@@ -191,8 +208,8 @@ def _edit_config_dialog() -> None:
                 return
 
             do_restart = messagebox.askyesno(
-                "Перезапустить?",
-                "Настройки сохранены.\n\nПерезапустить прокси сейчас?",
+                t("dialog.restart_title"),
+                t("dialog.restart_body"),
                 parent=root,
             )
             _finish()
@@ -224,7 +241,7 @@ def _show_first_run() -> None:
         theme = ctk_theme_for_platform()
         w, h = FIRST_RUN_SIZE
         root = create_ctk_toplevel(
-            ctk, title="TG WS Proxy", width=w, height=h, theme=theme,
+            ctk, title=t("app.name"), width=w, height=h, theme=theme,
             after_create=_apply_window_icon,
         )
 
@@ -248,14 +265,14 @@ def _build_menu():
     port = _config.get("port", DEFAULT_CONFIG["port"])
     link_host = get_link_host(host)
     return pystray.Menu(
-        pystray.MenuItem(f"Открыть в Telegram ({link_host}:{port})", _on_open_in_telegram, default=True),
-        pystray.MenuItem("Скопировать ссылку", _on_copy_link),
+        pystray.MenuItem(t("tray.open_telegram", host=link_host, port=port), _on_open_in_telegram, default=True),
+        pystray.MenuItem(t("tray.copy_link"), _on_copy_link),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Перезапустить прокси", _on_restart),
-        pystray.MenuItem("Настройки...", _on_edit_config),
-        pystray.MenuItem("Открыть логи", _on_open_logs),
+        pystray.MenuItem(t("tray.restart"), _on_restart),
+        pystray.MenuItem(t("tray.settings"), _on_edit_config),
+        pystray.MenuItem(t("tray.logs"), _on_open_logs),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Выход", _on_exit),
+        pystray.MenuItem(t("tray.exit"), _on_exit),
     )
 
 
@@ -283,7 +300,7 @@ def run_tray() -> None:
     _show_first_run()
     check_ipv6_warning(_show_info)
 
-    _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
+    _tray_icon = pystray.Icon(APP_NAME, load_icon(), t("app.name"), menu=_build_menu())
     log.info("Tray icon running")
     _tray_icon.run()
 
@@ -293,7 +310,7 @@ def run_tray() -> None:
 
 def main() -> None:
     if not acquire_lock():
-        _show_info("Приложение уже запущено.", os.path.basename(sys.argv[0]))
+        _show_info(t("dialog.already_running"), os.path.basename(sys.argv[0]))
         return
     try:
         run_tray()

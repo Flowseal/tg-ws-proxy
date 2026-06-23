@@ -266,26 +266,6 @@ async def _tcp_fallback(reader, writer, dst, port, relay_init, label, ctx: Crypt
     return True
 
 
-async def _ws_keepalive(ws, interval: float):
-    """Send periodic WS PING frames to keep the upstream flow warm.
-
-    A non-positive interval disables keepalive. The loop exits on send
-    failure so a dead upstream is detected promptly instead of lingering
-    until the next client packet (see issue #646).
-    """
-    if interval <= 0:
-        return
-    
-    interval = max(1.0, interval)  # reasonable minimum
-
-    try:
-        while True:
-            await asyncio.sleep(interval)
-            await ws.send_ping()
-    except (asyncio.CancelledError, ConnectionError, OSError):
-        return
-
-
 async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
                                ctx: CryptoCtx,
                                dc=None, is_media=False,
@@ -302,9 +282,10 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
     up_packets = 0
     down_packets = 0
     start_time = asyncio.get_running_loop().time()
+    close_reason = 'normal'
 
     async def tcp_to_ws():
-        nonlocal up_bytes, up_packets
+        nonlocal up_bytes, up_packets, close_reason
         try:
             while True:
                 chunk = await reader.read(65536)
@@ -330,17 +311,22 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
                         await ws.send(parts[0])
                 else:
                     await ws.send(chunk)
-        except (asyncio.CancelledError, ConnectionError, OSError):
+        except asyncio.CancelledError:
             return
+        except (ConnectionError, OSError) as e:
+            close_reason = f"client: {type(e).__name__}"
         except Exception as e:
+            close_reason = f"client: {type(e).__name__}: {e}"
             log.debug("[%s] tcp->ws ended: %s", label, e)
 
     async def ws_to_tcp():
-        nonlocal down_bytes, down_packets
+        nonlocal down_bytes, down_packets, close_reason
         try:
             while True:
                 data = await ws.recv()
                 if data is None:
+                    if close_reason == 'normal':
+                        close_reason = 'upstream: ws_close'
                     break
                 n = len(data)
                 stats.bytes_down += n
@@ -350,30 +336,32 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
                 data = ctx.clt_enc.update(plain)
                 writer.write(data)
                 await writer.drain()
-        except (asyncio.CancelledError, ConnectionError, OSError):
+        except asyncio.CancelledError:
             return
+        except (ConnectionError, OSError) as e:
+            close_reason = f"upstream: {type(e).__name__}"
+        except asyncio.IncompleteReadError:
+            close_reason = 'upstream: tcp_reset'
         except Exception as e:
+            close_reason = f"upstream: {type(e).__name__}: {e}"
             log.debug("[%s] ws->tcp ended: %s", label, e)
 
     tasks = [asyncio.create_task(tcp_to_ws()),
              asyncio.create_task(ws_to_tcp())]
-    keepalive = asyncio.create_task(
-        _ws_keepalive(ws, proxy_config.ws_keepalive_interval))
     try:
         await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     finally:
-        keepalive.cancel()
         for t in tasks:
             t.cancel()
-        for t in (*tasks, keepalive):
+        for t in tasks:
             try:
                 await t
             except BaseException:
                 pass
         elapsed = asyncio.get_running_loop().time() - start_time
-        log.info("[%s] %s WS session closed: "
+        log.info("[%s] %s WS session closed (%s): "
                  "^%s (%d pkts) v%s (%d pkts) in %.1fs",
-                 label, dc_tag,
+                 label, dc_tag, close_reason,
                  human_bytes(up_bytes), up_packets,
                  human_bytes(down_bytes), down_packets,
                  elapsed)

@@ -111,7 +111,7 @@ class _WsPool:
 
 
 class _CfWorkerPool:
-    WS_POOL_MAX_AGE = 120.0
+    WS_POOL_MAX_AGE = 100.0
 
     def __init__(self):
         self._idle: Dict[Tuple[int, str], deque] = {}
