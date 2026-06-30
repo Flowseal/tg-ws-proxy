@@ -41,7 +41,10 @@ def _exe_dir() -> Optional[Path]:
         return None
     if not base:
         return None
-    p = Path(base).resolve()
+    try:
+        p = Path(base).resolve(strict=False)
+    except OSError:
+        p = Path(os.path.realpath(base))
     return p.parent if p.is_file() else p
 
 

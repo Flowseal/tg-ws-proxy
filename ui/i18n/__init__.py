@@ -25,7 +25,10 @@ class LocaleEnum(str, Enum):
             return _DEFAULT_LOCALE
 
 
-_LOCALES_DIR = Path(__file__).resolve().parent
+try:
+    _LOCALES_DIR = Path(__file__).resolve(strict=False).parent
+except OSError:
+    _LOCALES_DIR = Path(os.path.realpath(__file__)).parent
 _DEFAULT_LOCALE = LocaleEnum.english
 
 _translations: Dict[str, str] = {}
