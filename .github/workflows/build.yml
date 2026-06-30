@@ -12,6 +12,31 @@ on:
         description: "Release version tag (e.g. v1.0.0)"
         required: false
         default: "v1.0.0"
+      build_windows_x64:
+        description: 'Build Windows x64?'
+        type: boolean
+        required: false
+        default: true
+      build_windows_arm64:
+        description: 'Build Windows ARM64?'
+        type: boolean
+        required: false
+        default: true
+      build_win7:
+        description: 'Build Windows 7 (x64 + x86)?'
+        type: boolean
+        required: false
+        default: true
+      build_macos:
+        description: 'Build macOS universal?'
+        type: boolean
+        required: false
+        default: true
+      build_linux:
+        description: 'Build Linux (amd64/.deb/.rpm)?'
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   contents: write
@@ -19,6 +44,7 @@ permissions:
 jobs:
   build-windows-x64:
     runs-on: windows-latest
+    if: ${{ github.event.inputs.build_windows_x64 == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -78,6 +104,7 @@ jobs:
 
   build-windows-arm64:
     runs-on: windows-11-arm
+    if: ${{ github.event.inputs.build_windows_arm64 == 'true' }}
     env:
       CRYPTOGRAPHY_VERSION: "46.0.5"
       ARM64_WHEELHOUSE: wheelhouse-arm64
@@ -154,6 +181,7 @@ jobs:
 
   build-win7:
     runs-on: windows-latest
+    if: ${{ github.event.inputs.build_win7 == 'true' }}
     strategy:
       matrix:
         include:
@@ -207,6 +235,7 @@ jobs:
 
   build-macos:
     runs-on: macos-latest
+    if: ${{ github.event.inputs.build_macos == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -345,6 +374,7 @@ jobs:
 
   build-linux:
     runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.build_linux == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -511,7 +541,13 @@ jobs:
   release:
     needs: [build-windows-x64, build-windows-arm64, build-win7, build-macos, build-linux]
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.make_release == 'true' }}
+    if: >-
+      ${{ github.event.inputs.make_release == 'true'
+          && github.event.inputs.build_windows_x64 == 'true'
+          && github.event.inputs.build_windows_arm64 == 'true'
+          && github.event.inputs.build_win7 == 'true'
+          && github.event.inputs.build_macos == 'true'
+          && github.event.inputs.build_linux == 'true' }}
     steps:
       - uses: actions/download-artifact@v8
         with:
