@@ -14,8 +14,10 @@ from utils.update_check import RELEASES_PAGE_URL, get_status
 from ui.ctk_theme import (
     FIRST_RUN_FRAME_PAD,
     CtkTheme,
+    ctk_theme_for_platform,
     main_content_frame,
 )
+from ui.ctk_dialogs import show_info as ctk_show_info
 from ui.ctk_tooltip import attach_ctk_tooltip, attach_tooltip_to_widgets
 from ui.i18n import (
     label_from_language,
@@ -132,9 +134,6 @@ def _show_connectivity_results(title_base: str, results: dict,
                                domain: str = '', label_prefix: str = 'DC',
                                auto_mode: bool = False,
                                unavailable_message: str = '') -> None:
-    import tkinter as _tk
-    from tkinter import messagebox as _mb
-
     ok = [dc for dc, v in results.items() if v is True]
     total = len(_CFPROXY_TEST_DCS)
     if auto_mode:
@@ -165,21 +164,11 @@ def _show_connectivity_results(title_base: str, results: dict,
             )
             msg = t("connectivity.partial_detail", domain=domain, ok_list=ok_list, fail_list=fail_list)
 
-    root = _tk.Tk()
-    root.withdraw()
-    try:
-        root.attributes("-topmost", True)
-    except Exception:
-        pass
-    _mb.showinfo(title, msg, parent=root)
-    root.destroy()
+    _show_ctk_info(title, msg)
 
 
 def _show_multi_connectivity_results(title_base: str, per_domain: dict,
                                      label_prefix: str = 'DC') -> None:
-    import tkinter as _tk
-    from tkinter import messagebox as _mb
-
     total = len(_CFPROXY_TEST_DCS)
     all_ok = True
     any_ok = False
@@ -210,14 +199,50 @@ def _show_multi_connectivity_results(title_base: str, per_domain: dict,
         title = t("connectivity.unavailable", title=title_base)
     msg = "\n\n".join(blocks)
 
-    root = _tk.Tk()
-    root.withdraw()
+    _show_ctk_info(title, msg)
+
+
+def _show_ctk_info(title: str, message: str) -> None:
     try:
-        root.attributes("-topmost", True)
+        import customtkinter as ctk
+        import threading
+        from utils.tray_common import APP_ICON_PATH, ctk_run_dialog, ensure_ctk_thread, is_ctk_thread
+
+        if ensure_ctk_thread(ctk, "auto"):
+            if is_ctk_thread():
+                ctk_show_info(
+                    ctk,
+                    parent=None,
+                    theme=ctk_theme_for_platform(),
+                    title=title,
+                    message=message,
+                    icon_path=APP_ICON_PATH,
+                )
+            else:
+                def _build(done: threading.Event) -> None:
+                    ctk_show_info(
+                        ctk,
+                        parent=None,
+                        theme=ctk_theme_for_platform(),
+                        title=title,
+                        message=message,
+                        icon_path=APP_ICON_PATH,
+                    )
+                    done.set()
+                ctk_run_dialog(_build)
+            return
+    except Exception:
+        log.exception("CTk connectivity result dialog failed")
+        
+    try:
+        import tkinter as _tk
+        from tkinter import messagebox as _mb
+        root = _tk.Tk()
+        root.withdraw()
+        _mb.showinfo(title, message, parent=root)
+        root.destroy()
     except Exception:
         pass
-    _mb.showinfo(title, msg, parent=root)
-    root.destroy()
 
 _INNER_W = 396
 

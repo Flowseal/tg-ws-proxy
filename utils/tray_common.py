@@ -24,6 +24,12 @@ log = logging.getLogger("tg-ws-tray")
 
 APP_NAME = "TgWsProxy"
 PORTABLE_DIR_NAME = "TgWsProxy_data"
+APP_ICON_PATH = str(Path(__file__).parents[1] / "icon.ico")
+CTK_THREAD_NAME = "ctk-root"
+
+
+def is_ctk_thread() -> bool:
+    return threading.current_thread().name == CTK_THREAD_NAME
 
 
 def _standard_app_dir() -> Path:
@@ -282,7 +288,7 @@ def _font_paths():
 def load_icon():
     from PIL import Image
 
-    icon_path = Path(__file__).parents[1] / "icon.ico"
+    icon_path = Path(APP_ICON_PATH)
     if icon_path.exists():
         try:
             return Image.open(str(icon_path))
@@ -480,7 +486,7 @@ def ensure_ctk_thread(ctk: Any, mode: str = "auto") -> bool:
         _ctk_root_ready.set()
         _ctk_root.mainloop()
 
-    threading.Thread(target=_run, daemon=True, name="ctk-root").start()
+    threading.Thread(target=_run, daemon=True, name=CTK_THREAD_NAME).start()
     _ctk_root_ready.wait(timeout=5.0)
     return _ctk_root is not None
 

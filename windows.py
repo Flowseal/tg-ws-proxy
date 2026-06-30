@@ -41,9 +41,9 @@ from utils.win32_theme import (
     apply_windows_dark_theme,
 )
 from utils.tray_common import (
-    APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, IS_FROZEN, LOG_FILE,
+    APP_ICON_PATH, APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, IS_FROZEN, LOG_FILE,
     acquire_lock, bootstrap, check_ipv6_warning, ctk_run_dialog,
-    ensure_ctk_thread, ensure_dirs, load_config, load_icon, log,
+    ensure_ctk_thread, ensure_dirs, is_ctk_thread, load_config, load_icon, log,
     quit_ctk, release_lock, restart_proxy,
     save_config, start_proxy, stop_proxy, tg_proxy_url,
 )
@@ -51,6 +51,13 @@ from ui.ctk_tray_ui import (
     install_tray_config_buttons, install_tray_config_form,
     populate_first_run_window, tray_settings_scroll_and_footer,
     validate_config_form,
+)
+from ui.ctk_dialogs import (
+    ask_yes_no as ctk_ask_yes_no,
+    run_with_progress as ctk_run_with_progress,
+    show_ctk_dialog,
+    show_error as ctk_show_error,
+    show_info as ctk_show_info,
 )
 from ui.ctk_theme import (
     CONFIG_DIALOG_FRAME_PAD, CONFIG_DIALOG_SIZE, FIRST_RUN_SIZE,
@@ -95,7 +102,7 @@ def _release_win_mutex() -> None:
             pass
         _win_mutex_handle = None
 
-ICON_PATH = str(Path(__file__).parent / "icon.ico")
+ICON_PATH = APP_ICON_PATH
 
 # win32 dialogs
 
@@ -111,16 +118,62 @@ _IDYES = 6
 _IDNO = 7
 
 
+def _run_ctk_modal(callback):
+    if ctk is not None and ensure_ctk_thread(ctk, _config.get("appearance", "auto")):
+        if is_ctk_thread():
+            return callback()
+
+        result = {"value": None}
+        def _build(done: threading.Event) -> None:
+            result["value"] = callback()
+            done.set()
+
+        ctk_run_dialog(_build)
+        return result["value"]
+    return None
+
+
 def _show_error(text: str, title: Optional[str] = None) -> None:
-    _u32.MessageBoxW(None, text, title or t("app.error_title"), _MB_OK_ERR)
+    _title = title or t("app.error_title")
+    if _run_ctk_modal(lambda: ctk_show_error(
+        ctk,
+        parent=None,
+        theme=ctk_theme_for_platform(),
+        title=_title,
+        message=text,
+        icon_path=ICON_PATH,
+    )):
+        return
+    _u32.MessageBoxW(None, text, _title, _MB_OK_ERR)
 
 
 def _show_info(text: str, title: Optional[str] = None) -> None:
-    _u32.MessageBoxW(None, text, title or t("app.name"), _MB_OK_INFO)
+    _title = title or t("app.name")
+    if _run_ctk_modal(lambda: ctk_show_info(
+        ctk,
+        parent=None,
+        theme=ctk_theme_for_platform(),
+        title=_title,
+        message=text,
+        icon_path=ICON_PATH,
+    )):
+        return
+    _u32.MessageBoxW(None, text, _title, _MB_OK_INFO)
 
 
 def _ask_yes_no(text: str, title: Optional[str] = None) -> bool:
-    return _u32.MessageBoxW(None, text, title or t("app.name"), _MB_YESNO_Q) == _IDYES
+    _title = title or t("app.name")
+    result = _run_ctk_modal(lambda: ctk_ask_yes_no(
+        ctk,
+        parent=None,
+        theme=ctk_theme_for_platform(),
+        title=_title,
+        message=text,
+        icon_path=ICON_PATH,
+    ))
+    if result is not None:
+        return bool(result)
+    return _u32.MessageBoxW(None, text, _title, _MB_YESNO_Q) == _IDYES
 
 
 def update_ctk_form(
@@ -131,99 +184,54 @@ def update_ctk_form(
     if ctk is None or not ensure_ctk_thread(ctk, _config.get("appearance", "auto")):
         result = _u32.MessageBoxW(None, text, title, _MB_YESNOCANCEL_Q)
         if result == _IDYES:
+            if download_url:
+                _perform_update(download_url)
+                return "close"
             return "update"
         if result == _IDNO:
             return "open"
         return "close"
 
-    result = {"value": "close"}
-
-    def _build(done: threading.Event) -> None:
+    def _show_update_dialog() -> str:
         theme = ctk_theme_for_platform()
-        root = create_ctk_toplevel(
-            ctk,
-            title=title,
-            width=310 if IS_FROZEN else 210,
-            height=130 if IS_FROZEN else 100,
-            theme=theme,
-            after_create=lambda r: r.iconbitmap(ICON_PATH),
-        )
-        frame = main_content_frame(ctk, root, theme, padx=16, pady=14)
+        if IS_FROZEN and download_url:
+            def _do_update(set_status):
+                return _perform_update(download_url, set_status=set_status)
 
-        ctk.CTkLabel(
-            frame,
-            text=text,
-            justify="left",
-            anchor="w",
-            wraplength=270,
-            font=(theme.ui_font_family, 12),
-            text_color=theme.text_primary,
-        ).pack(fill="x", pady=(0, 10))
-
-        row = ctk.CTkFrame(frame, fg_color="transparent")
-        row.pack(fill="x")
-
-        status_label = ctk.CTkLabel(
-            frame, text="", justify="left", anchor="w", wraplength=270,
-            font=(theme.ui_font_family, 11), text_color=theme.text_secondary,
-        )
-        status_label.pack(fill="x", pady=(6, 0))
-
-        btns: list = []
-
-        def _set_status(msg: str) -> None:
-            root.after(0, lambda: status_label.configure(text=msg))
-
-        def _close_with(value: str) -> None:
-            result["value"] = value
-            root.destroy()
-            done.set()
-
-        def _on_update() -> None:
-            if not download_url:
-                if release_url:
-                    webbrowser.open(release_url)
-                _close_with("open")
-                return
-            for b in btns:
-                b.configure(state="disabled")
-            root.protocol("WM_DELETE_WINDOW", lambda: None)
-            def _run():
-                _perform_update(download_url, set_status=_set_status)
-                root.after(0, lambda: [b.configure(state="normal") for b in btns])
-                root.after(0, lambda: root.protocol("WM_DELETE_WINDOW", lambda: _close_with("close")))
-            threading.Thread(target=_run, daemon=True).start()
-
-        if IS_FROZEN:
-            btn_upd = ctk.CTkButton(
-                row, text=t("button.update"), width=88, height=34,
-                font=(theme.ui_font_family, 13), command=_on_update,
+            return ctk_run_with_progress(
+                ctk,
+                parent=None,
+                theme=theme,
+                title=title,
+                message=text,
+                icon_path=ICON_PATH,
+                task=_do_update,
             )
-            btn_upd.pack(side="left", padx=(0, 6))
-            btns.append(btn_upd)
-        btn_pg = ctk.CTkButton(
-            row, text=t("button.page"), width=88, height=34,
-            font=(theme.ui_font_family, 13), command=lambda: _close_with("open"),
+
+        buttons = []
+        if IS_FROZEN:
+            buttons.append((t("button.update"), "update", True))
+        buttons.extend(((t("button.page"), "open", True), (t("button.close"), "close", False)))
+        return show_ctk_dialog(
+            ctk,
+            parent=None,
+            title=title,
+            theme=theme,
+            message=text,
+            kind="info",
+            buttons=tuple(buttons),
+            default="close",
+            icon_path=ICON_PATH,
         )
-        btn_pg.pack(side="left", padx=(0, 6))
-        btns.append(btn_pg)
-        btn_cl = ctk.CTkButton(
-            row, text=t("button.close"), width=88, height=34,
-            font=(theme.ui_font_family, 13),
-            fg_color=theme.field_bg, hover_color=theme.field_border,
-            text_color=theme.text_primary, border_width=1, border_color=theme.field_border,
-            command=lambda: _close_with("close"),
-        )
-        btn_cl.pack(side="left")
-        btns.append(btn_cl)
 
-        root.protocol("WM_DELETE_WINDOW", lambda: _close_with("close"))
-
-    ctk_run_dialog(_build)
-    return result["value"]
+    choice = _run_ctk_modal(_show_update_dialog) or "close"
+    if choice == "update" and release_url:
+        webbrowser.open(release_url)
+        return "open"
+    return choice
 
 
-def _perform_update(download_url: str, set_status=None) -> None:
+def _perform_update(download_url: str, set_status=None) -> bool:
     def _step(msg: str) -> None:
         log.info("Update: %s", msg)
         if set_status:
@@ -261,7 +269,7 @@ def _perform_update(download_url: str, set_status=None) -> None:
                 tmp_path.unlink(missing_ok=True)
             except OSError:
                 pass
-        return
+        return False
 
     _step(t("update.replacing"))
     try:
@@ -274,7 +282,7 @@ def _perform_update(download_url: str, set_status=None) -> None:
             tmp_path.unlink(missing_ok=True)
         except OSError:
             pass
-        return
+        return False
 
     try:
         tmp_path.rename(cur_exe)
@@ -288,7 +296,7 @@ def _perform_update(download_url: str, set_status=None) -> None:
             tmp_path.unlink(missing_ok=True)
         except OSError:
             pass
-        return
+        return False
 
     _step(t("update.restarting"))
     _release_win_mutex()
@@ -516,10 +524,16 @@ def _edit_config_dialog() -> None:
             _finish()
 
         def on_save() -> None:
-            from tkinter import messagebox
             merged = validate_config_form(widgets, DEFAULT_CONFIG, include_autostart=_supports_autostart())
             if isinstance(merged, str):
-                messagebox.showerror(t("app.error_title"), merged, parent=root)
+                ctk_show_error(
+                    ctk,
+                    parent=root,
+                    theme=theme,
+                    title=t("app.error_title"),
+                    message=merged,
+                    icon_path=ICON_PATH,
+                )
                 return
 
             _ui_only_keys = {"appearance", "autostart", "check_updates", "language"}
@@ -543,10 +557,13 @@ def _edit_config_dialog() -> None:
                 _finish()
                 return
 
-            do_restart = messagebox.askyesno(
-                t("dialog.restart_title"),
-                t("dialog.restart_body"),
+            do_restart = ctk_ask_yes_no(
+                ctk,
                 parent=root,
+                theme=theme,
+                title=t("dialog.restart_title"),
+                message=t("dialog.restart_body"),
+                icon_path=ICON_PATH,
             )
             _finish()
             if do_restart:
