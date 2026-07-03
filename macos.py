@@ -442,6 +442,14 @@ def _edit_config_dialog() -> None:
     if cfproxy is None:
         return
 
+    force_test_dc = _ask_yes_no_close(
+        "Принудительно тестовое окружение Telegram (тестовые DC)?\n"
+        "Для Telegram Desktop не требуется (тестовые DC 10001+ распознаются "
+        "автоматически) — включайте только для клиентов без сдвига +10000."
+    )
+    if force_test_dc is None:
+        return
+
     cfproxy_domain = _osascript_input(
         "Свои CF-домены через запятую (оставьте пустым для автоматического выбора):\n"
         "DNS записи kws1-kws5,kws203 должны указывать на IP датацентров Telegram через Cloudflare.",
@@ -475,6 +483,7 @@ def _edit_config_dialog() -> None:
         "cfproxy": cfproxy,
         "cfproxy_user_domain": cfproxy_domains,
         "cfproxy_worker_domain": cfworker_domains,
+        "force_test_dc": force_test_dc,
     }
     save_config(new_cfg)
     log.info("Config saved: %s", new_cfg)

@@ -43,6 +43,12 @@ DC_DEFAULT_IPS: Dict[int, str] = {
     203: '91.105.192.100'
 }
 
+DC_TEST_IPS: Dict[int, str] = {
+    1: '149.154.175.10',
+    2: '149.154.167.40',
+    3: '149.154.175.117',
+}
+
 
 def ws_domains(dc: int, is_media) -> List[str]:
     if dc == 203:

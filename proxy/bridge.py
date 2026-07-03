@@ -132,8 +132,11 @@ class MsgSplitter:
 async def do_fallback(reader, writer, relay_init, label,
                        dc: int, is_media: bool, media_tag: str,
                        ctx: CryptoCtx, splitter=None):
-    fallback_dst = DC_DEFAULT_IPS.get(dc)
-    use_cf = proxy_config.fallback_cfproxy
+    test_env = proxy_config.force_test_dc or dc >= 10000
+    lookup_dc = dc - 10000 if dc >= 10000 else dc
+    ip_table = DC_TEST_IPS if test_env else DC_DEFAULT_IPS
+    fallback_dst = ip_table.get(lookup_dc)
+    use_cf = proxy_config.fallback_cfproxy and not test_env
     worker_domains = proxy_config.cfproxy_worker_domains
 
     methods: List[str] = []

@@ -301,12 +301,18 @@ async def _handle_client(reader, writer, secret: bytes):
         target = proxy_config.dc_redirects.get(dc)
         is_any_cf_fallback = proxy_config.fallback_cfproxy or proxy_config.cfproxy_worker_domains
 
+        is_test_dc = proxy_config.force_test_dc or dc >= 10000
+
         # Fallback if DC not in config, if WS blacklisted for this DC/is_media or if connect to ip is timed out
-        if (dc not in proxy_config.dc_redirects 
+        if (is_test_dc
+            or dc not in proxy_config.dc_redirects
             or dc_key in ws_blacklist
             or now < ip_fail_until.get(target, 0) and is_any_cf_fallback):
 
-            if dc not in proxy_config.dc_redirects:
+            if is_test_dc:
+                log.info("[%s] DC%d%s test env -> direct fallback",
+                         label, dc, media_tag)
+            elif dc not in proxy_config.dc_redirects:
                 log.info("[%s] DC%d not in config -> fallback",
                          label, dc)
             elif dc_key in ws_blacklist:
@@ -703,6 +709,11 @@ def main():
                     metavar='DOMAIN',
                     help='Enable Fake TLS (ee-secret) masking with the given '
                          'SNI domain, e.g. example.com')
+    ap.add_argument('--force-test-dc', action='store_true',
+                    help='Force ALL traffic to Telegram TEST datacenters. '
+                         'Not needed for Telegram Desktop (test DCs 10001+ '
+                         'are detected automatically); use for clients that '
+                         'signal test DCs as plain 1-3')
     ap.add_argument('--proxy-protocol', action='store_true',
                     help='Accept PROXY protocol v1 header '
                          '(for use behind nginx/haproxy with proxy_protocol on)')
@@ -742,6 +753,7 @@ def main():
     proxy_config.cfproxy_worker_domains = coerce_domain_list(args.cfproxy_worker_domain)
     proxy_config.fake_tls_domain = args.fake_tls_domain.strip()
     proxy_config.proxy_protocol = args.proxy_protocol
+    proxy_config.force_test_dc = args.force_test_dc
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
     log_fmt = logging.Formatter('%(asctime)s  %(levelname)-5s  %(message)s',
