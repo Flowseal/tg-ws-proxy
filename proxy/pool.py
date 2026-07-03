@@ -19,6 +19,7 @@ class _WsPool:
     def __init__(self):
         self._idle: Dict[Tuple[int, bool], deque] = {}
         self._refilling: Set[Tuple[int, bool]] = set()
+        self.fronting_until: float = 0.0
 
     async def get(self, dc: int, is_media: bool,
                   target_ip: str, domains: List[str]
@@ -61,7 +62,7 @@ class _WsPool:
             if needed <= 0:
                 return
             tasks = [asyncio.create_task(
-                self._connect_one(target_ip, domains))
+                self._connect_one(target_ip, domains, time.monotonic() < self.fronting_until))
                 for _ in range(needed)]
             for t in tasks:
                 try:
@@ -76,11 +77,11 @@ class _WsPool:
             self._refilling.discard(key)
 
     @staticmethod
-    async def _connect_one(target_ip, domains) -> Optional[RawWebSocket]:
+    async def _connect_one(target_ip, domains, fronting_active) -> Optional[RawWebSocket]:
         for domain in domains:
             try:
                 return await RawWebSocket.connect(
-                    target_ip, domain, timeout=8)
+                    target_ip, domain, timeout=8, sni="sprinthost.ru" if fronting_active else None)
             except WsHandshakeError as exc:
                 if exc.is_redirect:
                     continue
@@ -108,10 +109,11 @@ class _WsPool:
     def reset(self):
         self._idle.clear()
         self._refilling.clear()
+        self.fronting_until = 0.0
 
 
 class _CfWorkerPool:
-    WS_POOL_MAX_AGE = 120.0
+    WS_POOL_MAX_AGE = 100.0
 
     def __init__(self):
         self._idle: Dict[Tuple[int, str], deque] = {}

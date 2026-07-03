@@ -7,6 +7,7 @@ class _Stats:
         self.connections_ws = 0
         self.connections_tcp_fallback = 0
         self.connections_cfproxy = 0
+        self.connections_fronting = 0
         self.connections_bad = 0
         self.connections_masked = 0
         self.ws_errors = 0
@@ -29,6 +30,7 @@ class _Stats:
                 f"ws={self.connections_ws} "
                 f"tcp_fb={self.connections_tcp_fallback} "
                 f"cf={self.connections_cfproxy} "
+                f"front={self.connections_fronting} "
                 f"bad={self.connections_bad} "
                 f"masked={self.connections_masked} "
                 f"err={self.ws_errors} "

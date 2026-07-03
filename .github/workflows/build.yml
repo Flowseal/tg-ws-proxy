@@ -12,13 +12,39 @@ on:
         description: "Release version tag (e.g. v1.0.0)"
         required: false
         default: "v1.0.0"
+      build_windows_x64:
+        description: 'Build Windows x64?'
+        type: boolean
+        required: false
+        default: true
+      build_windows_arm64:
+        description: 'Build Windows ARM64?'
+        type: boolean
+        required: false
+        default: true
+      build_win7:
+        description: 'Build Windows 7 (x64 + x86)?'
+        type: boolean
+        required: false
+        default: true
+      build_macos:
+        description: 'Build macOS universal?'
+        type: boolean
+        required: false
+        default: true
+      build_linux:
+        description: 'Build Linux (amd64/.deb/.rpm)?'
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   contents: write
 
 jobs:
-  build-windows:
+  build-windows-x64:
     runs-on: windows-latest
+    if: ${{ github.event.inputs.build_windows_x64 == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -73,11 +99,89 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: TgWsProxy
+          name: TgWsProxy-windows-x64
           path: dist/TgWsProxy_windows.exe
+
+  build-windows-arm64:
+    runs-on: windows-11-arm
+    if: ${{ github.event.inputs.build_windows_arm64 == 'true' }}
+    env:
+      CRYPTOGRAPHY_VERSION: "46.0.5"
+      ARM64_WHEELHOUSE: wheelhouse-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          architecture: arm64
+          cache: "pip"
+
+      - name: Restore ARM64 cryptography wheel
+        id: cryptography-wheel-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ARM64_WHEELHOUSE }}
+          key: windows-arm64-py311-cryptography-${{ env.CRYPTOGRAPHY_VERSION }}-${{ hashFiles('pyproject.toml', '.github/workflows/build.yml') }}
+
+      - name: Install ARM64 OpenSSL
+        if: steps.cryptography-wheel-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          vcpkg install openssl:arm64-windows-static
+          $opensslDir = "$env:VCPKG_INSTALLATION_ROOT\installed\arm64-windows-static"
+          "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
+          "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+
+      - name: Build ARM64 cryptography wheel
+        if: steps.cryptography-wheel-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir $env:ARM64_WHEELHOUSE
+          pip wheel --no-deps --wheel-dir $env:ARM64_WHEELHOUSE "cryptography==$env:CRYPTOGRAPHY_VERSION"
+
+      - name: Install dependencies & pyinstaller
+        run: pip install --find-links $env:ARM64_WHEELHOUSE . "pyinstaller==6.13.0"
+
+      - name: Build EXE with PyInstaller
+        run: pyinstaller packaging/windows.spec --noconfirm
+
+      - name: Strip Rich PE header
+        shell: bash
+        run: |
+          python -c "
+          import struct, pathlib
+          exe = pathlib.Path('dist/TgWsProxy.exe')
+          data = bytearray(exe.read_bytes())
+          rich = data.find(b'Rich')
+          if rich == -1:
+              print('Rich header not found, skipping')
+              raise SystemExit(0)
+          ck = struct.unpack_from('<I', data, rich + 4)[0]
+          dans = struct.pack('<I', 0x536E6144 ^ ck)
+          ds = data.find(dans)
+          if ds == -1:
+              print('DanS marker not found, skipping')
+              raise SystemExit(0)
+          data[ds:rich + 8] = b'\x00' * (rich + 8 - ds)
+          exe.write_bytes(data)
+          print(f'Stripped Rich header: offset {ds}..{rich+8}')
+          "
+
+      - name: Rename artifact
+        run: mv dist/TgWsProxy.exe dist/TgWsProxy_windows_arm64.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: TgWsProxy-windows-arm64
+          path: dist/TgWsProxy_windows_arm64.exe
 
   build-win7:
     runs-on: windows-latest
+    if: ${{ github.event.inputs.build_win7 == 'true' }}
     strategy:
       matrix:
         include:
@@ -131,6 +235,7 @@ jobs:
 
   build-macos:
     runs-on: macos-latest
+    if: ${{ github.event.inputs.build_macos == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -196,30 +301,10 @@ jobs:
           python3.12 -m pip install .
           python3.12 -m pip install pyinstaller==6.13.0
 
-      - name: Create macOS icon from ICO
+      - name: Create macOS icon
         run: |
           set -euo pipefail
-          python3.12 - <<'PY'
-          from PIL import Image
-
-          image = Image.open('icon.ico')
-          image = image.resize((1024, 1024), Image.LANCZOS)
-          image.save('icon_1024.png', 'PNG')
-          PY
-
-          mkdir -p icon.iconset
-          sips -z 16 16 icon_1024.png --out icon.iconset/icon_16x16.png
-          sips -z 32 32 icon_1024.png --out icon.iconset/icon_16x16@2x.png
-          sips -z 32 32 icon_1024.png --out icon.iconset/icon_32x32.png
-          sips -z 64 64 icon_1024.png --out icon.iconset/icon_32x32@2x.png
-          sips -z 128 128 icon_1024.png --out icon.iconset/icon_128x128.png
-          sips -z 256 256 icon_1024.png --out icon.iconset/icon_128x128@2x.png
-          sips -z 256 256 icon_1024.png --out icon.iconset/icon_256x256.png
-          sips -z 512 512 icon_1024.png --out icon.iconset/icon_256x256@2x.png
-          sips -z 512 512 icon_1024.png --out icon.iconset/icon_512x512.png
-          sips -z 1024 1024 icon_1024.png --out icon.iconset/icon_512x512@2x.png
-          iconutil -c icns icon.iconset -o icon.icns
-          rm -rf icon.iconset icon_1024.png
+          python3.12 macos.py --render-app-icon icon.icns
 
       - name: Build app with PyInstaller
         run: python3.12 -m PyInstaller packaging/macos.spec --noconfirm
@@ -227,6 +312,11 @@ jobs:
       - name: Validate universal2 app bundle
         run: |
           set -euo pipefail
+          ICON_FILE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' \
+            'dist/TG WS Proxy.app/Contents/Info.plist')"
+          test -n "$ICON_FILE"
+          test -f "dist/TG WS Proxy.app/Contents/Resources/$ICON_FILE"
+
           found=0
           while IFS= read -r -d '' file; do
             if file "$file" | grep -q "Mach-O"; then
@@ -250,22 +340,31 @@ jobs:
       - name: Create DMG
         run: |
           set -euo pipefail
-          APP_NAME="TG WS Proxy"
-          DMG_TEMP="dist/dmg_temp"
-
-          rm -rf "$DMG_TEMP"
-          mkdir -p "$DMG_TEMP"
-          cp -R "dist/${APP_NAME}.app" "$DMG_TEMP/"
-          ln -s /Applications "$DMG_TEMP/Applications"
-
-          hdiutil create \
-            -volname "$APP_NAME" \
-            -srcfolder "$DMG_TEMP" \
-            -ov \
-            -format UDZO \
+          packaging/dmg/build_dmg.sh \
+            "dist/TG WS Proxy.app" \
+            "TG WS Proxy" \
             "dist/TgWsProxy_macos_universal.dmg"
 
-          rm -rf "$DMG_TEMP"
+      - name: Validate DMG
+        run: |
+          set -euo pipefail
+          for DMG in "dist/TgWsProxy_macos_universal.dmg"; do
+            MOUNT_DIR="$(mktemp -d)"
+            DEVICE="$(hdiutil attach \
+              -readonly \
+              -nobrowse \
+              -mountpoint "$MOUNT_DIR" \
+              "$DMG" \
+              | awk '/^\/dev\// { print $1; exit }')"
+
+            test -d "$MOUNT_DIR/TG WS Proxy.app"
+            test -L "$MOUNT_DIR/Applications"
+            test "$(readlink "$MOUNT_DIR/Applications")" = "/Applications"
+            test -f "$MOUNT_DIR/.background/background.tiff"
+            test -f "$MOUNT_DIR/.DS_Store"
+            hdiutil detach "$DEVICE"
+            rmdir "$MOUNT_DIR"
+          done
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -275,6 +374,7 @@ jobs:
 
   build-linux:
     runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.build_linux == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -439,9 +539,15 @@ jobs:
             dist/TgWsProxy_linux_amd64.rpm
 
   release:
-    needs: [build-windows, build-win7, build-macos, build-linux]
+    needs: [build-windows-x64, build-windows-arm64, build-win7, build-macos, build-linux]
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.make_release == 'true' }}
+    if: >-
+      ${{ github.event.inputs.make_release == 'true'
+          && github.event.inputs.build_windows_x64 == 'true'
+          && github.event.inputs.build_windows_arm64 == 'true'
+          && github.event.inputs.build_win7 == 'true'
+          && github.event.inputs.build_macos == 'true'
+          && github.event.inputs.build_linux == 'true' }}
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -455,7 +561,7 @@ jobs:
           tag_name: ${{ github.event.inputs.version }}
           name: "TG WS Proxy ${{ github.event.inputs.version }}"
           body: |
-            ## 
+            --- 
             ### [❤️ Поддержать развитие проекта](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/Funding.md)
 
             > [!TIP]
@@ -463,6 +569,7 @@ jobs:
             > Добавьте `185.199.109.133 release-assets.githubusercontent.com` в hosts или воспользуйтесь зеркалом: https://sourceforge.net/projects/tg-ws-proxy.mirror/files/
           files: |
             dist/TgWsProxy_windows.exe
+            dist/TgWsProxy_windows_arm64.exe
             dist/TgWsProxy_windows_7_64bit.exe
             dist/TgWsProxy_windows_7_32bit.exe
             dist/TgWsProxy_macos_universal.dmg

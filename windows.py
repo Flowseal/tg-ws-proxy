@@ -56,6 +56,7 @@ from ui.ctk_theme import (
     CONFIG_DIALOG_FRAME_PAD, CONFIG_DIALOG_SIZE, FIRST_RUN_SIZE,
     create_ctk_toplevel, ctk_theme_for_platform, main_content_frame,
 )
+from ui.i18n import set_language, t
 
 _tray_icon: Optional[object] = None
 _config: dict = {}
@@ -110,22 +111,23 @@ _IDYES = 6
 _IDNO = 7
 
 
-def _show_error(text: str, title: str = "TG WS Proxy — Ошибка") -> None:
-    _u32.MessageBoxW(None, text, title, _MB_OK_ERR)
+def _show_error(text: str, title: Optional[str] = None) -> None:
+    _u32.MessageBoxW(None, text, title or t("app.error_title"), _MB_OK_ERR)
 
 
-def _show_info(text: str, title: str = "TG WS Proxy") -> None:
-    _u32.MessageBoxW(None, text, title, _MB_OK_INFO)
+def _show_info(text: str, title: Optional[str] = None) -> None:
+    _u32.MessageBoxW(None, text, title or t("app.name"), _MB_OK_INFO)
 
 
-def _ask_yes_no(text: str, title: str = "TG WS Proxy") -> bool:
-    return _u32.MessageBoxW(None, text, title, _MB_YESNO_Q) == _IDYES
+def _ask_yes_no(text: str, title: Optional[str] = None) -> bool:
+    return _u32.MessageBoxW(None, text, title or t("app.name"), _MB_YESNO_Q) == _IDYES
 
 
 def update_ctk_form(
-    text: str, title: str = "TG WS Proxy", download_url: Optional[str] = None,
+    text: str, title: Optional[str] = None, download_url: Optional[str] = None,
     release_url: Optional[str] = None,
 ) -> str:
+    title = title or t("app.name")
     if ctk is None or not ensure_ctk_thread(ctk, _config.get("appearance", "auto")):
         result = _u32.MessageBoxW(None, text, title, _MB_YESNOCANCEL_Q)
         if result == _IDYES:
@@ -194,19 +196,19 @@ def update_ctk_form(
 
         if IS_FROZEN:
             btn_upd = ctk.CTkButton(
-                row, text="Обновить", width=88, height=34,
+                row, text=t("button.update"), width=88, height=34,
                 font=(theme.ui_font_family, 13), command=_on_update,
             )
             btn_upd.pack(side="left", padx=(0, 6))
             btns.append(btn_upd)
         btn_pg = ctk.CTkButton(
-            row, text="Страница", width=88, height=34,
+            row, text=t("button.page"), width=88, height=34,
             font=(theme.ui_font_family, 13), command=lambda: _close_with("open"),
         )
         btn_pg.pack(side="left", padx=(0, 6))
         btns.append(btn_pg)
         btn_cl = ctk.CTkButton(
-            row, text="Закрыть", width=88, height=34,
+            row, text=t("button.close"), width=88, height=34,
             font=(theme.ui_font_family, 13),
             fg_color=theme.field_bg, hover_color=theme.field_border,
             text_color=theme.text_primary, border_width=1, border_color=theme.field_border,
@@ -231,11 +233,11 @@ def _perform_update(download_url: str, set_status=None) -> None:
     def _err(msg: str) -> None:
         log.error("Update error: %s", msg)
         if set_status:
-            set_status(f"Ошибка: {msg}")
+            set_status(f"{t('update.error', msg=msg)}")
         else:
             _show_error(msg)
 
-    _step("Скачивание...")
+    _step(t("update.downloading"))
     cur_exe = Path(sys.executable)
     old_exe = cur_exe.with_name(cur_exe.stem + "_oldtgws.exe")
     tmp_path = None
@@ -253,7 +255,7 @@ def _perform_update(download_url: str, set_status=None) -> None:
                         break
                     _fout.write(_chunk)
     except Exception as exc:
-        _err(f"Не удалось скачать:\n{exc}")
+        _err(t("update.download_fail", error=exc))
         if tmp_path:
             try:
                 tmp_path.unlink(missing_ok=True)
@@ -261,13 +263,13 @@ def _perform_update(download_url: str, set_status=None) -> None:
                 pass
         return
 
-    _step("Замена файла...")
+    _step(t("update.replacing"))
     try:
         if old_exe.exists():
             old_exe.unlink()
         cur_exe.rename(old_exe)
     except Exception as exc:
-        _err(f"Не удалось переименовать файл:\n{exc}")
+        _err(t("update.rename_fail", error=exc))
         try:
             tmp_path.unlink(missing_ok=True)
         except OSError:
@@ -277,7 +279,7 @@ def _perform_update(download_url: str, set_status=None) -> None:
     try:
         tmp_path.rename(cur_exe)
     except Exception as exc:
-        _err(f"Не удалось переместить файл:\n{exc}")
+        _err(t("update.move_fail", error=exc))
         try:
             old_exe.rename(cur_exe)
         except OSError:
@@ -288,7 +290,7 @@ def _perform_update(download_url: str, set_status=None) -> None:
             pass
         return
 
-    _step("Перезапуск...")
+    _step(t("update.restarting"))
     _release_win_mutex()
     stop_proxy()
 
@@ -333,9 +335,9 @@ def _maybe_do_update(cfg: dict, is_exiting) -> None:
                 return
             url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
             ver = st.get("latest") or "?"
-            asset = get_update_asset(Path(sys.executable)) if IS_FROZEN else None
+            asset = get_update_asset(Path(sys.executable), __version__) if IS_FROZEN else None
             choice = update_ctk_form(
-                f"Доступна новая версия: {ver}",
+                t("update.available", version=ver),
                 download_url=asset[0] if asset else None,
                 release_url=url,
             )
@@ -382,9 +384,7 @@ def set_autostart_enabled(enabled: bool) -> None:
     except OSError as exc:
         log.error("Failed to update autostart: %s", exc)
         _show_error(
-            "Не удалось изменить автозапуск.\n\n"
-            "Попробуйте запустить приложение от имени пользователя "
-            f"с правами на реестр.\n\nОшибка: {exc}"
+            t("dialog.autostart_fail", error=exc)
         )
 
 
@@ -400,34 +400,30 @@ def _on_open_in_telegram(icon=None, item=None) -> None:
         log.info("Browser open failed, copying to clipboard")
         if pyperclip is None:
             _show_error(
-                "Не удалось открыть Telegram автоматически.\n\n"
-                f"Установите пакет pyperclip для копирования в буфер или откройте вручную:\n{url}"
+                t("dialog.open_tg_fail_manual", url=url)
             )
             return
         try:
             pyperclip.copy(url)
             _show_info(
-                "Не удалось открыть Telegram автоматически.\n\n"
-                f"Ссылка скопирована в буфер обмена, отправьте её в Telegram и нажмите по ней ЛКМ:\n{url}"
+                t("dialog.open_tg_fail_clipboard", url=url)
             )
         except Exception as exc:
             log.error("Clipboard copy failed: %s", exc)
-            _show_error(f"Не удалось скопировать ссылку:\n{exc}")
+            _show_error(t("dialog.copy_fail", error=exc))
 
 
 def _on_copy_link(icon=None, item=None) -> None:
     url = tg_proxy_url(_config)
     log.info("Copying link: %s", url)
     if pyperclip is None:
-        _show_error(
-            "Установите пакет pyperclip для копирования в буфер обмена."
-        )
+        _show_error(t("dialog.pyperclip_missing"))
         return
     try:
         pyperclip.copy(url)
     except Exception as exc:
         log.error("Clipboard copy failed: %s", exc)
-        _show_error(f"Не удалось скопировать ссылку:\n{exc}")
+        _show_error(t("dialog.copy_fail", error=exc))
 
 
 def _on_restart(icon=None, item=None) -> None:
@@ -447,9 +443,9 @@ def _on_open_logs(icon=None, item=None) -> None:
             os.startfile(str(LOG_FILE))
         except Exception as exc:
             log.error("Failed to open log file: %s", exc)
-            _show_error(f"Не удалось открыть файл логов:\n{exc}")
+            _show_error(t("dialog.log_open_fail", error=exc))
     else:
-        _show_info("Файл логов ещё не создан.")
+        _show_info(t("dialog.log_not_found"))
 
 
 def _on_exit(icon=None, item=None) -> None:
@@ -469,7 +465,7 @@ def _on_exit(icon=None, item=None) -> None:
 
 def _edit_config_dialog() -> None:
     if not ensure_ctk_thread(ctk, _config.get("appearance", "auto")):
-        _show_error("customtkinter не установлен.")
+        _show_error(t("dialog.ctk_missing"))
         return
 
     cfg = dict(_config)
@@ -484,19 +480,31 @@ def _edit_config_dialog() -> None:
             h += 100
 
         root = create_ctk_toplevel(
-            ctk, title="TG WS Proxy — Настройки", width=w, height=h, theme=theme,
+            ctk, title=t("app.settings_title"), width=w, height=h, theme=theme,
             after_create=lambda r: r.iconbitmap(ICON_PATH),
         )
         fpx, fpy = CONFIG_DIALOG_FRAME_PAD
         frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)
         scroll, footer = tray_settings_scroll_and_footer(ctk, frame, theme)
+
+        def _refresh_tray_menu() -> None:
+            if _tray_icon is not None:
+                _tray_icon.menu = _build_menu()
+
+        _original_language = _config.get("language", DEFAULT_CONFIG["language"])
+
         widgets = install_tray_config_form(
             ctk, scroll, theme, cfg, DEFAULT_CONFIG,
             show_autostart=_supports_autostart(),
             autostart_value=cfg.get("autostart", False),
+            on_language_change=_refresh_tray_menu,
         )
 
         _original_appearance = ctk.get_appearance_mode()
+
+        def _restore_ui_locale() -> None:
+            set_language(_original_language)
+            _refresh_tray_menu()
 
         def _finish() -> None:
             root.destroy()
@@ -504,25 +512,28 @@ def _edit_config_dialog() -> None:
 
         def _cancel() -> None:
             ctk.set_appearance_mode(_original_appearance)
+            _restore_ui_locale()
             _finish()
 
         def on_save() -> None:
             from tkinter import messagebox
             merged = validate_config_form(widgets, DEFAULT_CONFIG, include_autostart=_supports_autostart())
             if isinstance(merged, str):
-                messagebox.showerror("TG WS Proxy — Ошибка", merged, parent=root)
+                messagebox.showerror(t("app.error_title"), merged, parent=root)
                 return
 
-            _ui_only_keys = {"appearance", "autostart", "check_updates"}
-            config_changed = any(merged.get(k) != cfg.get(k) for k in merged)
-            proxy_changed = any(merged.get(k) != cfg.get(k) for k in merged if k not in _ui_only_keys)
+            _ui_only_keys = {"appearance", "autostart", "check_updates", "language"}
+            config_changed = any(merged.get(k) != _config.get(k) for k in merged)
+            proxy_changed = any(merged.get(k) != _config.get(k) for k in merged if k not in _ui_only_keys)
 
             if not config_changed:
+                _restore_ui_locale()
                 _finish()
                 return
 
             save_config(merged)
             _config.update(merged)
+            set_language(merged.get("language", DEFAULT_CONFIG["language"]))
             log.info("Config saved: %s", merged)
             if _supports_autostart():
                 set_autostart_enabled(bool(merged.get("autostart", False)))
@@ -533,8 +544,8 @@ def _edit_config_dialog() -> None:
                 return
 
             do_restart = messagebox.askyesno(
-                "Перезапустить?",
-                "Настройки сохранены.\n\nПерезапустить прокси сейчас?",
+                t("dialog.restart_title"),
+                t("dialog.restart_body"),
                 parent=root,
             )
             _finish()
@@ -565,7 +576,7 @@ def _show_first_run() -> None:
         theme = ctk_theme_for_platform()
         w, h = FIRST_RUN_SIZE
         root = create_ctk_toplevel(
-            ctk, title="TG WS Proxy", width=w, height=h, theme=theme,
+            ctk, title=t("app.name"), width=w, height=h, theme=theme,
             after_create=lambda r: r.iconbitmap(ICON_PATH),
         )
 
@@ -590,14 +601,14 @@ def _build_menu():
     port = _config.get("port", DEFAULT_CONFIG["port"])
     link_host = get_link_host(host)
     return pystray.Menu(
-        pystray.MenuItem(f"Открыть в Telegram ({link_host}:{port})", _on_open_in_telegram, default=True),
-        pystray.MenuItem("Скопировать ссылку", _on_copy_link),
+        pystray.MenuItem(t("tray.open_telegram", host=link_host, port=port), _on_open_in_telegram, default=True),
+        pystray.MenuItem(t("tray.copy_link"), _on_copy_link),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Перезапустить прокси", _on_restart),
-        pystray.MenuItem("Настройки...", _on_edit_config),
-        pystray.MenuItem("Открыть логи", _on_open_logs),
+        pystray.MenuItem(t("tray.restart"), _on_restart),
+        pystray.MenuItem(t("tray.settings"), _on_edit_config),
+        pystray.MenuItem(t("tray.logs"), _on_open_logs),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Выход", _on_exit),
+        pystray.MenuItem(t("tray.exit"), _on_exit),
     )
 
 
@@ -628,7 +639,7 @@ def run_tray() -> None:
     _show_first_run()
     check_ipv6_warning(_show_info)
 
-    _tray_icon = pystray.Icon(APP_NAME, load_icon(), "TG WS Proxy", menu=_build_menu())
+    _tray_icon = pystray.Icon(APP_NAME, load_icon(), t("app.name"), menu=_build_menu())
     log.info("Tray icon running")
     _tray_icon.run()
 
@@ -638,7 +649,7 @@ def run_tray() -> None:
 
 def main() -> None:
     if (mutex_result := _acquire_win_mutex()) is False or mutex_result is None and not acquire_lock():
-        _show_info("Приложение уже запущено.", os.path.basename(sys.argv[0]))
+        _show_info(t("dialog.already_running"), os.path.basename(sys.argv[0]))
         return
 
     if IS_FROZEN:

@@ -10,14 +10,51 @@ from pathlib import Path
 from typing import Optional
 
 try:
-    import rumps
-except ImportError:
-    rumps = None
-
-try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError:
     Image = ImageDraw = ImageFont = None
+
+
+def render_app_icon(size: int):
+    scale = size / 1024
+    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    outer = tuple(round(value * scale) for value in (92, 92, 932, 932))
+    draw.ellipse(outer, fill=(0, 151, 221, 255))
+    try:
+        font = ImageFont.truetype(
+            "/System/Library/Fonts/Helvetica.ttc",
+            round(430 * scale),
+        )
+    except Exception:
+        font = ImageFont.load_default()
+    box = draw.textbbox((0, 0), "T", font=font)
+    width = box[2] - box[0]
+    height = box[3] - box[1]
+    draw.text(
+        (
+            (size - width) / 2 - box[0],
+            (size - height) / 2 - box[1] - round(10 * scale),
+        ),
+        "T",
+        font=font,
+        fill=(255, 255, 255, 255),
+    )
+    return image
+
+
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--render-app-icon":
+    if Image is None:
+        raise SystemExit("Pillow is required to render the macOS app icon")
+    output_path = sys.argv[2] if len(sys.argv) > 2 else "icon.icns"
+    render_app_icon(1024).save(output_path, format="ICNS")
+    raise SystemExit(0)
+
+
+try:
+    import rumps
+except ImportError:
+    rumps = None
 
 try:
     import pyperclip
@@ -32,6 +69,7 @@ from utils.tray_common import (
     LOG_FILE, acquire_lock, apply_proxy_config, ensure_dirs, load_config,
     log, release_lock, save_config, setup_logging, stop_proxy, tg_proxy_url,
 )
+from utils.diagnostics import diagnose_listen_error
 
 MENUBAR_ICON_PATH = APP_DIR / "menubar_icon.png"
 
@@ -143,26 +181,10 @@ def _ask_cfworker_domain(default: str) -> Optional[str]:
 def _make_menubar_icon(size: int = 44):
     if Image is None:
         return None
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    margin = size // 11
-    draw.ellipse([margin, margin, size - margin, size - margin], fill=(0, 0, 0, 255))
-    try:
-        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", size=int(size * 0.55))
-    except Exception:
-        font = ImageFont.load_default()
-    bbox = draw.textbbox((0, 0), "T", font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(
-        ((size - tw) // 2 - bbox[0], (size - th) // 2 - bbox[1]),
-        "T", fill=(255, 255, 255, 255), font=font,
-    )
-    return img
+    return render_app_icon(size)
 
 
 def _ensure_menubar_icon() -> None:
-    if MENUBAR_ICON_PATH.exists():
-        return
     ensure_dirs()
     img = _make_menubar_icon(44)
     if img:
@@ -184,13 +206,9 @@ def _run_proxy_thread() -> None:
         loop.run_until_complete(_run(stop_event=stop_ev))
     except Exception as exc:
         log.error("Proxy thread crashed: %s", exc)
-        if "Address already in use" in str(exc):
-            _show_error(
-                "Не удалось запустить прокси:\n"
-                "Порт уже используется другим приложением.\n\n"
-                "Закройте приложение, использующее этот порт, "
-                "или измените порт в настройках прокси и перезапустите."
-            )
+        msg, _ = diagnose_listen_error(exc)
+        if msg:
+            _show_error(msg)
     finally:
         loop.close()
         _async_stop = None

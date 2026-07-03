@@ -9,11 +9,13 @@ block_cipher = None
 import customtkinter
 ctk_path = os.path.dirname(customtkinter.__file__)
 
+_i18n_path = os.path.join(os.path.dirname(SPEC), os.pardir, 'ui', 'i18n')
+
 a = Analysis(
     [os.path.join(os.path.dirname(SPEC), os.pardir, 'windows.py')],
     pathex=[],
     binaries=[],
-    datas=[(ctk_path, 'customtkinter/')],
+    datas=[(ctk_path, 'customtkinter/'), (_i18n_path, 'ui/i18n')],
     hiddenimports=[
         'pystray._win32',
         'PIL._tkinter_finder',
