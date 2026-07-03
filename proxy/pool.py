@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Tuple, Set
 from .raw_websocket import RawWebSocket, WsHandshakeError
 from .stats import stats
 from .config import proxy_config
-from .utils import ws_domains, DC_DEFAULT_IPS
+from .utils import ws_domains, DC_DEFAULT_IPS, DC_TEST_IPS, WS_PATH, WS_PATH_TEST
 
 log = logging.getLogger('tg-mtproto-proxy')
 
@@ -22,9 +22,10 @@ class _WsPool:
         self.fronting_until: float = 0.0
 
     async def get(self, dc: int, is_media: bool,
-                  target_ip: str, domains: List[str]
+                  target_ip: str, domains: List[str],
+                  path: str = WS_PATH
                   ) -> Optional[RawWebSocket]:
-        key = (dc, is_media)
+        key = (dc, is_media, path)
         now = time.monotonic()
 
         bucket = self._idle.get(key)
@@ -55,14 +56,15 @@ class _WsPool:
         asyncio.create_task(self._refill(key, target_ip, domains))
 
     async def _refill(self, key, target_ip, domains):
-        dc, is_media = key
+        dc, is_media, path = key
         try:
             bucket = self._idle.setdefault(key, deque())
             needed = proxy_config.pool_size - len(bucket)
             if needed <= 0:
                 return
             tasks = [asyncio.create_task(
-                self._connect_one(target_ip, domains, time.monotonic() < self.fronting_until))
+                self._connect_one(target_ip, domains,
+                                  time.monotonic() < self.fronting_until, path))
                 for _ in range(needed)]
             for t in tasks:
                 try:
@@ -77,11 +79,13 @@ class _WsPool:
             self._refilling.discard(key)
 
     @staticmethod
-    async def _connect_one(target_ip, domains, fronting_active) -> Optional[RawWebSocket]:
+    async def _connect_one(target_ip, domains, fronting_active,
+                           path=WS_PATH) -> Optional[RawWebSocket]:
         for domain in domains:
             try:
                 return await RawWebSocket.connect(
-                    target_ip, domain, timeout=8, sni="sprinthost.ru" if fronting_active else None)
+                    target_ip, domain, timeout=8, path=path,
+                    sni="sprinthost.ru" if fronting_active else None)
             except WsHandshakeError as exc:
                 if exc.is_redirect:
                     continue
@@ -98,12 +102,13 @@ class _WsPool:
             pass
 
     async def warmup(self):
+        path = WS_PATH_TEST if proxy_config.force_test_dc else WS_PATH
         for dc, target_ip in proxy_config.dc_redirects.items():
             if target_ip is None:
                 continue
             for is_media in (False, True):
                 domains = ws_domains(dc, is_media)
-                self._schedule_refill((dc, is_media), target_ip, domains)
+                self._schedule_refill((dc, is_media, path), target_ip, domains)
         log.info("WS pool warmup started for %d DC(s)", len(proxy_config.dc_redirects))
 
     def reset(self):
@@ -193,8 +198,9 @@ class _CfWorkerPool:
             pass
 
     async def warmup(self):
+        ip_table = DC_TEST_IPS if proxy_config.force_test_dc else DC_DEFAULT_IPS
         cf_fallbacks = {
-            dc: ip for dc, ip in DC_DEFAULT_IPS.items()
+            dc: ip for dc, ip in ip_table.items()
             if dc not in proxy_config.dc_redirects
         }
 

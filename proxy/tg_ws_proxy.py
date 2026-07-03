@@ -298,21 +298,19 @@ async def _handle_client(reader, writer, secret: bytes):
         dc_key = f'{dc}{"m" if is_media else ""}'
         media_tag = " media" if is_media else ""
         now = time.monotonic()
-        target = proxy_config.dc_redirects.get(dc)
+        is_test_dc = proxy_config.force_test_dc or dc >= 10000
+        # We need to normalize dc number if test env
+        normalized_dc = dc - 10000 if dc >= 10000 else dc
+        ws_path = WS_PATH_TEST if is_test_dc else WS_PATH
+        target = proxy_config.dc_redirects.get(normalized_dc)
         is_any_cf_fallback = proxy_config.fallback_cfproxy or proxy_config.cfproxy_worker_domains
 
-        is_test_dc = proxy_config.force_test_dc or dc >= 10000
-
         # Fallback if DC not in config, if WS blacklisted for this DC/is_media or if connect to ip is timed out
-        if (is_test_dc
-            or dc not in proxy_config.dc_redirects
+        if (normalized_dc not in proxy_config.dc_redirects
             or dc_key in ws_blacklist
             or now < ip_fail_until.get(target, 0) and is_any_cf_fallback):
 
-            if is_test_dc:
-                log.info("[%s] DC%d%s test env -> direct fallback",
-                         label, dc, media_tag)
-            elif dc not in proxy_config.dc_redirects:
+            if normalized_dc not in proxy_config.dc_redirects:
                 log.info("[%s] DC%d not in config -> fallback",
                          label, dc)
             elif dc_key in ws_blacklist:
@@ -338,13 +336,13 @@ async def _handle_client(reader, writer, secret: bytes):
         ws_timeout = WS_FAIL_TIMEOUT if now < dc_fail_until.get(dc_key, 0) else 5.0
         fronting_active = now < fronting_until
 
-        domains = ws_domains(dc, is_media)
+        domains = ws_domains(normalized_dc, is_media)
         ws = None
         ws_failed_redirect = False
         ws_timed_out = False
         all_redirects = True
 
-        ws = await ws_pool.get(dc, is_media, target, domains)
+        ws = await ws_pool.get(dc, is_media, target, domains, path=ws_path)
         if ws:
             log.info("[%s] DC%d%s -> pool hit via %s",
                      label, dc, media_tag, target)
@@ -354,7 +352,7 @@ async def _handle_client(reader, writer, secret: bytes):
                      label, dc, media_tag, domains[0])
             try:
                 ws = await RawWebSocket.connect(target, domains[0],
-                                                timeout=5.0,
+                                                timeout=5.0, path=ws_path,
                                                 sni="sprinthost.ru")
             except Exception as exc:
                 stats.ws_errors += 1
@@ -369,12 +367,13 @@ async def _handle_client(reader, writer, secret: bytes):
                 ws_pool.fronting_until = 0.0
         else:
             for domain in domains:
-                url = f'wss://{domain}/apiws'
+                url = f'wss://{domain}{ws_path}'
                 log.info("[%s] DC%d%s -> %s via %s",
                          label, dc, media_tag, url, target)
                 try:
                     ws = await RawWebSocket.connect(target, domain,
-                                                    timeout=ws_timeout)
+                                                    timeout=ws_timeout,
+                                                    path=ws_path)
                     all_redirects = False
                     break
                 except WsHandshakeError as exc:
@@ -410,7 +409,7 @@ async def _handle_client(reader, writer, secret: bytes):
                      label, dc, media_tag, domains[0])
             try:
                 ws = await RawWebSocket.connect(target, domains[0],
-                                                timeout=5.0,
+                                                timeout=5.0, path=ws_path,
                                                 sni="sprinthost.ru")
             except Exception as exc:
                 stats.ws_errors += 1

@@ -49,6 +49,9 @@ DC_TEST_IPS: Dict[int, str] = {
     3: '149.154.175.117',
 }
 
+WS_PATH = '/apiws'
+WS_PATH_TEST = WS_PATH + '_test'
+
 
 def ws_domains(dc: int, is_media) -> List[str]:
     if dc == 203:
