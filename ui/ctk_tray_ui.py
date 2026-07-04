@@ -353,7 +353,6 @@ class TrayConfigFormWidgets:
     cfproxy_var: Optional[Any] = None
     cfproxy_user_domain_var: Optional[Any] = None
     cfproxy_worker_domain_var: Optional[Any] = None
-    force_test_dc_var: Optional[Any] = None
     appearance_var: Optional[Any] = None
     language_var: Optional[Any] = None
 
@@ -514,14 +513,6 @@ def install_tray_config_form(
     dc_textbox.pack(fill="x")
     dc_textbox.insert("1.0", "\n".join(cfg.get("dc_ip", default_config["dc_ip"])))
     attach_tooltip_to_widgets([dc_lbl, dc_textbox], t("tip.dc"))
-
-    force_test_dc_var = ctk.BooleanVar(
-        value=cfg.get("force_test_dc", default_config.get("force_test_dc", False))
-    )
-    force_test_dc_cb = _checkbox(ctk, dc_inner, theme, t("label.force_test_dc"),
-                                 force_test_dc_var)
-    force_test_dc_cb.pack(anchor="w", pady=(8, 0))
-    attach_ctk_tooltip(force_test_dc_cb, t("tip.force_test_dc"))
 
     cf_inner = _config_section(ctk, frame, theme, t("section.cfproxy"))
 
@@ -791,7 +782,6 @@ def install_tray_config_form(
         cfproxy_var=cfproxy_var,
         cfproxy_user_domain_var=cfproxy_user_domain_var,
         cfproxy_worker_domain_var=cfproxy_worker_domain_var,
-        force_test_dc_var=force_test_dc_var,
         appearance_var=appearance_var,
         language_var=language_var,
     )
@@ -886,8 +876,6 @@ def validate_config_form(
         new_cfg["cfproxy_user_domain"] = coerce_domain_list(widgets.cfproxy_user_domain_var.get())
     if widgets.cfproxy_worker_domain_var is not None:
         new_cfg["cfproxy_worker_domain"] = coerce_domain_list(widgets.cfproxy_worker_domain_var.get())
-    if widgets.force_test_dc_var is not None:
-        new_cfg["force_test_dc"] = bool(widgets.force_test_dc_var.get())
     if widgets.appearance_var is not None:
         new_cfg["appearance"] = _appearance_to_cfg(widgets.appearance_var.get())
     if widgets.language_var is not None:
