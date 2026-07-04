@@ -130,14 +130,13 @@ class MsgSplitter:
 
 
 async def do_fallback(reader, writer, relay_init, label,
-                       dc: int, is_media: bool, media_tag: str,
+                       raw_dc: int, is_media: bool, media_tag: str,
                        ctx: CryptoCtx, splitter=None):
-    test_env = proxy_config.force_test_dc or dc >= 10000
-    lookup_dc = dc - 10000 if dc >= 10000 else dc
-    ws_path = WS_PATH_TEST if test_env else WS_PATH
+    test_env = proxy_config.force_test_dc or raw_dc >= 10000
+    dc = raw_dc - 10000 if raw_dc >= 10000 else raw_dc
     ip_table = DC_TEST_IPS if test_env else DC_DEFAULT_IPS
-    fallback_dst = ip_table.get(lookup_dc)
-    use_cf = proxy_config.fallback_cfproxy
+    fallback_dst = ip_table.get(dc)
+    use_cf = proxy_config.fallback_cfproxy and not test_env
     worker_domains = proxy_config.cfproxy_worker_domains
 
     methods: List[str] = []
@@ -153,21 +152,20 @@ async def do_fallback(reader, writer, relay_init, label,
         if method == 'cf_worker' and fallback_dst:
             ok = await _cfproxy_worker_fallback(
                 reader, writer, relay_init, label, ctx,
-                dc=dc, is_media=is_media, fallback_dst=fallback_dst,
+                dc=raw_dc, is_media=is_media, fallback_dst=fallback_dst,
                 splitter=splitter)
             if ok:
                 return True
         elif method == 'cf':
             ok = await _cfproxy_fallback(
                 reader, writer, relay_init, label, ctx,
-                dc=dc, kws_dc=lookup_dc, ws_path=ws_path,
-                is_media=is_media,
+                dc=raw_dc, is_media=is_media,
                 splitter=splitter)
             if ok:
                 return True
         elif method == 'tcp' and fallback_dst:
             log.info("[%s] DC%d%s -> TCP fallback to %s:443",
-                     label, dc, media_tag, fallback_dst)
+                     label, raw_dc, media_tag, fallback_dst)
             ok = await _tcp_fallback(
                 reader, writer, fallback_dst, 443,
                 relay_init, label, ctx)
@@ -222,8 +220,7 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
 
 async def _cfproxy_fallback(reader, writer, relay_init, label,
                             ctx: CryptoCtx,
-                            dc: int, kws_dc: int, ws_path: str,
-                            is_media: bool,
+                            dc: int, is_media: bool,
                             splitter=None):
     media_tag = ' media' if is_media else ''
     ws = None
@@ -232,11 +229,10 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
     log.info("[%s] DC%d%s -> trying CF proxy",
             label, dc, media_tag)
 
-    for base_domain in balancer.get_domains_for_dc(kws_dc):
-        domain = f'kws{kws_dc}.{base_domain}'
+    for base_domain in balancer.get_domains_for_dc(dc):
+        domain = f'kws{dc}.{base_domain}'
         try:
-            ws = await RawWebSocket.connect(domain, domain, timeout=10.0,
-                                            path=ws_path)
+            ws = await RawWebSocket.connect(domain, domain, timeout=10.0)
             chosen_domain = base_domain
             break
         except Exception as exc:
@@ -246,7 +242,7 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
     if ws is None:
         return False
 
-    if chosen_domain and balancer.update_domain_for_dc(kws_dc, chosen_domain):
+    if chosen_domain and balancer.update_domain_for_dc(dc, chosen_domain):
         log.info("[%s] Switched active CF domain", label)
 
     stats.connections_cfproxy += 1
