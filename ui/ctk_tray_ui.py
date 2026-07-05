@@ -27,8 +27,12 @@ from ui.i18n import (
 
 log = logging.getLogger('tg-mtproto-proxy')
 
-_CFPROXY_HELP_URL = "https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md"
-_CFWORKER_HELP_URL = "https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md"
+def _get_help_url(base_name: str) -> str:
+    from ui.i18n import get_language
+    lang = get_language().value
+    lang_folder = "EN" if lang == "en" else "RU"
+    return f"https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/{lang_folder}/{base_name}.md"
+
 _CFPROXY_TEST_DCS = [1, 2, 3, 4, 5, 203]
 _CFWORKER_TEST_DST = {
     1: '149.154.175.50',
@@ -601,7 +605,7 @@ def install_tray_config_form(
         font=(theme.ui_font_family, 14), corner_radius=8,
         fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
         text_color="#ffffff", border_width=1, border_color=theme.field_border,
-        command=lambda: webbrowser.open(_CFPROXY_HELP_URL),
+        command=lambda: webbrowser.open(_get_help_url("CfProxy")),
     ).pack(side="right")
 
     cfproxy_user_domain_var = ctk.StringVar(value=", ".join(saved_user_domains))
@@ -682,7 +686,7 @@ def install_tray_config_form(
         font=(theme.ui_font_family, 14), corner_radius=8,
         fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
         text_color="#ffffff", border_width=1, border_color=theme.field_border,
-        command=lambda: webbrowser.open(_CFWORKER_HELP_URL),
+        command=lambda: webbrowser.open(_get_help_url("CfWorker")),
     ).pack(side="right")
 
     _cfworker_test_widget = ctk.CTkButton(
