@@ -119,7 +119,7 @@ Telegram Desktop → MTProto Proxy (127.0.0.1:1443) → WebSocket → Telegram D
 
 ## Automatic Build
 
-The project contains PyInstaller specs ([`packaging/windows.spec`](../packaging/windows.spec), [`packaging/macos.spec`](../packaging/macos.spec), [`packaging/linux.spec`](../packaging/linux.spec)) and GitHub Actions workflow ([`.github/workflows/build.yml`](../.github/workflows/build.yml)) for automated builds.
+The project contains PyInstaller specs ([`packaging/windows.spec`](../../packaging/windows.spec), [`packaging/macos.spec`](../../packaging/macos.spec), [`packaging/linux.spec`](../../packaging/linux.spec)) and GitHub Actions workflow ([`.github/workflows/build.yml`](../../.github/workflows/build.yml)) for automated builds.
 
 Minimum supported OS versions for current binary builds:
 
