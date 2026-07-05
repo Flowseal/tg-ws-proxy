@@ -21,9 +21,22 @@ _st_BBQ4s = struct.Struct('>BBQ4s')
 _st_H = struct.Struct('>H')
 _st_Q = struct.Struct('>Q')
 
+# Outbound WebSocket TLS context.
+#
+# ``check_hostname`` is disabled because the domain-fronting fallback
+# deliberately sets ``server_hostname`` to a different domain than the
+# HTTP ``Host`` header (e.g. SNI=``sprinthost.ru``, Host=``kwsN.web.telegram.org``),
+# so a strict hostname match is not applicable to every code path.
+#
+# ``verify_mode`` MUST remain ``CERT_REQUIRED`` so that the CA chain
+# of the presented certificate is validated on every outbound
+# connection. Without chain validation, any network-privileged
+# attacker (rogue AP, upstream MitM) can present a self-signed cert
+# and read/tamper with the proxied MTProto traffic — the ``relay_init``
+# handshake sent right after WS upgrade is not protected by MTProto's
+# inner encryption. See CWE-295.
 _ssl_ctx = ssl.create_default_context()
 _ssl_ctx.check_hostname = False
-_ssl_ctx.verify_mode = ssl.CERT_NONE
 
 
 class WsHandshakeError(Exception):
