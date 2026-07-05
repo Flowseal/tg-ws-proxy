@@ -1,12 +1,6 @@
-<div align="center">
-
-# 🌍 Language / Язык
-
-### [🇷🇺 Русский](./RU/README.md) | [🇬🇧 English](./EN/README.md)
+**[🇬🇧 English Documentation](./EN/README.md)**
 
 ---
-
-</div>
 
 <div align="center">
 	<br />
