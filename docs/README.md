@@ -1,6 +1,8 @@
-**[🇬🇧 English Documentation](./EN/README.md)**
+<div align="center">
 
----
+**🇷🇺 Русский • [🇬🇧 English](./EN/README.md)**
+
+</div>
 
 <div align="center">
 	<br />
