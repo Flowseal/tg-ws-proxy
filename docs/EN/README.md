@@ -1,4 +1,10 @@
 <div align="center">
+
+**[🇷🇺 Русский](../README.md) • 🇬🇧 English**
+
+</div>
+
+<div align="center">
 	<br />
 	<p>
 		<img width="1729" height="910" alt="tgwsproxy" src="../images/workflow.png" />
