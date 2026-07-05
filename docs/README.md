@@ -1,4 +1,10 @@
 <div align="center">
+
+**🇷🇺 Русский • [🇬🇧 English](./EN/README.md)**
+
+</div>
+
+<div align="center">
 	<br />
 	<p>
 		<img width="1729" height="910" alt="tgwsproxy" src="./images/workflow.png" />
@@ -9,7 +15,7 @@
 
 > [!TIP]
 >
-> ### [🎉 Поддержать меня](./Funding.md)
+> ### [🎉 Поддержать меня](./RU/Funding.md)
 >
 > **USDT (TRC20)**: `TXPnKs2Ww1RD8JN6nChFUVmi5r2hqrWjuu`  
 > **BTC**: `bc1qr8vd6jelkyyry3m4mq6z5txdx4pl856fu6ss0w`  
@@ -40,16 +46,16 @@
 ## Навигация
 
 - **🚀 Быстрый старт**
-  - **[Windows](./README.windows.md)**
-  - **[macOS](./README.macos.md)**
-  - **[Linux](./README.linux.md)**
-  - **[Docker](./README.docker.md)**
-- [Настройка Cloudflare Worker'а (бесплатный аналог CF-прокси)](./CfWorker.md)
-- [Настройка Cloudflare-домена (CF-прокси)](./CfProxy.md)
-- [Fake TLS + upstream в Nginx](./FakeTlsNginx.md)
-- [Файлы конфигурации Tray-приложения](./TrayConfig.md)
-- [Установка из исходников](./BuildFromSource.md)
-- [Руководство для контрибьюторов](./CONTRIBUTING.md)
+  - **[Windows](./RU/README.windows.md)**
+  - **[macOS](./RU/README.macos.md)**
+  - **[Linux](./RU/README.linux.md)**
+  - **[Docker](./RU/README.docker.md)**
+- [Настройка Cloudflare Worker'а (бесплатный аналог CF-прокси)](./RU/CfWorker.md)
+- [Настройка Cloudflare-домена (CF-прокси)](./RU/CfProxy.md)
+- [Fake TLS + upstream в Nginx](./RU/FakeTlsNginx.md)
+- [Файлы конфигурации Tray-приложения](./RU/TrayConfig.md)
+- [Установка из исходников](./RU/BuildFromSource.md)
+- [Руководство для контрибьюторов](./RU/CONTRIBUTING.md)
 
 ## Windows: быстрый вход
 
@@ -109,7 +115,7 @@ Telegram Desktop → MTProto Proxy (127.0.0.1:1443) → WebSocket → Telegram D
 > **Удалите в настройках прокси в DC → IP всё, кроме `4:149.154.167.220`**  
 > **Если это не помогло, полностью очистите это поле**  
 > Подобная проблема встречается на аккаунтах без Premium  
-> Если это не помогло, настройте собственный домен по инструкции: [CfProxy.md](./CfProxy.md)
+> Если это не помогло, настройте собственный домен по инструкции: [CfProxy.md](./RU/CfProxy.md)
 
 ## Автоматическая сборка
 
