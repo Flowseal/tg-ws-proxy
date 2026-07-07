@@ -121,12 +121,12 @@ class _CfWorkerPool:
     WS_POOL_MAX_AGE = 100.0
 
     def __init__(self):
-        self._idle: Dict[Tuple[int, str, str], deque] = {}
-        self._refilling: Set[Tuple[int, str, str]] = set()
+        self._idle: Dict[Tuple[int, str], deque] = {}
+        self._refilling: Set[Tuple[int, str]] = set()
 
     async def get(self, dc: int, worker_domain: str, fallback_dst: str) -> Optional[RawWebSocket]:
         now = time.monotonic()
-        key = (dc, worker_domain, fallback_dst)
+        key = (dc, worker_domain)
 
         bucket = self._idle.get(key)
         if bucket is None:
@@ -142,21 +142,21 @@ class _CfWorkerPool:
             stats.cf_pool_hits += 1
             log.debug("CF worker pool hit DC%d (age=%.1fs, left=%d)",
                       dc, age, len(bucket))
-            self._schedule_refill(key)
+            self._schedule_refill(key, fallback_dst)
             return ws
 
         stats.cf_pool_misses += 1
-        self._schedule_refill(key)
+        self._schedule_refill(key, fallback_dst)
         return None
 
-    def _schedule_refill(self, key):
+    def _schedule_refill(self, key, fallback_dst):
         if key in self._refilling:
             return
         self._refilling.add(key)
-        asyncio.create_task(self._refill(key))
+        asyncio.create_task(self._refill(key, fallback_dst))
 
-    async def _refill(self, key):
-        dc, worker_domain, fallback_dst = key
+    async def _refill(self, key, fallback_dst):
+        dc, worker_domain = key
         try:
             bucket = self._idle.setdefault(key, deque())
             needed = proxy_config.pool_size - len(bucket)
@@ -209,7 +209,7 @@ class _CfWorkerPool:
 
         for worker_domain in proxy_config.cfproxy_worker_domains:
             for dc, fallback_dst in cf_fallbacks.items():
-                self._schedule_refill((dc, worker_domain, fallback_dst))
+                self._schedule_refill((dc, worker_domain), fallback_dst)
 
         log.info("CF worker pool warmup started for %d DC(s)", len(cf_fallbacks))
 

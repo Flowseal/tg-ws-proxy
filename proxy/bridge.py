@@ -150,8 +150,8 @@ async def do_fallback(reader, writer, relay_init, label,
         if method == 'cf_worker' and fallback_dst:
             ok = await _cfproxy_worker_fallback(
                 reader, writer, relay_init, label, ctx,
-                dc=dc, is_media=is_media, fallback_dst=fallback_dst,
-                splitter=splitter)
+                dc=dc, is_test_dc=is_test_dc, is_media=is_media,
+                fallback_dst=fallback_dst, splitter=splitter)
             if ok:
                 return True
         elif method == 'cf':
@@ -174,7 +174,7 @@ async def do_fallback(reader, writer, relay_init, label,
 
 async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
                                    ctx: CryptoCtx,
-                                   dc: int, is_media: bool,
+                                   dc: int, is_test_dc: bool, is_media: bool,
                                    fallback_dst: str,
                                    splitter=None):
     media_tag = ' media' if is_media else ''
@@ -185,7 +185,7 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
     random.shuffle(worker_domains)
 
     for worker_domain in worker_domains:
-        ws = await cf_worker_pool.get(dc, worker_domain, fallback_dst)
+        ws = None if is_test_dc else await cf_worker_pool.get(dc, worker_domain, fallback_dst)
         if ws:
             log.info("[%s] DC%d%s -> CF worker pool hit for %s",
                      label, dc, media_tag, fallback_dst)
