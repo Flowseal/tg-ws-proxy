@@ -18,6 +18,9 @@ _i18n_path = os.path.join(os.path.dirname(SPEC), os.pardir, 'ui', 'i18n')
 gi_hiddenimports = collect_submodules('gi')
 gi_datas = collect_data_files('gi')
 
+# pystray is imported lazily at runtime; bundle the full package
+pystray_hiddenimports = collect_submodules('pystray')
+
 # Collect GObject typelib files from the system
 typelib_dirs = glob.glob('/usr/lib/*/girepository-1.0')
 typelib_datas = []
@@ -30,9 +33,12 @@ a = Analysis(
     binaries=[],
     datas=[(ctk_path, 'customtkinter/'), (_i18n_path, 'ui/i18n')] + gi_datas + typelib_datas,
     hiddenimports=[
+        'pystray',
         'pystray._appindicator',
         'PIL._tkinter_finder',
         'customtkinter',
+        'proxy._aes',
+        'proxy.pool',
         'cryptography.hazmat.primitives.ciphers',
         'cryptography.hazmat.primitives.ciphers.algorithms',
         'cryptography.hazmat.primitives.ciphers.modes',
@@ -44,7 +50,7 @@ a = Analysis(
         'gi.repository.Gtk',
         'gi.repository.Gdk',
         'gi.repository.AyatanaAppIndicator3',
-    ] + gi_hiddenimports,
+    ] + gi_hiddenimports + pystray_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

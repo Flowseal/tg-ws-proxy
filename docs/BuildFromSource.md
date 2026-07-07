@@ -32,6 +32,25 @@ pip install -e .
 tg-ws-proxy-tray-linux
 ```
 
+#### Сборка бинарника (PyInstaller)
+
+На Debian/Ubuntu нужны системные пакеты для трея и Tk:
+
+```bash
+sudo apt-get install -y \
+  python3-venv python3-dev python3-gi \
+  gir1.2-ayatanaappindicator3-0.1 python3-tk
+
+python3 -m venv --system-site-packages .venv
+.venv/bin/pip install --upgrade pip
+.venv/bin/pip install .
+.venv/bin/pip install "pyinstaller==6.13.0"
+.venv/bin/pyinstaller packaging/linux.spec --noconfirm
+```
+
+Готовый файл: `dist/TgWsProxy`. Для совместимости со старыми дистрибутивами
+собирайте на Ubuntu 22.04 или старше (glibc 2.35).
+
 ## Консольный режим из исходников
 
 ```bash

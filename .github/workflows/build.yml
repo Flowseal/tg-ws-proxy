@@ -373,8 +373,11 @@ jobs:
           path: dist/TgWsProxy_macos_universal.dmg
 
   build-linux:
-    runs-on: ubuntu-latest
+    # ubuntu-22.04 keeps glibc <= 2.35 so binaries run on older distros (#431)
+    runs-on: ubuntu-22.04
     if: ${{ github.event.inputs.build_linux == 'true' }}
+    outputs:
+      app_version: ${{ steps.version.outputs.app_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -398,8 +401,37 @@ jobs:
           .venv/bin/pip install .
           .venv/bin/pip install "pyinstaller==6.13.0"
 
+      - name: Resolve version
+        id: version
+        run: |
+          APP_VERSION="$(.venv/bin/python -c 'from proxy import __version__; print(__version__)')"
+          INPUT_TAG="${{ github.event.inputs.version }}"
+          INPUT_TAG="${INPUT_TAG#v}"
+          if [ "$INPUT_TAG" != "$APP_VERSION" ]; then
+            echo "::warning::Workflow tag v${INPUT_TAG} differs from proxy.__version__ ${APP_VERSION}"
+          fi
+          echo "app_version=${APP_VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Build binary with PyInstaller
         run: .venv/bin/pyinstaller packaging/linux.spec --noconfirm
+
+      - name: Verify Linux binary
+        run: |
+          set -euo pipefail
+          BIN="dist/TgWsProxy"
+          test -x "$BIN"
+          file "$BIN" | grep -q 'ELF 64-bit'
+          strings "$BIN" | grep -q 'pystray'
+          strings "$BIN" | grep -q 'proxy._aes'
+          # Built on 22.04: glibc 2.35; fail if binary needs newer symbols
+          MAX_GLIBC="$(objdump -T "$BIN" 2>/dev/null | grep 'GLIBC_' | sed 's/.*GLIBC_//' | sort -Vu | tail -1 || true)"
+          if [ -n "$MAX_GLIBC" ]; then
+            echo "Max GLIBC symbol version: ${MAX_GLIBC}"
+            awk -v max="$MAX_GLIBC" 'BEGIN { exit (max+0 > 2.35) ? 1 : 0 }' || {
+              echo "::error::Binary requires GLIBC > 2.35 (got ${MAX_GLIBC})"
+              exit 1
+            }
+          fi
 
       - name: Rename binary artifact
         run: mv dist/TgWsProxy dist/TgWsProxy_linux_amd64
@@ -407,8 +439,7 @@ jobs:
       - name: Create .deb package
         run: |
           set -euo pipefail
-          VERSION="${{ github.event.inputs.version }}"
-          VERSION="${VERSION#v}"
+          VERSION="${{ steps.version.outputs.app_version }}"
           PKG_ROOT="pkg"
 
           rm -rf "$PKG_ROOT"
@@ -462,8 +493,7 @@ jobs:
       - name: Create .rpm package with fpm
         run: |
           set -euo pipefail
-          VERSION="${{ github.event.inputs.version }}"
-          VERSION="${VERSION#v}"
+          VERSION="${{ steps.version.outputs.app_version }}"
           
           sudo gem install fpm -v 1.17.0
           
