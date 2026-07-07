@@ -475,6 +475,7 @@ def _edit_config_dialog() -> None:
         "cfproxy": cfproxy,
         "cfproxy_user_domain": cfproxy_domains,
         "cfproxy_worker_domain": cfworker_domains,
+        "force_test_dc": cfg.get("force_test_dc", DEFAULT_CONFIG["force_test_dc"]),
     }
     save_config(new_cfg)
     log.info("Config saved: %s", new_cfg)
