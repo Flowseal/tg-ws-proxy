@@ -22,7 +22,8 @@ class _WsPool:
         self.fronting_until: float = 0.0
 
     async def get(self, dc: int, is_media: bool,
-                  target_ip: str, domains: List[str]
+                  target_ip: str, domains: List[str],
+                  path=None
                   ) -> Optional[RawWebSocket]:
         key = (dc, is_media)
         now = time.monotonic()
