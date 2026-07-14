@@ -46,6 +46,7 @@
   - **[Docker](./README.docker.md)**
 - [Настройка Cloudflare Worker'а (бесплатный аналог CF-прокси)](./CfWorker.md)
 - [Настройка Cloudflare-домена (CF-прокси)](./CfProxy.md)
+- [Тестовое окружение Telegram (тестовые DC)](./TestDc.md)
 - [Fake TLS + upstream в Nginx](./FakeTlsNginx.md)
 - [Файлы конфигурации Tray-приложения](./TrayConfig.md)
 - [Установка из исходников](./BuildFromSource.md)

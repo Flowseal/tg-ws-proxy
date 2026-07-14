@@ -33,6 +33,7 @@ workers.dev
 
 7. Скопируйте домен из поля справа и укажите его в настройках **Cloudflare Worker** (или через аргумент `--cfproxy-worker-domain`)
     * Пример домена: `random-symbols-1234.username.workers.dev`  
+	* **Можно указывать несколько доменов через запятую (или повторением аргумента `--cfproxy-worker-domain`)**
    <img width="414" height="182" alt="image" src="https://github.com/user-attachments/assets/4fb0b111-8026-4d17-b993-6c70ec37f1f5" />
 
 
