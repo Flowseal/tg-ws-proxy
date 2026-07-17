@@ -268,6 +268,7 @@ def _checkbox(ctk, parent, theme, text, variable):
         font=(theme.ui_font_family, 13), text_color=theme.text_primary,
         fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
         corner_radius=6, border_width=2, border_color=theme.field_border,
+        cursor="hand2",
     )
 
 
@@ -311,10 +312,42 @@ def tray_settings_scroll_and_footer(
         scrollbar_button_hover_color=theme.text_secondary,
     )
     scroll.pack(fill="both", expand=True)
+
     try:
-        scroll._parent_canvas.configure(yscrollincrement=4)
+        scroll._parent_canvas.configure(yscrollincrement=16)
     except Exception:
         pass
+
+    root_window = content_parent.winfo_toplevel()
+
+    def _scroll_canvas(delta: int):
+        try:
+            scroll._parent_canvas.yview_scroll(delta * 3, "units")
+        except Exception:
+            pass
+    
+    def _on_mousewheel(event):
+        delta = int(-(event.delta / 120))
+        _scroll_canvas(delta)
+    
+    def _on_button4(event):
+        _scroll_canvas(-3)
+    
+    def _on_button5(event):
+        _scroll_canvas(3)
+
+    def _bind_scroll_to_widget(widget):
+        widget.bind("<MouseWheel>", _on_mousewheel, add=True)
+        widget.bind("<Button-4>", _on_button4, add=True)
+        widget.bind("<Button-5>", _on_button5, add=True)
+
+    def _bind_recursive(widget):
+        _bind_scroll_to_widget(widget)
+        for child in widget.winfo_children():
+            _bind_recursive(child)
+
+    _bind_recursive(root_window)
+
     return scroll, footer
 
 
@@ -402,7 +435,7 @@ def install_tray_config_form(
             header.winfo_toplevel().iconify(),
             webbrowser.open("https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/Funding.md"),
         ),
-    ).pack(side="right", padx=(0, 6))
+        cursor="hand2").pack(side="right", padx=(0, 6))
 
     ui_inner = _config_section(ctk, frame, theme, t("section.interface"))
     ui_row = ctk.CTkFrame(ui_inner, fg_color="transparent")
@@ -434,6 +467,7 @@ def install_tray_config_form(
         dropdown_hover_color=theme.field_border,
         corner_radius=8,
         state="readonly",
+        cursor="hand2",
     )
     language_combo.pack(fill="x")
     _sync_language_combobox(language_combo, language_var, lang_cfg)
@@ -458,6 +492,7 @@ def install_tray_config_form(
         corner_radius=8,
         state="readonly",
         command=_on_appearance_change,
+        cursor="hand2",
     )
     theme_combo.pack(fill="x")
 
@@ -499,6 +534,7 @@ def install_tray_config_form(
         fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
         text_color="#ffffff", border_width=1, border_color=theme.field_border,
         command=lambda: secret_var.set(os.urandom(16).hex()),
+        cursor="hand2",
     ).pack()
 
     dc_inner = _config_section(ctk, frame, theme, t("section.dc"))
@@ -509,9 +545,121 @@ def install_tray_config_form(
         font=(theme.mono_font_family, 12), corner_radius=10,
         fg_color=theme.bg, border_color=theme.field_border,
         border_width=1, text_color=theme.text_primary,
+        undo=True,
+        wrap="word",
     )
     dc_textbox.pack(fill="x")
     dc_textbox.insert("1.0", "\n".join(cfg.get("dc_ip", default_config["dc_ip"])))
+
+    def _validate_input(event):
+        if event.keysym in ('BackSpace', 'Delete', 'Left', 'Right', 'Up', 'Down', 
+                            'Home', 'End', 'Return', 'Tab', 'Control_L', 'Control_R'):
+            return
+        if event.state & 0x4: # Ctrl
+            return
+
+        char = event.char
+        if not (char.isdigit() or char in '.:\r\n'):
+            return "break"
+    
+    def _validate_paste(event):
+        try:
+            if dc_textbox._textbox.tag_ranges("sel"):
+                dc_textbox._textbox.delete("sel.first", "sel.last")
+            clipboard_text = dc_textbox._textbox.clipboard_get()
+            filtered_text = ''.join(char for char in clipboard_text if char.isdigit() or char in '.:' or char == '\n')
+            if filtered_text:
+                dc_textbox._textbox.insert("insert", filtered_text)
+            return "break"
+        except Exception:
+            return "break"
+
+    def _on_undo(event):
+        try:
+            dc_textbox._textbox.edit_undo()
+        except Exception:
+            pass
+        return "break"
+
+    def _on_redo(event):
+        try:
+            dc_textbox._textbox.edit_redo()
+        except Exception:
+            pass
+        return "break"
+
+    def _on_select_all(event):
+        dc_textbox._textbox.focus_set()
+        dc_textbox._textbox.tag_add("sel", "1.0", "end-1c")
+        return "break"
+
+    def _on_copy(event):
+        try:
+            if dc_textbox._textbox.tag_ranges("sel"):
+                dc_textbox._textbox.clipboard_clear()
+                text = dc_textbox._textbox.get("sel.first", "sel.last")
+                dc_textbox._textbox.clipboard_append(text)
+        except Exception:
+            pass
+        return "break"
+
+    def _on_cut(event):
+        try:
+            if dc_textbox._textbox.tag_ranges("sel"):
+                dc_textbox._textbox.clipboard_clear()
+                text = dc_textbox._textbox.get("sel.first", "sel.last")
+                dc_textbox._textbox.clipboard_append(text)
+                dc_textbox._textbox.delete("sel.first", "sel.last")
+        except Exception:
+            pass
+        return "break"
+
+    def _on_delete(event):
+        try:
+            if dc_textbox._textbox.tag_ranges("sel"):
+                dc_textbox._textbox.delete("sel.first", "sel.last")
+                return "break"
+            
+            # Ctrl + Backspace
+            if event.keysym == 'BackSpace' and (event.state & 0x0004):
+                cursor_pos = dc_textbox._textbox.index("insert")
+                line, col = map(int, cursor_pos.split('.'))
+                line_text = dc_textbox._textbox.get(f"{line}.0", cursor_pos)
+                
+                # Ищем начало блока (цифры или разделители)
+                word_start = len(line_text)
+                while word_start > 0 and line_text[word_start-1] in ' .:':
+                    word_start -= 1
+                while word_start > 0 and line_text[word_start-1].isdigit():
+                    word_start -= 1
+                
+                if word_start < len(line_text):
+                    start_pos = f"{line}.{word_start}"
+                    dc_textbox._textbox.delete(start_pos, cursor_pos)
+                return "break"
+
+            if event.keysym in ('BackSpace', 'Delete'):
+                return None 
+
+        except Exception:
+            pass
+        return None
+
+    dc_textbox.bind("<Control-a>", _on_select_all)
+    dc_textbox.bind("<Control-A>", _on_select_all)
+    dc_textbox.bind("<Control-c>", _on_copy)
+    dc_textbox.bind("<Control-C>", _on_copy)
+    dc_textbox.bind("<Control-x>", _on_cut)
+    dc_textbox.bind("<Control-X>", _on_cut)
+    dc_textbox.bind("<Control-v>", _validate_paste)
+    dc_textbox.bind("<Control-V>", _validate_paste)
+    dc_textbox.bind("<Control-z>", _on_undo)
+    dc_textbox.bind("<Control-Z>", _on_undo)
+    dc_textbox.bind("<Control-y>", _on_redo)
+    dc_textbox.bind("<Control-Y>", _on_redo)
+    dc_textbox.bind("<Control-BackSpace>", _on_delete)
+    dc_textbox.bind("<Control-Delete>", _on_delete)
+
     attach_tooltip_to_widgets([dc_lbl, dc_textbox], t("tip.dc"))
 
     cf_inner = _config_section(ctk, frame, theme, t("section.cfproxy"))
@@ -581,6 +729,7 @@ def install_tray_config_form(
         fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
         text_color="#ffffff", border_width=1, border_color=theme.field_border,
         command=_on_cf_test,
+        cursor="hand2",
     )
     _cf_test_widget.pack(side="right")
     _cf_test_btn[0] = _cf_test_widget
@@ -602,6 +751,7 @@ def install_tray_config_form(
         fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
         text_color="#ffffff", border_width=1, border_color=theme.field_border,
         command=lambda: webbrowser.open(_CFPROXY_HELP_URL),
+        cursor="hand2",
     ).pack(side="right")
 
     cfproxy_user_domain_var = ctk.StringVar(value=", ".join(saved_user_domains))
@@ -683,6 +833,7 @@ def install_tray_config_form(
         fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
         text_color="#ffffff", border_width=1, border_color=theme.field_border,
         command=lambda: webbrowser.open(_CFWORKER_HELP_URL),
+        cursor="hand2",
     ).pack(side="right")
 
     _cfworker_test_widget = ctk.CTkButton(
@@ -691,6 +842,7 @@ def install_tray_config_form(
         fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
         text_color="#ffffff", border_width=1, border_color=theme.field_border,
         command=_on_cfworker_test,
+        cursor="hand2",
     )
     _cfworker_test_widget.pack(side="right", padx=(0, 6))
     _cfworker_test_btn[0] = _cfworker_test_widget
@@ -758,6 +910,7 @@ def install_tray_config_form(
         text_color=theme.text_primary, border_width=1,
         border_color=theme.field_border,
         command=lambda u=rel_url: webbrowser.open(u),
+        cursor="hand2",
     ).pack(anchor="w")
 
     autostart_var = None
@@ -904,7 +1057,9 @@ def install_tray_config_buttons(
         font=(theme.ui_font_family, 14, "bold"), corner_radius=10,
         fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
         text_color="#ffffff",
-        command=on_save)
+        command=on_save,
+        cursor="hand2",
+    )
     save_btn.pack(side="left", fill="x", expand=True, padx=(0, 8))
     attach_ctk_tooltip(save_btn, t("tip.save"))
     cancel_btn = ctk.CTkButton(
@@ -913,7 +1068,9 @@ def install_tray_config_buttons(
         fg_color=theme.field_bg, hover_color=theme.field_border,
         text_color=theme.text_primary, border_width=1,
         border_color=theme.field_border,
-        command=on_cancel)
+        command=on_cancel,
+        cursor="hand2"
+    )
     cancel_btn.pack(side="right", fill="x", expand=True)
     attach_ctk_tooltip(cancel_btn, t("tip.cancel"))
 
@@ -994,6 +1151,8 @@ def populate_first_run_window(
                   font=(theme.ui_font_family, 15, "bold"), corner_radius=10,
                   fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
                   text_color="#ffffff",
-                  command=on_ok).pack(pady=(0, 0))
+                  command=on_ok,
+                  cursor="hand2",
+                  ).pack(pady=(0, 0))
 
     root.protocol("WM_DELETE_WINDOW", on_ok)

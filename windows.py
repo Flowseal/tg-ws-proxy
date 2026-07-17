@@ -198,12 +198,14 @@ def update_ctk_form(
             btn_upd = ctk.CTkButton(
                 row, text=t("button.update"), width=88, height=34,
                 font=(theme.ui_font_family, 13), command=_on_update,
+                cursor="hand2",
             )
             btn_upd.pack(side="left", padx=(0, 6))
             btns.append(btn_upd)
         btn_pg = ctk.CTkButton(
             row, text=t("button.page"), width=88, height=34,
             font=(theme.ui_font_family, 13), command=lambda: _close_with("open"),
+            cursor="hand2",
         )
         btn_pg.pack(side="left", padx=(0, 6))
         btns.append(btn_pg)
@@ -213,6 +215,7 @@ def update_ctk_form(
             fg_color=theme.field_bg, hover_color=theme.field_border,
             text_color=theme.text_primary, border_width=1, border_color=theme.field_border,
             command=lambda: _close_with("close"),
+            cursor="hand2",
         )
         btn_cl.pack(side="left")
         btns.append(btn_cl)
