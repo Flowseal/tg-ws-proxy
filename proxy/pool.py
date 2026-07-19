@@ -19,6 +19,7 @@ class _WsPool:
     def __init__(self):
         self._idle: Dict[Tuple[int, bool], deque] = {}
         self._refilling: Set[Tuple[int, bool]] = set()
+        self.try_fronting_first = False
 
     async def get(self, dc: int, is_media: bool,
                   target_ip: str, domains: List[str]
@@ -75,20 +76,17 @@ class _WsPool:
         finally:
             self._refilling.discard(key)
 
-    @staticmethod
-    async def _connect_one(target_ip, domains) -> Optional[RawWebSocket]:
+    async def _connect_one(self, target_ip, domains) -> Optional[RawWebSocket]:
         for domain in domains:
+            if self.try_fronting_first:
+                ws = await self._connect_fronted(target_ip, domain)
+                if ws:
+                    return ws
             try:
                 return await RawWebSocket.connect(
                     target_ip, domain, timeout=8)
             except asyncio.TimeoutError:
-                try:
-                    ws = await RawWebSocket.connect(
-                        target_ip, domain, timeout=7, sni="sprinthost.ru")
-                    stats.connections_fronting += 1
-                    return ws
-                except Exception:
-                    return None
+                return await self._connect_fronted(target_ip, domain)
             except WsHandshakeError as exc:
                 if exc.is_redirect:
                     continue
@@ -97,8 +95,18 @@ class _WsPool:
                 return None
         return None
 
-    @staticmethod
-    async def _quiet_close(ws):
+    async def _connect_fronted(self, target_ip, domain) -> Optional[RawWebSocket]:
+        try:
+            ws = await RawWebSocket.connect(
+                target_ip, domain, timeout=7, sni="sprinthost.ru")
+        except Exception:
+            return None
+
+        stats.connections_fronting += 1
+        self.try_fronting_first = True
+        return ws
+
+    async def _quiet_close(self, ws):
         try:
             await ws.close()
         except Exception:
@@ -116,6 +124,7 @@ class _WsPool:
     def reset(self):
         self._idle.clear()
         self._refilling.clear()
+        self.try_fronting_first = False
 
 
 class _CfWorkerPool:
@@ -178,8 +187,7 @@ class _CfWorkerPool:
         finally:
             self._refilling.discard(key)
 
-    @staticmethod
-    async def _connect_one(worker_domain, fallback_dst, dc) -> Optional[RawWebSocket]:
+    async def _connect_one(self, worker_domain, fallback_dst, dc) -> Optional[RawWebSocket]:
         query = urlencode({
             'dst': fallback_dst,
             'dc': str(dc),
@@ -191,8 +199,7 @@ class _CfWorkerPool:
         except Exception:
             return None
 
-    @staticmethod
-    async def _quiet_close(ws):
+    async def _quiet_close(self, ws):
         try:
             await ws.close()
         except Exception:
