@@ -54,21 +54,29 @@ class CtkTooltip:
             tw.wm_attributes("-topmost", True)
         except Exception:
             pass
-        tw.configure(bg="#2b2b2b")
+        import customtkinter as ctk
+        from ui.ctk_theme import ctk_theme_for_platform, resolve_ctk_color
+
+        theme = ctk_theme_for_platform()
+        bg_color = resolve_ctk_color(ctk, theme.field_bg)
+        fg_color = resolve_ctk_color(ctk, theme.text_primary)
+        bd_color = resolve_ctk_color(ctk, theme.field_border)
+
+        tw.configure(bg=bd_color)
         lbl = tk.Label(
             tw,
             text=self.text,
             justify="left",
             wraplength=self.wraplength,
-            background="#2b2b2b",
-            foreground="#f0f0f0",
+            background=bg_color,
+            foreground=fg_color,
             relief="flat",
             borderwidth=0,
             padx=10,
             pady=8,
-            font=("Segoe UI", 10) if _is_windows() else None,
+            font=(theme.ui_font_family, 10),
         )
-        lbl.pack()
+        lbl.pack(padx=1, pady=1)
         x = self.widget.winfo_rootx() + 12
         y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
         tw.wm_geometry(f"+{x}+{y}")
@@ -86,13 +94,6 @@ class CtkTooltip:
     def _on_destroy(self, _event: Any = None) -> None:
         self._hide()
         self.widget = None
-
-
-def _is_windows() -> bool:
-    import sys
-
-    return sys.platform == "win32"
-
 
 def attach_ctk_tooltip(
     widget: Any,
