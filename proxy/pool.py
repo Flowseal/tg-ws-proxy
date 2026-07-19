@@ -19,7 +19,6 @@ class _WsPool:
     def __init__(self):
         self._idle: Dict[Tuple[int, bool], deque] = {}
         self._refilling: Set[Tuple[int, bool]] = set()
-        self.fronting_until: float = 0.0
 
     async def get(self, dc: int, is_media: bool,
                   target_ip: str, domains: List[str]
@@ -62,7 +61,7 @@ class _WsPool:
             if needed <= 0:
                 return
             tasks = [asyncio.create_task(
-                self._connect_one(target_ip, domains, time.monotonic() < self.fronting_until))
+                self._connect_one(target_ip, domains))
                 for _ in range(needed)]
             for t in tasks:
                 try:
@@ -77,11 +76,19 @@ class _WsPool:
             self._refilling.discard(key)
 
     @staticmethod
-    async def _connect_one(target_ip, domains, fronting_active) -> Optional[RawWebSocket]:
+    async def _connect_one(target_ip, domains) -> Optional[RawWebSocket]:
         for domain in domains:
             try:
                 return await RawWebSocket.connect(
-                    target_ip, domain, timeout=8, sni="sprinthost.ru" if fronting_active else None)
+                    target_ip, domain, timeout=8)
+            except asyncio.TimeoutError:
+                try:
+                    ws = await RawWebSocket.connect(
+                        target_ip, domain, timeout=7, sni="sprinthost.ru")
+                    stats.connections_fronting += 1
+                    return ws
+                except Exception:
+                    return None
             except WsHandshakeError as exc:
                 if exc.is_redirect:
                     continue
@@ -109,7 +116,6 @@ class _WsPool:
     def reset(self):
         self._idle.clear()
         self._refilling.clear()
-        self.fronting_until = 0.0
 
 
 class _CfWorkerPool:
