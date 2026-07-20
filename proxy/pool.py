@@ -15,10 +15,13 @@ log = logging.getLogger('tg-mtproto-proxy')
 
 class _WsPool:
     WS_POOL_MAX_AGE = 120.0
+    WS_POOL_CHECK_INTERVAL = 5.0
     
     def __init__(self):
         self._idle: Dict[Tuple[int, bool], deque] = {}
         self._refilling: Set[Tuple[int, bool]] = set()
+        self._rotating: Dict[Tuple[int, bool], asyncio.Task] = {}
+        self.try_fronting_first = False
 
     async def get(self, dc: int, is_media: bool,
                   target_ip: str, domains: List[str]
@@ -68,6 +71,7 @@ class _WsPool:
                     ws = await t
                     if ws:
                         bucket.append((ws, time.monotonic()))
+                        self._schedule_rotation(key, target_ip, domains)
                 except Exception:
                     pass
             log.debug("WS pool refilled DC%d%s: %d ready",
@@ -75,20 +79,64 @@ class _WsPool:
         finally:
             self._refilling.discard(key)
 
-    @staticmethod
-    async def _connect_one(target_ip, domains) -> Optional[RawWebSocket]:
+    def _schedule_rotation(self, key, target_ip, domains):
+        if key in self._rotating:
+            return
+        self._rotating[key] = asyncio.create_task(
+            self._rotate(key, target_ip, domains))
+
+    async def _rotate(self, key, target_ip, domains):
+        dc, is_media = key
+        try:
+            while True:
+                bucket = self._idle.get(key)
+                if not bucket:
+                    return
+
+                expires_at = min(
+                    created + self.WS_POOL_MAX_AGE
+                    for _, created in bucket)
+                await asyncio.sleep(min(
+                    self.WS_POOL_CHECK_INTERVAL,
+                    max(0, expires_at - time.monotonic())))
+
+                now = time.monotonic()
+                expired = []
+                ready = deque()
+                while bucket:
+                    ws, created = bucket.popleft()
+                    if (now - created >= self.WS_POOL_MAX_AGE
+                            or ws._closed
+                            or ws.writer.transport.is_closing()):
+                        expired.append(ws)
+                    else:
+                        ready.append((ws, created))
+                bucket.extend(ready)
+
+                if expired:
+                    for ws in expired:
+                        asyncio.create_task(self._quiet_close(ws))
+                    log.debug(
+                        "WS pool rotated DC%d%s: %d stale, %d ready",
+                        dc, 'm' if is_media else '', len(expired), len(bucket))
+                    self._schedule_refill(key, target_ip, domains)
+        finally:
+            if self._rotating.get(key) is asyncio.current_task():
+                self._rotating.pop(key, None)
+
+    async def _connect_one(self, target_ip, domains) -> Optional[RawWebSocket]:
         for domain in domains:
-            try:
-                return await RawWebSocket.connect(
-                    target_ip, domain, timeout=8)
-            except asyncio.TimeoutError:
-                try:
-                    ws = await RawWebSocket.connect(
-                        target_ip, domain, timeout=7, sni="sprinthost.ru")
-                    stats.connections_fronting += 1
+            if self.try_fronting_first:
+                ws = await self._connect_fronted(target_ip, domain)
+                if ws:
                     return ws
-                except Exception:
-                    return None
+            try:
+                ws = await RawWebSocket.connect(
+                    target_ip, domain, timeout=8)
+                self.try_fronting_first = False
+                return ws
+            except asyncio.TimeoutError:
+                return await self._connect_fronted(target_ip, domain)
             except WsHandshakeError as exc:
                 if exc.is_redirect:
                     continue
@@ -97,8 +145,18 @@ class _WsPool:
                 return None
         return None
 
-    @staticmethod
-    async def _quiet_close(ws):
+    async def _connect_fronted(self, target_ip, domain) -> Optional[RawWebSocket]:
+        try:
+            ws = await RawWebSocket.connect(
+                target_ip, domain, timeout=7, sni="sprinthost.ru")
+        except Exception:
+            return None
+
+        stats.connections_fronting += 1
+        self.try_fronting_first = True
+        return ws
+
+    async def _quiet_close(self, ws):
         try:
             await ws.close()
         except Exception:
@@ -114,8 +172,14 @@ class _WsPool:
         log.info("WS pool warmup started for %d DC(s)", len(proxy_config.dc_redirects))
 
     def reset(self):
+        loop = asyncio.get_running_loop()
+        for task in self._rotating.values():
+            if not task.done() and task.get_loop() is loop:
+                task.cancel()
         self._idle.clear()
         self._refilling.clear()
+        self._rotating.clear()
+        self.try_fronting_first = False
 
 
 class _CfWorkerPool:
@@ -178,8 +242,7 @@ class _CfWorkerPool:
         finally:
             self._refilling.discard(key)
 
-    @staticmethod
-    async def _connect_one(worker_domain, fallback_dst, dc) -> Optional[RawWebSocket]:
+    async def _connect_one(self, worker_domain, fallback_dst, dc) -> Optional[RawWebSocket]:
         query = urlencode({
             'dst': fallback_dst,
             'dc': str(dc),
@@ -191,8 +254,7 @@ class _CfWorkerPool:
         except Exception:
             return None
 
-    @staticmethod
-    async def _quiet_close(ws):
+    async def _quiet_close(self, ws):
         try:
             await ws.close()
         except Exception:
