@@ -28,6 +28,7 @@ from .raw_websocket import RawWebSocket, WsHandshakeError, set_sock_opts
 from .fake_tls import proxy_to_masking_domain, verify_client_hello, build_server_hello, FakeTlsStream, TLS_RECORD_HANDSHAKE
 from .balancer import balancer
 from .pool import ws_pool, cf_worker_pool
+from .bot_api_proxy import start_bot_api_server, restore_hosts
 from ._aes import Cipher, algorithms, modes
 
 
@@ -528,6 +529,8 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
         log.info("    %s", dd_link)
     log.info("=" * 60)
 
+    bot_api_server = await start_bot_api_server()
+
     async def log_stats():
         try:
             while True:
@@ -553,6 +556,10 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     try:
         while True:
             serve_task = asyncio.create_task(server.serve_forever())
+            bot_serve_task = (
+                asyncio.create_task(bot_api_server.serve_forever())
+                if bot_api_server is not None else None
+            )
             stop_task = (asyncio.create_task(stop_event.wait())
                          if stop_event else None)
 
@@ -565,6 +572,8 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
 
             watchdog_task = asyncio.create_task(_listener_watchdog())
             waiters = [serve_task, watchdog_task]
+            if bot_serve_task is not None:
+                waiters.append(bot_serve_task)
             if stop_task is not None:
                 waiters.append(stop_task)
 
@@ -579,12 +588,19 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
                         *_client_tasks, return_exceptions=True)
                 await _quiet_cancel(watchdog_task)
                 await _quiet_cancel(serve_task)
+                if bot_serve_task is not None:
+                    await _quiet_cancel(bot_serve_task)
                 server.close()
                 await server.wait_closed()
+                if bot_api_server is not None:
+                    bot_api_server.close()
+                    await bot_api_server.wait_closed()
                 break
 
             await _quiet_cancel(watchdog_task)
             await _quiet_cancel(serve_task)
+            if bot_serve_task is not None:
+                await _quiet_cancel(bot_serve_task)
             log.warning(
                 "Listening socket died, restarting server")
             server.close()
@@ -592,6 +608,12 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
                 await server.wait_closed()
             except Exception:
                 pass
+            if bot_api_server is not None:
+                try:
+                    bot_api_server.close()
+                    await bot_api_server.wait_closed()
+                except Exception:
+                    pass
             await asyncio.sleep(LISTENER_RESTART_DELAY)
             try:
                 server = await asyncio.start_server(
@@ -606,6 +628,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
                         _socket.IPPROTO_TCP, _socket.TCP_NODELAY, 1)
                 except (OSError, AttributeError):
                     pass
+            bot_api_server = await start_bot_api_server()
             log.warning("Server restored, listening on %s:%d",
                         proxy_config.host, proxy_config.port)
     finally:
@@ -619,6 +642,14 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
             await server.wait_closed()
         except Exception:
             pass
+        if bot_api_server is not None:
+            try:
+                bot_api_server.close()
+                await bot_api_server.wait_closed()
+            except Exception:
+                pass
+        else:
+            restore_hosts()
     _server_instance = None
 
 
@@ -674,6 +705,11 @@ def main():
     ap.add_argument('--proxy-protocol', action='store_true',
                     help='Accept PROXY protocol v1 header '
                          '(for use behind nginx/haproxy with proxy_protocol on)')
+    ap.add_argument('--bot-api', dest='bot_api', action='store_true', default=False,
+                    help='Enable transparent Bot API tunnel '
+                         '(opt-in; hosts → :443 via CF Worker; needs admin + worker)')
+    ap.add_argument('--no-bot-api', dest='bot_api', action='store_false',
+                    help='Disable transparent Bot API tunnel (default)')
     args = ap.parse_args()
 
     if not args.dc_ip:
@@ -711,6 +747,7 @@ def main():
     proxy_config.fake_tls_domain = args.fake_tls_domain.strip()
     proxy_config.proxy_protocol = args.proxy_protocol
     proxy_config.force_test_dc = args.force_test_dc
+    proxy_config.bot_api_enabled = bool(args.bot_api)
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
     log_fmt = logging.Formatter('%(asctime)s  %(levelname)-5s  %(message)s',

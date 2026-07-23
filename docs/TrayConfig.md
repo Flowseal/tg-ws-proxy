@@ -24,9 +24,12 @@ Tray-приложение хранит данные в:
   "cfproxy_user_domain": "",
   "cfproxy_worker_domain": "",
   "force_test_dc": false,
+  "bot_api": false,
   "appearance": "auto"
 }
 ```
 
 Ключ `check_updates`: при `true` выполняется запрос к GitHub и сравнение текущей версии с последним релизом (только уведомление и ссылка на страницу загрузки).  
 На Windows в конфиге может быть `autostart` (автозапуск при входе в систему).
+
+Ключ `bot_api` (по умолчанию `false`): опциональный туннель для ботов через `api.telegram.org`. Обычным пользователям Desktop не нужен. См. [BotApi.md](./BotApi.md).

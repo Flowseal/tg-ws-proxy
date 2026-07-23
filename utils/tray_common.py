@@ -339,6 +339,7 @@ def apply_proxy_config(cfg: dict) -> bool:
     pc.cfproxy_worker_domains = coerce_domain_list(cfg.get("cfproxy_worker_domain", DEFAULT_CONFIG["cfproxy_worker_domain"]))
     pc.force_test_dc = cfg.get("force_test_dc", DEFAULT_CONFIG["force_test_dc"])
     pc.ws_keepalive_interval = max(0, cfg.get("ws_keepalive_interval", DEFAULT_CONFIG["ws_keepalive_interval"]))
+    pc.bot_api_enabled = bool(cfg.get("bot_api", DEFAULT_CONFIG["bot_api"]))
     return True
 
 
