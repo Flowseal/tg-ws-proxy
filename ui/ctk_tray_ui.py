@@ -355,6 +355,7 @@ class TrayConfigFormWidgets:
     cfproxy_worker_domain_var: Optional[Any] = None
     appearance_var: Optional[Any] = None
     language_var: Optional[Any] = None
+    bot_api_var: Optional[Any] = None
 
 
 def install_tray_config_form(
@@ -697,6 +698,18 @@ def install_tray_config_form(
     cfproxy_worker_domain_var.trace_add("write", _sync_cfworker_test_button)
     _sync_cfworker_test_button()
 
+    bot_inner = _config_section(ctk, frame, theme, t("section.bot_api"))
+    bot_api_var = ctk.BooleanVar(
+        value=bool(cfg.get("bot_api", default_config.get("bot_api", False)))
+    )
+    bot_api_cb = _checkbox(ctk, bot_inner, theme, t("label.bot_api_enable"), bot_api_var)
+    bot_api_cb.pack(anchor="w", pady=(0, 4))
+    attach_ctk_tooltip(bot_api_cb, t("tip.bot_api"))
+    _label(
+        ctk, bot_inner, theme, t("label.bot_api_hint"),
+        size=11, justify="left", wraplength=_INNER_W,
+    ).pack(anchor="w", pady=(0, 2))
+
     log_inner = _config_section(ctk, frame, theme, t("section.logs"))
 
     verbose_var = ctk.BooleanVar(value=cfg.get("verbose", False))
@@ -784,6 +797,7 @@ def install_tray_config_form(
         cfproxy_worker_domain_var=cfproxy_worker_domain_var,
         appearance_var=appearance_var,
         language_var=language_var,
+        bot_api_var=bot_api_var,
     )
 
 
@@ -880,6 +894,8 @@ def validate_config_form(
         new_cfg["appearance"] = _appearance_to_cfg(widgets.appearance_var.get())
     if widgets.language_var is not None:
         new_cfg["language"] = language_from_label(widgets.language_var.get()).value
+    if widgets.bot_api_var is not None:
+        new_cfg["bot_api"] = bool(widgets.bot_api_var.get())
     return new_cfg
 
 
