@@ -462,6 +462,15 @@ def _edit_config_dialog() -> None:
         return
     cfworker_domains = coerce_domain_list(cfworker_domain)
 
+    bot_api = _ask_yes_no_close(
+        "Включить туннель Bot API?\n"
+        "По умолчанию не нужно.\n"
+        "Только для ботов: админ + CF Worker.\n"
+        "Для Telegram Desktop оставьте «Нет»."
+    )
+    if bot_api is None:
+        return
+
     new_cfg = {
         "host": host,
         "port": port,
@@ -476,6 +485,7 @@ def _edit_config_dialog() -> None:
         "cfproxy_user_domain": cfproxy_domains,
         "cfproxy_worker_domain": cfworker_domains,
         "force_test_dc": cfg.get("force_test_dc", DEFAULT_CONFIG["force_test_dc"]),
+        "bot_api": bot_api,
     }
     save_config(new_cfg)
     log.info("Config saved: %s", new_cfg)

@@ -42,6 +42,7 @@ tg://proxy?server=172.17.0.2&port=1443&secret=dd68f127db1d...
 | `TG_WS_PROXY_SECRET`    | `Секретный ключ`                  | `random`                              |
 | `TG_WS_PROXY_DC_IPS`    | `Пары «номер DC:IP» через пробел` | `2:149.154.167.220 4:149.154.167.220` |
 | `TG_WS_PROXY_CF_WORKER` | `Домен Cloudflare Worker`         | `None`                                |
+| `TG_WS_PROXY_BOT_API`   | `Bot API туннель (1/0)`           | `0`                                   |
 
 Пример с ручным указанием секрета:
 
@@ -51,8 +52,11 @@ docker run -d \
   --restart=always \
   -p 1443:1443 \
   -e TG_WS_PROXY_SECRET="ваш_секрет" \
+  -e TG_WS_PROXY_CF_WORKER="your-name.workers.dev" \
   tg-ws-proxy:latest
 ```
+
+Bot API-туннель в Docker — особый случай (`--network host`, права на hosts). Для ботов удобнее desktop/tray; подробности: [BotApi.md](./BotApi.md).
 
 Для генерации секрета можно использовать:
 

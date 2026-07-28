@@ -45,6 +45,7 @@
   - **[Linux](./README.linux.md)**
   - **[Docker](./README.docker.md)**
 - [Настройка Cloudflare Worker'а (бесплатный аналог CF-прокси)](./CfWorker.md)
+- [Telegram Bot API — боты без VPN (опционально)](./BotApi.md)
 - [Настройка Cloudflare-домена (CF-прокси)](./CfProxy.md)
 - [Тестовое окружение Telegram (тестовые DC)](./TestDc.md)
 - [Fake TLS + upstream в Nginx](./FakeTlsNginx.md)

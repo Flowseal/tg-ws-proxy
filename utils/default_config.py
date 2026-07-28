@@ -24,6 +24,7 @@ _TRAY_DEFAULTS_COMMON: Dict[str, Any] = {
     "cfproxy_worker_domain": [],
     "force_test_dc": False,
     "ws_keepalive_interval": 30,
+    "bot_api": False,
 }
 
 

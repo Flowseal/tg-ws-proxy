@@ -73,6 +73,9 @@ class ProxyConfig:
     fake_tls_domain: str = ''
     proxy_protocol: bool = False
     force_test_dc: bool = False
+    # Transparent Bot API: opt-in (hosts + :443 via CF Worker). Off by default
+    # so regular MTProto users are unaffected.
+    bot_api_enabled: bool = False
 
 
 proxy_config = ProxyConfig()
