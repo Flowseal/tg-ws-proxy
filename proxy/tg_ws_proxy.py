@@ -679,6 +679,16 @@ def main():
     ap.add_argument('--proxy-protocol', action='store_true',
                     help='Accept PROXY protocol v1 header '
                          '(for use behind nginx/haproxy with proxy_protocol on)')
+    ap.add_argument('--proxy-type', choices=['socks5', 'http', ''], default='',
+                   help='Outbound proxy type (socks5, http, or empty)')
+    ap.add_argument('--proxy-host', type=str, default='',
+                   help='Outbound proxy host')
+    ap.add_argument('--proxy-port', type=int, default=0,
+                   help='Outbound proxy port')
+    ap.add_argument('--proxy-user', type=str, default='',
+                   help='Outbound proxy username')
+    ap.add_argument('--proxy-pass', type=str, default='',
+                   help='Outbound proxy password')
     args = ap.parse_args()
 
     if not args.dc_ip:
@@ -716,6 +726,11 @@ def main():
     proxy_config.fake_tls_domain = args.fake_tls_domain.strip()
     proxy_config.proxy_protocol = args.proxy_protocol
     proxy_config.force_test_dc = args.force_test_dc
+    proxy_config.outbound_proxy_type = args.proxy_type
+    proxy_config.outbound_proxy_host = args.proxy_host
+    proxy_config.outbound_proxy_port = args.proxy_port
+    proxy_config.outbound_proxy_user = args.proxy_user
+    proxy_config.outbound_proxy_password = args.proxy_pass
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
     log_fmt = logging.Formatter('%(asctime)s  %(levelname)-5s  %(message)s',

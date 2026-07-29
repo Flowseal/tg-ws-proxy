@@ -7,7 +7,7 @@ import asyncio
 import socket as _socket
 
 from typing import List, Optional, Tuple
-from .config import proxy_config
+from .config import proxy_config, get_outbound_proxy
 
 log = logging.getLogger('tg-mtproto-proxy')
 
@@ -86,11 +86,20 @@ class RawWebSocket:
                       sni: Optional[str] = None) -> 'RawWebSocket':
         if sni is None:
             sni = domain
-
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, 443, ssl=_ssl_ctx,
-                                    server_hostname=sni),
-            timeout=min(timeout, 10))
+            proxy = get_outbound_proxy()
+            timeout_val = min(timeout, 10)
+            if proxy:
+              # 1. Получаем сокет через прокси
+              sock = await asyncio.wait_for(proxy.connect(host, 443), timeout=timeout_val)
+              # 2. Оборачиваем его в asyncio streams с SSL
+              reader, writer = await asyncio.open_connection(
+              sock=sock, ssl=_ssl_ctx, server_hostname=sni
+              )
+            else:
+              reader, writer = await asyncio.wait_for(
+              asyncio.open_connection(host, 443, ssl=_ssl_ctx, server_hostname=sni),
+              timeout=timeout_val
+              )
         
         set_sock_opts(writer.transport, proxy_config.buffer_size)
 

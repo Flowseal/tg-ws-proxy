@@ -145,5 +145,16 @@
   "diagnostics.permission": "Failed to start proxy:\nAccess to address/port denied (firewall, antivirus, or permissions).\n\nChange the port to a random value in 10000–50000 in settings, check firewall/antivirus, and restart.",
   "diagnostics.bad_address": "Failed to start proxy:\nInvalid or unavailable listen address.\n\nCheck the solution at the link opened in your browser.\nVerify host and port in proxy settings and restart.",
 
-  "ipv6.warning": "IPv6 connectivity is enabled on your computer.\n\nTelegram may try to connect over IPv6, which is not supported and may cause errors.\n\nIf the proxy does not work or logs show IPv6 connection attempts, try disabling IPv6 connection attempts in Telegram proxy settings. If that does not help, try disabling IPv6 system-wide.\n\nThis warning is shown only once."
+  "ipv6.warning": "IPv6 connectivity is enabled on your computer.\n\nTelegram may try to connect over IPv6, which is not supported and may cause errors.\n\nIf the proxy does not work or logs show IPv6 connection attempts, try disabling IPv6 connection attempts in Telegram proxy settings. If that does not help, try disabling IPv6 system-wide.\n\nThis warning is shown only once.",
+  "section.outbound_proxy": "Outbound proxy",
+  "label.outbound_proxy_type": "Type",
+  "label.outbound_proxy_host": "Host",
+  "label.outbound_proxy_port": "Port",
+  "label.outbound_proxy_user": "Username",
+  "label.outbound_proxy_pass": "Password",
+  "tip.outbound_proxy_type": "Outbound proxy type for internet access. Leave empty if no proxy is needed.",
+  "tip.outbound_proxy_host": "Outbound proxy host.",
+  "tip.outbound_proxy_port": "Outbound proxy port.",
+  "tip.outbound_proxy_user": "Proxy authentication username (optional).",
+  "tip.outbound_proxy_pass": "Proxy authentication password (optional)."
 }

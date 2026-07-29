@@ -49,6 +49,7 @@ dependencies = [
     "pystray==0.19.5; platform_system != 'Darwin'",
     "rumps==0.4.0; platform_system == 'Darwin'",
     "Pillow==12.1.0; platform_system == 'Darwin'",
+    "python-socks[asyncio]>=2.4.0",
 ]
 
 [project.scripts]

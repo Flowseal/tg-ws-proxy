@@ -10,6 +10,7 @@ from .utils import *
 from .stats import stats
 from .balancer import balancer
 from .config import proxy_config
+from .config import get_outbound_proxy
 from .raw_websocket import RawWebSocket
 from .pool import cf_worker_pool
 from ._aes import Cipher, algorithms, modes
@@ -253,7 +254,14 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
 
 async def _tcp_fallback(reader, writer, dst, port, relay_init, label, ctx: CryptoCtx):
     try:
-        rr, rw = await asyncio.wait_for(
+        proxy = get_outbound_proxy()
+        if proxy:
+            sock = await asyncio.wait_for(
+            proxy.connect(dst, port), timeout=10)
+            rr, rw = await asyncio.wait_for(
+            asyncio.open_connection(sock=sock), timeout=10)
+        else:
+            rr, rw = await asyncio.wait_for(
             asyncio.open_connection(dst, port), timeout=10)
     except Exception as exc:
         log.warning("[%s] TCP fallback to %s:%d failed: %s",

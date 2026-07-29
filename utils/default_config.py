@@ -24,6 +24,11 @@ _TRAY_DEFAULTS_COMMON: Dict[str, Any] = {
     "cfproxy_worker_domain": [],
     "force_test_dc": False,
     "ws_keepalive_interval": 30,
+    "outbound_proxy_type": "",      # "socks5" | "http" | ""
+    "outbound_proxy_host": "",
+    "outbound_proxy_port": 0,
+    "outbound_proxy_user": "",
+    "outbound_proxy_password": "",
 }
 
 

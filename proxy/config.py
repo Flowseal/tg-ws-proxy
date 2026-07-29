@@ -73,6 +73,11 @@ class ProxyConfig:
     fake_tls_domain: str = ''
     proxy_protocol: bool = False
     force_test_dc: bool = False
+    outbound_proxy_type: str = ""       # "socks5", "http" или ""
+    outbound_proxy_host: str = ""
+    outbound_proxy_port: int = 0
+    outbound_proxy_user: str = ""
+    outbound_proxy_password: str = ""
 
 
 proxy_config = ProxyConfig()
@@ -217,3 +222,14 @@ def parse_dc_ip_list(dc_ip_list: List[str]) -> Dict[int, str]:
             raise err
         dc_redirects[dc_n] = ip_s
     return dc_redirects
+
+def get_outbound_proxy():
+    """Возвращает объект Proxy из python-socks или None"""
+    if not proxy_config.outbound_proxy_type or not proxy_config.outbound_proxy_host:
+        return None
+    from python_socks.async_.asyncio import Proxy
+    auth = ""
+    if proxy_config.outbound_proxy_user:
+        auth = f"{proxy_config.outbound_proxy_user}:{proxy_config.outbound_proxy_password}@"
+    url = f"{proxy_config.outbound_proxy_type}://{auth}{proxy_config.outbound_proxy_host}:{proxy_config.outbound_proxy_port}"
+    return Proxy.from_url(url)
