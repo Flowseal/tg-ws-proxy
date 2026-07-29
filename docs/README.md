@@ -54,7 +54,7 @@
 
 ## Windows: быстрый вход
 
-Перейдите на [страницу релизов](https://github.com/Flowseal/tg-ws-proxy/releases) и скачайте:
+Перейдите на страницу релизов и скачайте:
 
 - `TgWsProxy_windows.exe` (Windows 10+ x64)
 - `TgWsProxy_windows_arm64.exe` (Windows 10+ ARM64)
