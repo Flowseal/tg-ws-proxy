@@ -90,6 +90,13 @@
   "connectivity.multi_all_ok": "✓ {domain}: all {total} servers reachable",
   "connectivity.multi_fail": "✗ {domain}: unavailable",
   "connectivity.multi_partial": "~ {domain}: working {ok_list}; unreachable {fail_list}",
+  "connectivity.outbound_title": "Outbound proxy",
+  "connectivity.outbound_ok": "✓ {title}: works (CONNECT to {ip}:443)",
+  "connectivity.outbound_not_set": "{title}: not set (type/host empty)",
+  "connectivity.outbound_timeout": "✗ {title}: timeout — proxy did not respond",
+  "connectivity.outbound_bad_auth": "✗ {title}: proxy login/password error",
+  "connectivity.outbound_blocked": "✗ {title}: proxy refused Telegram ({err})",
+  "connectivity.outbound_fail": "✗ {title}: unavailable ({err})",
 
   "updates.status_error": "Could not reach GitHub. Check your network.",
   "updates.status_pending": "Status will appear after the background check on startup.",

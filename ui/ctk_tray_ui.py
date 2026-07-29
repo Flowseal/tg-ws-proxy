@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import os
 import webbrowser
+import asyncio
+from proxy.outbound_test import test_outbound_proxy
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -219,6 +221,21 @@ def _show_multi_connectivity_results(title_base: str, per_domain: dict,
     _mb.showinfo(title, msg, parent=root)
     root.destroy()
 
+def _show_outbound_test_result(ok: bool, msg: str) -> None:
+    print("[outbound-test] show called", ok, msg, flush=True)
+    import tkinter as _tk
+    from tkinter import messagebox as _mb
+    title = t("connectivity.available" if ok else "connectivity.unavailable",
+              title=t("connectivity.outbound_title"))
+    root = _tk.Tk()
+    root.withdraw()
+    try:
+        root.attributes("-topmost", True)
+    except Exception:
+        pass
+    _mb.showinfo(title, msg, parent=root)
+    root.destroy()
+
 _INNER_W = 396
 
 _APPEARANCE_KEYS = ("auto", "light", "dark")
@@ -295,6 +312,11 @@ def _labeled_entry(ctk, parent, theme, label_text, value, *, tip="", width=0, pa
         attach_tooltip_to_widgets([lbl, ent, col], tip)
     return col, var
 
+def _parse_port(value: str) -> int:
+    try:
+        return int((value or "").strip())
+    except ValueError:
+        return 0
 
 def tray_settings_scroll_and_footer(
     ctk: Any,
@@ -708,8 +730,11 @@ def install_tray_config_form(
     type_lbl = _label(ctk, proxy_inner, theme, t("label.outbound_proxy_type"), size=11)
     type_lbl.pack(anchor="w", pady=(0, 2))
     outbound_proxy_type_var = ctk.StringVar(value=cfg.get("outbound_proxy_type", ""))
+    type_row = ctk.CTkFrame(proxy_inner, fg_color="transparent")
+    type_row.pack(fill="x", pady=(0, 4))
+
     proxy_type_combo = ctk.CTkComboBox(
-        proxy_inner, values=["", "socks5", "http"],
+        type_row, values=["", "socks5", "http"],
         variable=outbound_proxy_type_var,
         height=32,
         font=(theme.ui_font_family, 12),
@@ -724,7 +749,60 @@ def install_tray_config_form(
         corner_radius=8,
         state="readonly",
     )
-    proxy_type_combo.pack(anchor="w", pady=(0, 4))
+    proxy_type_combo.pack(side="left")
+
+    _out_test_btn = None
+
+    def _on_test_outbound():
+        btn = _out_test_btn
+        if btn is None:
+            return
+        btn.configure(text=t("button.test_loading"), state="disabled")
+        proxy_args = (
+            outbound_proxy_type_var.get().strip().lower(),
+            outbound_proxy_host_var.get().strip(),
+            _parse_port(outbound_proxy_port_var.get()),
+            outbound_proxy_user_var.get().strip(),
+            outbound_proxy_pass_var.get().strip(),
+        )
+
+        def _worker():
+            try:
+                try:
+                    ok, key, res = asyncio.run(test_outbound_proxy(params=proxy_args))
+                except BaseException as e:
+                    ok, key, res = False, "connectivity.outbound_fail", {"err": e}
+                res = dict(res, title=t("connectivity.outbound_title"))
+                msg = t(key, **res)
+            except BaseException as e:
+                ok, msg = False, f"{e!r}"
+
+            def _finish():
+                try:
+                    _show_outbound_test_result(ok, msg)
+                except BaseException:
+                    pass
+                if btn is not None:
+                    try:
+                        btn.configure(text=t("button.test"), state="normal")
+                    except Exception:
+                        pass
+
+            if btn is not None:
+                btn.after(0, _finish)
+
+        import threading as _threading
+        _threading.Thread(target=_worker, daemon=True).start()
+
+    _out_test_btn = ctk.CTkButton(
+        type_row, text=t("button.test"), width=56, height=32,
+        font=(theme.ui_font_family, 13), corner_radius=8,
+        fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
+        text_color="#ffffff", border_width=1, border_color=theme.field_border,
+        command=_on_test_outbound,
+    )
+    _out_test_btn.pack(side="right")
+
     attach_tooltip_to_widgets([type_lbl, proxy_type_combo], t("tip.outbound_proxy_type"))
 
     hp_row = ctk.CTkFrame(proxy_inner, fg_color="transparent")

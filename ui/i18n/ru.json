@@ -90,6 +90,13 @@
   "connectivity.multi_all_ok": "✓ {domain}: все {total} серверов доступны",
   "connectivity.multi_fail": "✗ {domain}: недоступен",
   "connectivity.multi_partial": "~ {domain}: работают {ok_list}; недоступны {fail_list}",
+  "connectivity.outbound_title": "Исходящий прокси",
+  "connectivity.outbound_ok": "✓ {title}: работает (CONNECT к {ip}:443)",
+  "connectivity.outbound_not_set": "{title}: не задан (тип/host пусты)",
+  "connectivity.outbound_timeout": "✗ {title}: таймаут — прокси не ответил",
+  "connectivity.outbound_bad_auth": "✗ {title}: ошибка логина/пароля прокси",
+  "connectivity.outbound_blocked": "✗ {title}: прокси не пустил к Telegram ({err})",
+  "connectivity.outbound_fail": "✗ {title}: недоступен ({err})",
 
   "updates.status_error": "Не удалось связаться с GitHub. Проверьте сеть.",
   "updates.status_pending": "Статус появится после фоновой проверки при запуске.",

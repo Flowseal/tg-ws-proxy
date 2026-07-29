@@ -86,23 +86,22 @@ class RawWebSocket:
                       sni: Optional[str] = None) -> 'RawWebSocket':
         if sni is None:
             sni = domain
-            proxy = get_outbound_proxy()
-            timeout_val = min(timeout, 10)
-            if proxy:
-              # 1. Получаем сокет через прокси
-              sock = await asyncio.wait_for(proxy.connect(host, 443), timeout=timeout_val)
-              # 2. Оборачиваем его в asyncio streams с SSL
-              reader, writer = await asyncio.open_connection(
-              sock=sock, ssl=_ssl_ctx, server_hostname=sni
-              )
-            else:
-              reader, writer = await asyncio.wait_for(
-              asyncio.open_connection(host, 443, ssl=_ssl_ctx, server_hostname=sni),
-              timeout=timeout_val
-              )
-        
+        proxy = get_outbound_proxy()
+        timeout_val = min(timeout, 10)
+        if proxy:
+            sock = await asyncio.wait_for(
+                proxy.connect(host, 443), timeout=timeout_val)
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(
+                    sock=sock, ssl=_ssl_ctx, server_hostname=sni),
+                timeout=timeout_val)
+        else:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(
+                    host, 443, ssl=_ssl_ctx, server_hostname=sni),
+                timeout=timeout_val)
         set_sock_opts(writer.transport, proxy_config.buffer_size)
-
+        
         ws_key = base64.b64encode(os.urandom(16)).decode()
 
         req = (
