@@ -689,6 +689,11 @@ def main():
                    help='Outbound proxy username')
     ap.add_argument('--proxy-pass', type=str, default='',
                    help='Outbound proxy password')
+    ap.add_argument('--relay-url', type=str, default='', metavar='URL',
+                    help='Relay byte-pipe base URL (HTTPS); enables relay '
+                         'fallback (last in chain) when direct WS/TCP blocked')
+    ap.add_argument('--relay-token', type=str, default='', metavar='TOKEN',
+                    help='Relay auth token (RELAY_TOKEN on the relay server)')
     args = ap.parse_args()
 
     if not args.dc_ip:
@@ -731,6 +736,8 @@ def main():
     proxy_config.outbound_proxy_port = args.proxy_port
     proxy_config.outbound_proxy_user = args.proxy_user
     proxy_config.outbound_proxy_password = args.proxy_pass
+    proxy_config.relay_url = args.relay_url.strip()
+    proxy_config.relay_token = args.relay_token.strip()
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
     log_fmt = logging.Formatter('%(asctime)s  %(levelname)-5s  %(message)s',

@@ -146,7 +146,10 @@ async def do_fallback(reader, writer, relay_init, label,
         methods.append('cf')
     if fallback_dst:
         methods.append('tcp')
-
+    relay_url = getattr(proxy_config, 'relay_url', '')
+    relay_token = getattr(proxy_config, 'relay_token', '')
+    if relay_url and fallback_dst:
+        methods.append('relay')
     for method in methods:
         if method == 'cf_worker' and fallback_dst:
             ok = await _cfproxy_worker_fallback(
@@ -162,14 +165,22 @@ async def do_fallback(reader, writer, relay_init, label,
                 splitter=splitter)
             if ok:
                 return True
-        elif method == 'tcp' and fallback_dst:
-            log.info("[%s] DC%d%s -> TCP fallback to %s:443",
-                     label, dc, media_tag, fallback_dst)
-            ok = await _tcp_fallback(
-                reader, writer, fallback_dst, 443,
-                relay_init, label, ctx)
-            if ok:
-                return True
+            elif method == 'tcp' and fallback_dst:
+                log.info("[%s] DC%d%s -> TCP fallback to %s:443",
+                         label, dc, media_tag, fallback_dst)
+                ok = await _tcp_fallback(
+                    reader, writer, fallback_dst, 443,
+                    relay_init, label, ctx)
+                if ok:
+                    return True
+            elif method == 'relay' and fallback_dst:
+                log.info("[%s] DC%d%s -> RELAY fallback via %s to %s:443",
+                         label, dc, media_tag, relay_url, fallback_dst)
+                ok = await _relay_fallback(
+                    reader, writer, fallback_dst, relay_init, label, ctx,
+                    relay_url=relay_url, relay_token=relay_token)
+                if ok:
+                    return True
     return False
 
 
@@ -431,3 +442,72 @@ async def _bridge_tcp_reencrypt(reader, writer, remote_reader, remote_writer,
                 await w.wait_closed()
             except BaseException:
                 pass
+
+async def _relay_fallback(reader, writer, dst, relay_init, label, ctx,
+                          relay_url, relay_token):
+    from .relay_client import RelayTube  # локальный импорт — защита от циклов
+    try:
+        tube = RelayTube(relay_url, relay_token)
+        await tube.open(dst)
+    except Exception as exc:
+        log.warning("[%s] relay open to %s failed: %s",
+                    label, dst, repr(exc))
+        return False
+    stats.connections_relay += 1
+    await tube.send(relay_init)
+    await _bridge_relay_reencrypt(reader, writer, tube, label, ctx)
+    return True
+
+
+async def _bridge_relay_reencrypt(reader, writer, tube, label, ctx):
+    """Bidirectional TCP(client) <-> Relay-tube(TG) with re-encryption.
+    Сплошной поток без splitter: сервер льёт tube-байты в сырой TCP к DC."""
+    async def up():
+        try:
+            while True:
+                data = await reader.read(65536)
+                if not data:
+                    break
+                stats.bytes_up += len(data)
+                plain = ctx.clt_dec.update(data)
+                await tube.send(ctx.tg_enc.update(plain))
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            log.debug("[%s] relay up ended: %s", label, e)
+
+    async def down():
+        try:
+            while True:
+                data = await tube.recv()      # None = upstream closed (410)
+                if not data:
+                    break
+                stats.bytes_down += len(data)
+                plain = ctx.tg_dec.update(data)
+                writer.write(ctx.clt_enc.update(plain))
+                await writer.drain()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            log.debug("[%s] relay down ended: %s", label, e)
+
+    tasks = [asyncio.create_task(up()), asyncio.create_task(down())]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for t in tasks:
+            t.cancel()
+        for t in tasks:
+            try:
+                await t
+            except BaseException:
+                pass
+        try:
+            await tube.close()
+        except BaseException:
+            pass
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except BaseException:
+            pass

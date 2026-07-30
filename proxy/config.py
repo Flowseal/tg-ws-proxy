@@ -78,8 +78,8 @@ class ProxyConfig:
     outbound_proxy_port: int = 0
     outbound_proxy_user: str = ""
     outbound_proxy_password: str = ""
-
-
+    relay_url: str = ''
+    relay_token: str = ''
 proxy_config = ProxyConfig()
 
 
