@@ -6,7 +6,7 @@ on:
       - 'main.go'
       - 'go.mod'
       - 'Dockerfile'
-      - '.github/workflows/build.yml'
+      - '.github/workflows/docker_build.yml'
 jobs:
   build:
     runs-on: ubuntu-latest
