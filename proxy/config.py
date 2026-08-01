@@ -80,6 +80,7 @@ class ProxyConfig:
     outbound_proxy_password: str = ""
     relay_url: str = ''
     relay_token: str = ''
+    relay_only: bool = False
 proxy_config = ProxyConfig()
 
 

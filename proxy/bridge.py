@@ -139,17 +139,17 @@ async def do_fallback(reader, writer, relay_init, label,
     worker_domains = proxy_config.cfproxy_worker_domains
 
     methods: List[str] = []
-
-    if worker_domains and fallback_dst:
-        methods.append('cf_worker')
-    if use_cf:
-        methods.append('cf')
-    if fallback_dst:
-        methods.append('tcp')
+    relay_only = getattr(proxy_config, 'relay_only', False)
     relay_url = getattr(proxy_config, 'relay_url', '')
     relay_token = getattr(proxy_config, 'relay_token', '')
+    if worker_domains and fallback_dst and not relay_only:
+        methods.append('cf_worker')
+    if use_cf and not relay_only:
+        methods.append('cf')
     if relay_url and fallback_dst:
         methods.append('relay')
+    if fallback_dst and not relay_only:
+        methods.append('tcp')
     for method in methods:
         if method == 'cf_worker' and fallback_dst:
             ok = await _cfproxy_worker_fallback(
@@ -165,24 +165,23 @@ async def do_fallback(reader, writer, relay_init, label,
                 splitter=splitter)
             if ok:
                 return True
-            elif method == 'tcp' and fallback_dst:
-                log.info("[%s] DC%d%s -> TCP fallback to %s:443",
-                         label, dc, media_tag, fallback_dst)
-                ok = await _tcp_fallback(
-                    reader, writer, fallback_dst, 443,
-                    relay_init, label, ctx)
-                if ok:
-                    return True
-            elif method == 'relay' and fallback_dst:
-                log.info("[%s] DC%d%s -> RELAY fallback via %s to %s:443",
-                         label, dc, media_tag, relay_url, fallback_dst)
-                ok = await _relay_fallback(
-                    reader, writer, fallback_dst, relay_init, label, ctx,
-                    relay_url=relay_url, relay_token=relay_token)
-                if ok:
-                    return True
+        elif method == 'relay' and fallback_dst:
+            log.info("[%s] DC%d%s -> RELAY fallback via %s to %s:443",
+                     label, dc, media_tag, relay_url, fallback_dst)
+            ok = await _relay_fallback(
+                reader, writer, fallback_dst, relay_init, label, ctx,
+                relay_url=relay_url, relay_token=relay_token)
+            if ok:
+                return True
+        elif method == 'tcp' and fallback_dst:
+            log.info("[%s] DC%d%s -> TCP fallback to %s:443",
+                     label, dc, media_tag, fallback_dst)
+            ok = await _tcp_fallback(
+                reader, writer, fallback_dst, 443,
+                relay_init, label, ctx)
+            if ok:
+                return True
     return False
-
 
 async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
                                    ctx: CryptoCtx,

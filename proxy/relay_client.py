@@ -56,12 +56,35 @@ async def _http_request(host, method, path, body, timeout):
             raise RelayError("empty response from relay")
         parts = status_line.split()
         status = int(parts[1]) if len(parts) >= 2 else 0
-
+        content_length = None
+        chunked = False
         while True:
             line = await asyncio.wait_for(reader.readline(), timeout=timeout)
             if line in (b"\r\n", b"\n", b""):
                 break
-        resp_body = await asyncio.wait_for(reader.read(), timeout=timeout)
+            low = line.lower()
+            if low.startswith(b"content-length:"):
+                content_length = int(line.split(b":", 1)[1].strip())
+            elif low.startswith(b"transfer-encoding:") and b"chunked" in low:
+                chunked = True
+        if chunked:
+            chunks = []
+            while True:
+                size_line = await asyncio.wait_for(reader.readline(), timeout=timeout)
+                chunk_size = int(size_line.strip(), 16)
+                if chunk_size == 0:
+                    await asyncio.wait_for(reader.readline(), timeout=timeout)
+                    break
+                chunk_data = await asyncio.wait_for(
+                    reader.readexactly(chunk_size), timeout=timeout)
+                chunks.append(chunk_data)
+                await asyncio.wait_for(reader.readline(), timeout=timeout)
+            resp_body = b"".join(chunks)
+        elif content_length is not None:
+            resp_body = await asyncio.wait_for(
+                reader.readexactly(content_length), timeout=timeout)
+        else:
+            resp_body = await asyncio.wait_for(reader.read(), timeout=timeout)
         return status, resp_body
     finally:
         try:

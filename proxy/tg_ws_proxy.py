@@ -694,6 +694,8 @@ def main():
                          'fallback (last in chain) when direct WS/TCP blocked')
     ap.add_argument('--relay-token', type=str, default='', metavar='TOKEN',
                     help='Relay auth token (RELAY_TOKEN on the relay server)')
+    ap.add_argument('--relay-only', action='store_true',
+                    help='Force all fallback traffic through relay (disable TCP/CF fallback)')
     args = ap.parse_args()
 
     if not args.dc_ip:
@@ -738,6 +740,7 @@ def main():
     proxy_config.outbound_proxy_password = args.proxy_pass
     proxy_config.relay_url = args.relay_url.strip()
     proxy_config.relay_token = args.relay_token.strip()
+    proxy_config.relay_only = args.relay_only
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
     log_fmt = logging.Formatter('%(asctime)s  %(levelname)-5s  %(message)s',
