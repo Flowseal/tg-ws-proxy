@@ -188,6 +188,8 @@ def _edit_config_dialog() -> None:
                 messagebox.showerror(t("app.error_title"), merged, parent=root)
                 return
 
+            merged["force_test_dc"] = _config.get("force_test_dc", DEFAULT_CONFIG["force_test_dc"])
+
             _ui_only_keys = {"appearance", "check_updates", "language"}
             config_changed = any(merged.get(k) != _config.get(k) for k in merged)
             proxy_changed = any(merged.get(k) != _config.get(k) for k in merged if k not in _ui_only_keys)

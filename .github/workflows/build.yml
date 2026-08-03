@@ -236,6 +236,8 @@ jobs:
   build-macos:
     runs-on: macos-latest
     if: ${{ github.event.inputs.build_macos == 'true' }}
+    env:
+      CFFI_VERSION: "2.0.0"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -261,7 +263,7 @@ jobs:
             --python-version 3.12 \
             --implementation cp \
             -d wheelhouse/arm64 \
-            'cffi>=2.0.0' \
+            "cffi==$CFFI_VERSION" \
             Pillow==12.1.0 \
             psutil==7.0.0
 
@@ -271,7 +273,7 @@ jobs:
             --python-version 3.12 \
             --implementation cp \
             -d wheelhouse/x86_64 \
-            'cffi>=2.0.0' \
+            "cffi==$CFFI_VERSION" \
             Pillow==12.1.0
 
           python3.12 -m pip download \

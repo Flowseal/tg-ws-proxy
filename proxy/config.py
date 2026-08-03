@@ -72,6 +72,7 @@ class ProxyConfig:
     cfproxy_worker_domains: List[str] = field(default_factory=list)
     fake_tls_domain: str = ''
     proxy_protocol: bool = False
+    force_test_dc: bool = False
 
 
 proxy_config = ProxyConfig()

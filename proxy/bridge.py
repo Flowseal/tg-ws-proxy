@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import struct
-import random
 
 from typing import List, Optional
 from urllib.parse import urlencode
@@ -130,10 +129,11 @@ class MsgSplitter:
 
 
 async def do_fallback(reader, writer, relay_init, label,
-                       dc: int, is_media: bool, media_tag: str,
+                       dc: int, is_test_dc: bool, is_media: bool, media_tag: str,
                        ctx: CryptoCtx, splitter=None):
-    fallback_dst = DC_DEFAULT_IPS.get(dc)
-    use_cf = proxy_config.fallback_cfproxy
+    ip_table = DC_TEST_IPS if is_test_dc else DC_DEFAULT_IPS
+    fallback_dst = ip_table.get(dc)
+    use_cf = proxy_config.fallback_cfproxy and not is_test_dc
     worker_domains = proxy_config.cfproxy_worker_domains
 
     methods: List[str] = []
@@ -149,8 +149,8 @@ async def do_fallback(reader, writer, relay_init, label,
         if method == 'cf_worker' and fallback_dst:
             ok = await _cfproxy_worker_fallback(
                 reader, writer, relay_init, label, ctx,
-                dc=dc, is_media=is_media, fallback_dst=fallback_dst,
-                splitter=splitter)
+                dc=dc, is_test_dc=is_test_dc, is_media=is_media,
+                fallback_dst=fallback_dst, splitter=splitter)
             if ok:
                 return True
         elif method == 'cf':
@@ -173,28 +173,29 @@ async def do_fallback(reader, writer, relay_init, label,
 
 async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
                                    ctx: CryptoCtx,
-                                   dc: int, is_media: bool,
+                                   dc: int, is_test_dc: bool, is_media: bool,
                                    fallback_dst: str,
                                    splitter=None):
     media_tag = ' media' if is_media else ''
     worker_domains = proxy_config.cfproxy_worker_domains
     if not worker_domains:
         return False
-    
-    random.shuffle(worker_domains)
 
-    for worker_domain in worker_domains:
-        ws = await cf_worker_pool.get(dc, worker_domain, fallback_dst)
-        if ws:
-            log.info("[%s] DC%d%s -> CF worker pool hit for %s",
-                     label, dc, media_tag, fallback_dst)
-        else:
-            query = urlencode({
-                'dst': fallback_dst,
-                'dc': str(dc),
-            })
-            path = f'/apiws?{query}'
+    pooled = None if is_test_dc else await cf_worker_pool.get(
+        dc, fallback_dst, worker_domains)
+    if pooled:
+        ws, worker_domain = pooled
+        log.info("[%s] DC%d%s -> CF worker pool hit via %s for %s",
+                 label, dc, media_tag, worker_domain, fallback_dst)
+    else:
+        query = urlencode({
+            'dst': fallback_dst,
+            'dc': str(dc),
+        })
+        path = f'/apiws?{query}'
 
+        ws = None
+        for worker_domain in cf_worker_pool.available_domains(worker_domains):
             log.info("[%s] DC%d%s -> trying CF worker %s for %s",
                      label, dc, media_tag, worker_domain, fallback_dst)
 
@@ -202,17 +203,20 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
                 ws = await RawWebSocket.connect(worker_domain, worker_domain,
                                                 timeout=10.0, path=path)
             except Exception as exc:
+                cf_worker_pool.report_failure(worker_domain, exc)
                 log.warning("[%s] DC%d%s CF worker %s failed: %s",
                             label, dc, media_tag, worker_domain, repr(exc))
                 continue
 
-        stats.connections_cfproxy += 1
-        await ws.send(relay_init)
-        await bridge_ws_reencrypt(reader, writer, ws, label, ctx,
-                                   dc=dc, is_media=is_media,
-                                   splitter=splitter)
-        return True
-    return False
+        if ws is None:
+            return False
+
+    stats.connections_cfproxy += 1
+    await ws.send(relay_init)
+    await bridge_ws_reencrypt(reader, writer, ws, label, ctx,
+                              dc=dc, is_media=is_media,
+                              splitter=None)
+    return True
 
 
 async def _cfproxy_fallback(reader, writer, relay_init, label,
