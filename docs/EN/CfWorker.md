@@ -35,6 +35,7 @@ workers.dev
 
 7. Copy the domain from the field on the right and specify it in your **Cloudflare Worker** settings (or via the `--cfproxy-worker-domain` argument)
     * Example domain: `random-symbols-1234.username.workers.dev`
+	* **You can specify multiple domains separated by commas (or by repeating the `--cfproxy-worker-domain` argument)**
    <img width="414" height="182" alt="image" src="https://github.com/user-attachments/assets/4fb0b111-8026-4d17-b993-6c70ec37f1f5" />
 
 

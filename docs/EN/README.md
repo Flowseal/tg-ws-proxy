@@ -52,6 +52,7 @@
   - **[Docker](./README.docker.md)**
 - [Cloudflare Worker Setup (free alternative to CF proxy)](./CfWorker.md)
 - [Cloudflare Domain Setup (CF proxy)](./CfProxy.md)
+- [Telegram Test Environment (Test DCs)](./TestDc.md)
 - [Fake TLS + upstream in Nginx](./FakeTlsNginx.md)
 - [Tray Application Configuration Files](./TrayConfig.md)
 - [Building from Source](./BuildFromSource.md)

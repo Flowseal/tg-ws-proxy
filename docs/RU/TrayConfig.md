@@ -23,6 +23,7 @@ Tray-приложение хранит данные в:
   "cfproxy": true,
   "cfproxy_user_domain": "",
   "cfproxy_worker_domain": "",
+  "force_test_dc": false,
   "appearance": "auto"
 }
 ```

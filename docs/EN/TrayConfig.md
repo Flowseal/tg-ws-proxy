@@ -23,6 +23,7 @@ The tray application stores data in:
   "cfproxy": true,
   "cfproxy_user_domain": "",
   "cfproxy_worker_domain": "",
+  "force_test_dc": false,
   "appearance": "auto"
 }
 ```
