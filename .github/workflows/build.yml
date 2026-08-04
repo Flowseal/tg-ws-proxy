@@ -303,6 +303,12 @@ jobs:
           python3.12 -m pip install .
           python3.12 -m pip install pyinstaller==6.13.0
 
+      - name: Validate macOS GUI dependencies
+        run: |
+          python3.12 -m pip check
+          python3.12 -m py_compile macos.py
+          python3.12 -c "import AppKit, customtkinter, macos, pystray, tkinter"
+
       - name: Create macOS icon
         run: |
           set -euo pipefail
@@ -318,6 +324,7 @@ jobs:
             'dist/TG WS Proxy.app/Contents/Info.plist')"
           test -n "$ICON_FILE"
           test -f "dist/TG WS Proxy.app/Contents/Resources/$ICON_FILE"
+          test -d "dist/TG WS Proxy.app/Contents/Resources/customtkinter"
 
           found=0
           while IFS= read -r -d '' file; do

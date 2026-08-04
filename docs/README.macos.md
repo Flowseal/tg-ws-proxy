@@ -24,6 +24,8 @@
 
 Подробная инструкция: [BuildFromSource.md](./BuildFromSource.md)
 
+Для интерфейса требуются Tk, CustomTkinter и доступ к Cocoa через PyObjC. Они устанавливаются автоматически, кроме Tk, который должен входить в используемую сборку Python.
+
 ```bash
 pip install -e .
 tg-ws-proxy-tray-macos
