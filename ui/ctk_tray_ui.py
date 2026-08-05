@@ -355,7 +355,9 @@ class TrayConfigFormWidgets:
     autostart_var: Optional[Any]
     check_updates_var: Optional[Any]
     cfproxy_var: Optional[Any] = None
+    cfproxy_user_domain_enabled_var: Optional[Any] = None
     cfproxy_user_domain_var: Optional[Any] = None
+    cfproxy_worker_enabled_var: Optional[Any] = None
     cfproxy_worker_domain_var: Optional[Any] = None
     appearance_var: Optional[Any] = None
     language_var: Optional[Any] = None
@@ -595,7 +597,9 @@ def install_tray_config_form(
     saved_user_domains = coerce_domain_list(
         cfg.get("cfproxy_user_domain", default_config.get("cfproxy_user_domain", ""))
     )
-    cf_custom_cb_var = ctk.BooleanVar(value=bool(saved_user_domains))
+    cf_custom_cb_var = ctk.BooleanVar(
+        value=cfg.get("cfproxy_user_domain_enabled", bool(saved_user_domains))
+    )
     cf_custom_cb = _checkbox(ctk, cf_custom_row, theme, t("label.cf_custom_domain"), cf_custom_cb_var)
     cf_custom_cb.pack(side="left", padx=(0, 10))
     attach_ctk_tooltip(cf_custom_cb, t("tip.cfproxy_user_domain_cb"))
@@ -619,8 +623,6 @@ def install_tray_config_form(
     def _sync_domain_entry(*_):
         state = "normal" if cf_custom_cb_var.get() else "disabled"
         cf_domain_entry.configure(state=state)
-        if not cf_custom_cb_var.get():
-            cfproxy_user_domain_var.set("")
 
     cf_custom_cb_var.trace_add("write", _sync_domain_entry)
     _sync_domain_entry()
@@ -630,16 +632,25 @@ def install_tray_config_form(
     cf_worker_row = ctk.CTkFrame(cf_worker_inner, fg_color="transparent")
     cf_worker_row.pack(fill="x", pady=(0, 4))
     cf_worker_lbl = _label(ctk, cf_worker_row, theme, t("label.cfworker_domains"), size=11)
-    cf_worker_lbl.pack(anchor="w", pady=(0, 2))
+    cf_worker_lbl.pack(side="left", anchor="w", pady=(0, 2))
 
     cf_worker_input = ctk.CTkFrame(cf_worker_inner, fg_color="transparent")
     cf_worker_input.pack(fill="x")
 
-    cfproxy_worker_domain_var = ctk.StringVar(
-        value=", ".join(coerce_domain_list(
-            cfg.get("cfproxy_worker_domain", default_config.get("cfproxy_worker_domain", ""))
-        ))
+    saved_worker_domains = coerce_domain_list(
+        cfg.get("cfproxy_worker_domain", default_config.get("cfproxy_worker_domain", ""))
     )
+    cfproxy_worker_enabled_var = ctk.BooleanVar(
+        value=cfg.get("cfproxy_worker_enabled", bool(saved_worker_domains))
+    )
+    cf_worker_cb = _checkbox(
+        ctk, cf_worker_input, theme, t("label.cf_custom_domain"),
+        cfproxy_worker_enabled_var,
+    )
+    cf_worker_cb.pack(side="left", padx=(0, 10))
+    attach_ctk_tooltip(cf_worker_cb, t("tip.cfworker_domain"))
+
+    cfproxy_worker_domain_var = ctk.StringVar(value=", ".join(saved_worker_domains))
     cf_worker_entry = _entry(
         ctk, cf_worker_input, theme, var=cfproxy_worker_domain_var,
         height=32, radius=8,
@@ -653,13 +664,16 @@ def install_tray_config_form(
         btn = _cfworker_test_btn[0]
         if btn is None:
             return
-        enabled = bool(coerce_domain_list(cfproxy_worker_domain_var.get()))
+        enabled = (
+            cfproxy_worker_enabled_var.get()
+            and bool(coerce_domain_list(cfproxy_worker_domain_var.get()))
+        )
         btn.configure(state="normal" if enabled else "disabled")
 
     def _on_cfworker_test():
         domains = coerce_domain_list(cfproxy_worker_domain_var.get())
         btn = _cfworker_test_btn[0]
-        if not domains or btn is None:
+        if not cfproxy_worker_enabled_var.get() or not domains or btn is None:
             return
         btn.configure(text=t("button.test_loading"), state="disabled")
         import threading as _threading
@@ -690,16 +704,23 @@ def install_tray_config_form(
     ).pack(side="right")
 
     _cfworker_test_widget = ctk.CTkButton(
-        cf_worker_input, text=t("button.test"), width=56, height=32,
+        cf_worker_row, text=t("button.test"), width=56, height=28,
         font=(theme.ui_font_family, 13), corner_radius=8,
         fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
         text_color="#ffffff", border_width=1, border_color=theme.field_border,
         command=_on_cfworker_test,
     )
-    _cfworker_test_widget.pack(side="right", padx=(0, 6))
+    _cfworker_test_widget.pack(side="right")
     _cfworker_test_btn[0] = _cfworker_test_widget
+
+    def _sync_cfworker_entry(*_):
+        state = "normal" if cfproxy_worker_enabled_var.get() else "disabled"
+        cf_worker_entry.configure(state=state)
+        _sync_cfworker_test_button()
+
+    cfproxy_worker_enabled_var.trace_add("write", _sync_cfworker_entry)
     cfproxy_worker_domain_var.trace_add("write", _sync_cfworker_test_button)
-    _sync_cfworker_test_button()
+    _sync_cfworker_entry()
 
     log_inner = _config_section(ctk, frame, theme, t("section.logs"))
 
@@ -784,7 +805,9 @@ def install_tray_config_form(
         adv_entries=adv_entries, adv_keys=adv_keys,
         autostart_var=autostart_var, check_updates_var=check_updates_var,
         cfproxy_var=cfproxy_var,
+        cfproxy_user_domain_enabled_var=cf_custom_cb_var,
         cfproxy_user_domain_var=cfproxy_user_domain_var,
+        cfproxy_worker_enabled_var=cfproxy_worker_enabled_var,
         cfproxy_worker_domain_var=cfproxy_worker_domain_var,
         appearance_var=appearance_var,
         language_var=language_var,
@@ -876,8 +899,14 @@ def validate_config_form(
         new_cfg["check_updates"] = bool(widgets.check_updates_var.get())
     if widgets.cfproxy_var is not None:
         new_cfg["cfproxy"] = bool(widgets.cfproxy_var.get())
+    if widgets.cfproxy_user_domain_enabled_var is not None:
+        new_cfg["cfproxy_user_domain_enabled"] = bool(
+            widgets.cfproxy_user_domain_enabled_var.get()
+        )
     if widgets.cfproxy_user_domain_var is not None:
         new_cfg["cfproxy_user_domain"] = coerce_domain_list(widgets.cfproxy_user_domain_var.get())
+    if widgets.cfproxy_worker_enabled_var is not None:
+        new_cfg["cfproxy_worker_enabled"] = bool(widgets.cfproxy_worker_enabled_var.get())
     if widgets.cfproxy_worker_domain_var is not None:
         new_cfg["cfproxy_worker_domain"] = coerce_domain_list(widgets.cfproxy_worker_domain_var.get())
     if widgets.appearance_var is not None:

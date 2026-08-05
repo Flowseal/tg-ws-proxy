@@ -45,9 +45,9 @@ dependencies = [
     "cryptography==46.0.5; platform_system != 'Windows' or python_version >= '3.9'",
     "Pillow==12.1.1; (platform_system != 'Windows' or python_version >= '3.9') and platform_system != 'Darwin'",
 
-    "customtkinter==5.2.2; platform_system != 'Darwin'",
-    "pystray==0.19.5; platform_system != 'Darwin'",
-    "rumps==0.4.0; platform_system == 'Darwin'",
+    "customtkinter==5.2.2",
+    "pystray==0.19.5",
+    "pyobjc-framework-Cocoa>=9.0; platform_system == 'Darwin'",
     "Pillow==12.1.0; platform_system == 'Darwin'",
 ]
 

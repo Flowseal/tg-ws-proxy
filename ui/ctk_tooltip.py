@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import tkinter as tk
+import customtkinter as ctk
 from typing import Any, List, Optional
 
 
@@ -18,7 +18,7 @@ class CtkTooltip:
         self.delay_ms = delay_ms
         self.wraplength = wraplength
         self._after_id: Optional[str] = None
-        self._tip: Optional[tk.Toplevel] = None
+        self._tip: Optional[ctk.CTkToplevel] = None
         widget.bind("<Enter>", self._schedule, add="+")
         widget.bind("<Leave>", self._hide, add="+")
         widget.bind("<Button>", self._hide, add="+")
@@ -48,27 +48,24 @@ class CtkTooltip:
         except Exception:
             return
 
-        tw = tk.Toplevel(self.widget.winfo_toplevel())
+        tw = ctk.CTkToplevel(self.widget.winfo_toplevel())
         tw.wm_overrideredirect(True)
         try:
             tw.wm_attributes("-topmost", True)
         except Exception:
             pass
-        tw.configure(bg="#2b2b2b")
-        lbl = tk.Label(
+        tw.configure(fg_color="#2b2b2b")
+        lbl = ctk.CTkLabel(
             tw,
             text=self.text,
             justify="left",
             wraplength=self.wraplength,
-            background="#2b2b2b",
-            foreground="#f0f0f0",
-            relief="flat",
-            borderwidth=0,
-            padx=10,
-            pady=8,
-            font=("Segoe UI", 10) if _is_windows() else None,
+            fg_color="#2b2b2b",
+            text_color="#f0f0f0",
+            corner_radius=0,
+            font=("Segoe UI", 14) if _is_windows() else None,
         )
-        lbl.pack()
+        lbl.pack(padx=10, pady=8)
         x = self.widget.winfo_rootx() + 12
         y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
         tw.wm_geometry(f"+{x}+{y}")

@@ -1,9 +1,10 @@
-# -*- mode: python ; coding: utf-8 -*-
-
 import sys
 import os
 
 block_cipher = None
+
+import customtkinter
+ctk_path = os.path.dirname(customtkinter.__file__)
 
 _i18n_path = os.path.join(os.path.dirname(SPEC), os.pardir, 'ui', 'i18n')
 
@@ -11,14 +12,17 @@ a = Analysis(
     [os.path.join(os.path.dirname(SPEC), os.pardir, 'macos.py')],
     pathex=[],
     binaries=[],
-    datas=[(_i18n_path, 'ui/i18n')],
+    datas=[(ctk_path, 'customtkinter/'), (_i18n_path, 'ui/i18n')],
     hiddenimports=[
-        'rumps',
+        'tkinter',
+        'customtkinter',
+        'pystray._darwin',
+        'PIL._tkinter_finder',
         'objc',
         'Foundation',
         'AppKit',
         'PyObjCTools',
-        'PyObjCTools.AppHelper',
+        'PyObjCTools.MachSignals',
         'cryptography.hazmat.primitives.ciphers',
         'cryptography.hazmat.primitives.ciphers.algorithms',
         'cryptography.hazmat.primitives.ciphers.modes',
@@ -30,14 +34,13 @@ a = Analysis(
     excludes=[
         'PIL._avif',
         'PIL._webp',
-        'PIL._imagingtk',
     ],
     noarchive=False,
     cipher=block_cipher,
 )
 
 _PIL_EXCLUDE_PYDS = {
-    '_avif', '_webp', '_imagingtk',
+    '_avif', '_webp',
     'FpxImagePlugin', 'MicImagePlugin',
 }
 a.binaries = [
@@ -93,7 +96,5 @@ app = BUNDLE(
         'LSMinimumSystemVersion': '10.15',
         'LSUIElement': True,
         'NSHighResolutionCapable': True,
-        'NSAppleEventsUsageDescription':
-            'TG WS Proxy needs to display dialogs.',
     },
 )

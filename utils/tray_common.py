@@ -196,6 +196,14 @@ def load_config() -> dict:
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            if "cfproxy_user_domain_enabled" not in data:
+                data["cfproxy_user_domain_enabled"] = bool(
+                    coerce_domain_list(data.get("cfproxy_user_domain"))
+                )
+            if "cfproxy_worker_enabled" not in data:
+                data["cfproxy_worker_enabled"] = bool(
+                    coerce_domain_list(data.get("cfproxy_worker_domain"))
+                )
             for k, v in DEFAULT_CONFIG.items():
                 data.setdefault(k, v)
             cfg = data
@@ -335,10 +343,23 @@ def apply_proxy_config(cfg: dict) -> bool:
     pc.buffer_size = max(4, cfg.get("buf_kb", DEFAULT_CONFIG["buf_kb"])) * 1024
     pc.pool_size = max(0, cfg.get("pool_size", DEFAULT_CONFIG["pool_size"]))
     pc.fallback_cfproxy = cfg.get("cfproxy", DEFAULT_CONFIG["cfproxy"])
-    pc.cfproxy_user_domains = coerce_domain_list(cfg.get("cfproxy_user_domain", DEFAULT_CONFIG["cfproxy_user_domain"]))
-    pc.cfproxy_worker_domains = coerce_domain_list(cfg.get("cfproxy_worker_domain", DEFAULT_CONFIG["cfproxy_worker_domain"]))
+    cfproxy_user_domains = coerce_domain_list(
+        cfg.get("cfproxy_user_domain", DEFAULT_CONFIG["cfproxy_user_domain"])
+    )
+    cfproxy_worker_domains = coerce_domain_list(
+        cfg.get("cfproxy_worker_domain", DEFAULT_CONFIG["cfproxy_worker_domain"])
+    )
+    pc.cfproxy_user_domains = (
+        cfproxy_user_domains
+        if cfg.get("cfproxy_user_domain_enabled", bool(cfproxy_user_domains))
+        else []
+    )
+    pc.cfproxy_worker_domains = (
+        cfproxy_worker_domains
+        if cfg.get("cfproxy_worker_enabled", bool(cfproxy_worker_domains))
+        else []
+    )
     pc.force_test_dc = cfg.get("force_test_dc", DEFAULT_CONFIG["force_test_dc"])
-    pc.ws_keepalive_interval = max(0, cfg.get("ws_keepalive_interval", DEFAULT_CONFIG["ws_keepalive_interval"]))
     return True
 
 

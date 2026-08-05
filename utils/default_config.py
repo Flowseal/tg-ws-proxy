@@ -20,10 +20,11 @@ _TRAY_DEFAULTS_COMMON: Dict[str, Any] = {
     "buf_kb": 256,
     "pool_size": 4,
     "cfproxy": True,
+    "cfproxy_user_domain_enabled": False,
     "cfproxy_user_domain": [],
+    "cfproxy_worker_enabled": False,
     "cfproxy_worker_domain": [],
     "force_test_dc": False,
-    "ws_keepalive_interval": 30,
 }
 
 
