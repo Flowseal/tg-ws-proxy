@@ -24,6 +24,8 @@ Minimum supported versions:
 
 Detailed instructions: [BuildFromSource.md](./BuildFromSource.md)
 
+The interface requires Tk, CustomTkinter, and access to Cocoa via PyObjC. They are installed automatically, except for Tk, which must be included in your Python build.
+
 ```bash
 pip install -e .
 tg-ws-proxy-tray-macos

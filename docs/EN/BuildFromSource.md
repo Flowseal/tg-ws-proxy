@@ -20,6 +20,8 @@ tg-ws-proxy-tray-win
 
 ### macOS
 
+Requires a Python build with Tk support. You can verify it with the command `python3 -m tkinter`.
+
 ```bash
 pip install -e .
 tg-ws-proxy-tray-macos
