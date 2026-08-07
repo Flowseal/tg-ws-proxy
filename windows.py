@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import os
 import subprocess
 import sys
@@ -125,7 +126,7 @@ def _ask_yes_no(text: str, title: Optional[str] = None) -> bool:
 
 def update_ctk_form(
     text: str, title: Optional[str] = None, download_url: Optional[str] = None,
-    release_url: Optional[str] = None,
+    release_url: Optional[str] = None, download_digest: Optional[str] = None,
 ) -> str:
     title = title or t("app.name")
     if ctk is None or not ensure_ctk_thread(ctk, _config.get("appearance", "auto")):
@@ -189,7 +190,8 @@ def update_ctk_form(
                 b.configure(state="disabled")
             root.protocol("WM_DELETE_WINDOW", lambda: None)
             def _run():
-                _perform_update(download_url, set_status=_set_status)
+                _perform_update(download_url, set_status=_set_status,
+                                expected_digest=download_digest)
                 root.after(0, lambda: [b.configure(state="normal") for b in btns])
                 root.after(0, lambda: root.protocol("WM_DELETE_WINDOW", lambda: _close_with("close")))
             threading.Thread(target=_run, daemon=True).start()
@@ -223,7 +225,8 @@ def update_ctk_form(
     return result["value"]
 
 
-def _perform_update(download_url: str, set_status=None) -> None:
+def _perform_update(download_url: str, set_status=None,
+                    expected_digest: Optional[str] = None) -> None:
     def _step(msg: str) -> None:
         log.info("Update: %s", msg)
         if set_status:
@@ -241,18 +244,24 @@ def _perform_update(download_url: str, set_status=None) -> None:
     cur_exe = Path(sys.executable)
     old_exe = cur_exe.with_name(cur_exe.stem + "_oldtgws.exe")
     tmp_path = None
+    wanted = (expected_digest or "").strip().lower()
+    if not wanted.startswith("sha256:"):
+        _err(t("update.digest_missing"))
+        return
     try:
         fd, tmp_name = tempfile.mkstemp(dir=cur_exe.parent, suffix=".tmp")
         os.close(fd)
         tmp_path = Path(tmp_name)
         log.info("Downloading update from %s", download_url)
         opener = build_github_opener()
+        digest = hashlib.sha256()
         with opener.open(download_url) as _resp:
             with open(str(tmp_path), "wb") as _fout:
                 while True:
                     _chunk = _resp.read(65536)
                     if not _chunk:
                         break
+                    digest.update(_chunk)
                     _fout.write(_chunk)
     except Exception as exc:
         _err(t("update.download_fail", error=exc))
@@ -261,6 +270,16 @@ def _perform_update(download_url: str, set_status=None) -> None:
                 tmp_path.unlink(missing_ok=True)
             except OSError:
                 pass
+        return
+
+    if digest.hexdigest() != wanted[7:]:
+        log.error("Update digest mismatch: got %s, expected %s",
+                  digest.hexdigest(), wanted[7:])
+        _err(t("update.digest_fail"))
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
         return
 
     _step(t("update.replacing"))
@@ -340,6 +359,7 @@ def _maybe_do_update(cfg: dict, is_exiting) -> None:
                 t("update.available", version=ver),
                 download_url=asset[0] if asset else None,
                 release_url=url,
+                download_digest=asset[2] if asset else None,
             )
             if choice == "open":
                 webbrowser.open(url)
