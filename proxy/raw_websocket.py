@@ -67,18 +67,22 @@ def set_sock_opts(transport, buffer_size):
 
 
 class RawWebSocket:
-    __slots__ = ('reader', 'writer', '_closed')
+    __slots__ = ('reader', 'writer', '_closed', '_frag')
 
+    OP_CONT = 0x0
     OP_BINARY = 0x2
     OP_CLOSE = 0x8
     OP_PING = 0x9
     OP_PONG = 0xA
+
+    MAX_MESSAGE_LEN = 16 * 1024 * 1024
 
     def __init__(self, reader: asyncio.StreamReader,
                  writer: asyncio.StreamWriter):
         self.reader = reader
         self.writer = writer
         self._closed = False
+        self._frag = bytearray()
 
     @staticmethod
     async def connect(host: str, domain: str, timeout: float = 10.0,
@@ -164,7 +168,7 @@ class RawWebSocket:
 
     async def recv(self) -> Optional[bytes]:
         while not self._closed:
-            opcode, payload = await self._read_frame()
+            opcode, payload, fin = await self._read_frame()
 
             if opcode == self.OP_CLOSE:
                 self._closed = True
@@ -192,8 +196,18 @@ class RawWebSocket:
             if opcode == self.OP_PONG:
                 continue
 
-            if opcode in (0x1, 0x2):
-                return payload
+            if opcode in (self.OP_CONT, 0x1, self.OP_BINARY):
+                if fin and not self._frag:
+                    return payload
+                self._frag.extend(payload)
+                if len(self._frag) > self.MAX_MESSAGE_LEN:
+                    raise ConnectionError(
+                        f"WS message too large: {len(self._frag)} bytes")
+                if not fin:
+                    continue
+                message = bytes(self._frag)
+                self._frag.clear()
+                return message
             continue
         return None
 
@@ -251,17 +265,20 @@ class RawWebSocket:
             return _st_BBH4s.pack(fb, 0x80 | 126, length, mask_key) + masked
         return _st_BBQ4s.pack(fb, 0x80 | 127, length, mask_key) + masked
 
-    async def _read_frame(self) -> Tuple[int, bytes]:
+    async def _read_frame(self) -> Tuple[int, bytes, bool]:
         hdr = await self.reader.readexactly(2)
+        fin = bool(hdr[0] & 0x80)
         opcode = hdr[0] & 0x0F
         length = hdr[1] & 0x7F
         if length == 126:
             length = _st_H.unpack(await self.reader.readexactly(2))[0]
         elif length == 127:
             length = _st_Q.unpack(await self.reader.readexactly(8))[0]
+        if length > self.MAX_MESSAGE_LEN:
+            raise ConnectionError(f"WS frame too large: {length} bytes")
         if hdr[1] & 0x80:
             mask_key = await self.reader.readexactly(4)
             payload = await self.reader.readexactly(length)
-            return opcode, _xor_mask(payload, mask_key)
+            return opcode, _xor_mask(payload, mask_key), fin
         payload = await self.reader.readexactly(length)
-        return opcode, payload
+        return opcode, payload, fin
