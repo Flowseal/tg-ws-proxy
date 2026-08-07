@@ -11,6 +11,7 @@ block_cipher = None
 # customtkinter ships JSON themes + assets that must be bundled
 import customtkinter
 ctk_path = os.path.dirname(customtkinter.__file__)
+certifi_datas = collect_data_files('certifi')
 
 _i18n_path = os.path.join(os.path.dirname(SPEC), os.pardir, 'ui', 'i18n')
 
@@ -28,7 +29,7 @@ a = Analysis(
     [os.path.join(os.path.dirname(SPEC), os.pardir, 'linux.py')],
     pathex=[],
     binaries=[],
-    datas=[(ctk_path, 'customtkinter/'), (_i18n_path, 'ui/i18n')] + gi_datas + typelib_datas,
+    datas=[(ctk_path, 'customtkinter/'), (_i18n_path, 'ui/i18n')] + certifi_datas + gi_datas + typelib_datas,
     hiddenimports=[
         'pystray._appindicator',
         'PIL._tkinter_finder',

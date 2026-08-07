@@ -1,6 +1,9 @@
 import socket as _socket
 import urllib.request
 import http.client
+import ssl
+
+import certifi
 
 from typing import Optional, Dict, List
 from urllib.request import Request
@@ -104,10 +107,11 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
                 )
 
         try:
-            return self.do_open(_Conn, req)
+            return self.do_open(_Conn, req, context=self._context)
         except Exception:
             return super().https_open(req)
 
 
 def build_github_opener() -> urllib.request.OpenerDirector:
-    return urllib.request.build_opener(_PinnedHTTPSHandler())
+    context = ssl.create_default_context(cafile=certifi.where())
+    return urllib.request.build_opener(_PinnedHTTPSHandler(context=context))

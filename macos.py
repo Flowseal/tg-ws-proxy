@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import faulthandler
 import subprocess
 import sys
 import threading
@@ -89,6 +90,7 @@ from ui.ctk_tray_ui import (
 )
 from ui.i18n import set_language, t
 from utils.tray_common import (
+    APP_DIR,
     APP_NAME,
     DEFAULT_CONFIG,
     FIRST_RUN_MARKER,
@@ -115,6 +117,7 @@ _settings_window: Optional[Any] = None
 _ns_app: Optional[Any] = None
 _config: dict = {}
 _exiting = False
+_crash_log: Optional[Any] = None
 
 
 def _activate_app() -> None:
@@ -125,29 +128,66 @@ def _activate_app() -> None:
             log.warning("Failed to activate macOS app: %s", repr(exc))
 
 
-def _dispatch(callback: Callable[[], None]) -> None:
+def _hide_ctk_root() -> None:
     if _ctk_root is None:
         return
-    if threading.current_thread() is threading.main_thread():
-        callback()
-        return
     try:
-        _ctk_root.after(0, callback)
+        _ctk_root.withdraw()
+    except Exception as exc:
+        log.warning("Failed to hide CTk root: %s", repr(exc))
+
+
+def _dispatch(callback: Callable[[], None], delay_ms: int = 0) -> None:
+    if _ctk_root is None:
+        return
+
+    def invoke() -> None:
+        try:
+            callback()
+        except Exception as exc:
+            log.exception("UI callback failed")
+            try:
+                _show_error(str(exc))
+            except Exception as dialog_exc:
+                log.error("Failed to show UI error: %s", repr(dialog_exc))
+
+    try:
+        if delay_ms > 0:
+            _ctk_root.after(delay_ms, invoke)
+        else:
+            _ctk_root.after_idle(invoke)
     except Exception as exc:
         log.warning("Failed to dispatch UI callback: %s", repr(exc))
 
 
 def _messagebox(kind: str, text: str, title: str) -> Any:
+    import tkinter as tk
     from tkinter import messagebox
 
     result: list[Any] = []
     done = threading.Event()
 
     def show() -> None:
+        parent = None
         try:
             _activate_app()
-            result.append(getattr(messagebox, kind)(title, text, parent=_ctk_root))
+            _hide_ctk_root()
+            parent = tk.Toplevel(_ctk_root)
+            parent.withdraw()
+            result.append(getattr(messagebox, kind)(title, text, parent=parent))
         finally:
+            if parent is not None:
+                try:
+                    parent.destroy()
+                except tk.TclError:
+                    pass
+            _hide_ctk_root()
+            if _ctk_root is not None:
+                try:
+                    _ctk_root.after_idle(_hide_ctk_root)
+                    _ctk_root.after(50, _hide_ctk_root)
+                except tk.TclError:
+                    pass
             done.set()
 
     if threading.current_thread() is threading.main_thread():
@@ -231,7 +271,8 @@ def _on_restart(icon=None, item=None) -> None:
 
 
 def _on_edit_config(icon=None, item=None) -> None:
-    _dispatch(_edit_config_dialog)
+    log.info("Settings requested")
+    _dispatch(_edit_config_dialog, delay_ms=300)
 
 
 def _on_open_logs(icon=None, item=None) -> None:
@@ -265,12 +306,18 @@ def _on_exit(icon=None, item=None) -> None:
 
 def _edit_config_dialog() -> None:
     global _settings_window
-    if _settings_window is not None and _settings_window.winfo_exists():
-        _activate_app()
-        _settings_window.lift()
-        _settings_window.focus_force()
-        return
+    if _settings_window is not None:
+        try:
+            if _settings_window.winfo_exists():
+                _activate_app()
+                _settings_window.lift()
+                _settings_window.focus_force()
+                return
+        except Exception as exc:
+            log.warning("Failed to reuse settings window: %s", repr(exc))
+        _settings_window = None
 
+    log.info("Creating settings window")
     cfg = dict(_config)
     theme = ctk_theme_for_platform()
     width, height = CONFIG_DIALOG_SIZE
@@ -283,6 +330,7 @@ def _edit_config_dialog() -> None:
         after_create=lambda window: _activate_app(),
     )
     _settings_window = root
+    log.info("Settings window created")
     frame_pad_x, frame_pad_y = CONFIG_DIALOG_FRAME_PAD
     frame = main_content_frame(
         ctk,
@@ -293,6 +341,7 @@ def _edit_config_dialog() -> None:
     )
     scroll, footer = tray_settings_scroll_and_footer(ctk, frame, theme)
     original_language = _config.get("language", DEFAULT_CONFIG["language"])
+    log.info("Building settings form")
     widgets = install_tray_config_form(
         ctk,
         scroll,
@@ -302,6 +351,7 @@ def _edit_config_dialog() -> None:
         show_autostart=False,
         on_language_change=_refresh_tray_menu,
     )
+    log.info("Settings form built")
     original_appearance = ctk.get_appearance_mode()
 
     def restore_ui_locale() -> None:
@@ -312,6 +362,7 @@ def _edit_config_dialog() -> None:
         global _settings_window
         root.destroy()
         _settings_window = None
+        _hide_ctk_root()
 
     def cancel() -> None:
         ctk.set_appearance_mode(original_appearance)
@@ -379,6 +430,7 @@ def _edit_config_dialog() -> None:
         on_cancel=cancel,
     )
     _activate_app()
+    log.info("Settings window ready")
 
 
 def _show_first_run() -> None:
@@ -404,6 +456,7 @@ def _show_first_run() -> None:
     def done(open_telegram: bool) -> None:
         FIRST_RUN_MARKER.touch()
         root.destroy()
+        _hide_ctk_root()
         if open_telegram:
             _on_open_in_telegram()
         check_ipv6_warning(_show_info)
@@ -450,6 +503,12 @@ def _initialize_gui() -> bool:
     install_tkinter_variable_del_guard()
     apply_ctk_appearance(ctk, _config.get("appearance", "auto"))
     _ctk_root = ctk.CTk()
+    _ctk_root.title(t("app.name"))
+    _ctk_root.geometry("1x1+0+0")
+    try:
+        _ctk_root.attributes("-alpha", 0.0)
+    except Exception as exc:
+        log.warning("Failed to make CTk root transparent: %s", repr(exc))
     _ctk_root.withdraw()
     _ns_app = NSApplication.sharedApplication()
     if NSApplicationActivationPolicyAccessory is not None:
@@ -457,10 +516,21 @@ def _initialize_gui() -> bool:
     return True
 
 
+def _enable_crash_log() -> None:
+    global _crash_log
+    try:
+        ensure_dirs()
+        _crash_log = open(APP_DIR / "crash.log", "a", encoding="utf-8", buffering=1)
+        faulthandler.enable(file=_crash_log, all_threads=True)
+    except OSError as exc:
+        log.warning("Failed to enable crash log: %s", repr(exc))
+
+
 def run_tray() -> None:
     global _tray_icon, _config
     _config = load_config()
     bootstrap(_config)
+    _enable_crash_log()
 
     if not _initialize_gui():
         log.error("pystray, Pillow, customtkinter or AppKit not installed; running in console mode")
