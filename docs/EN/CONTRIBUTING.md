@@ -37,12 +37,26 @@ Running:
 
 Details: `docs/BuildFromSource.md`.
 
+## Checks
+
+Tests use the standard library only, no extra dependencies:
+
+```bash
+python -m unittest discover -s tests -t .
+```
+
+Linting (`ruff` is configured in `pyproject.toml`):
+
+```bash
+ruff check .
+```
+
 ## Pull Request
 
 Before opening a PR:
 
 1. Make sure your change solves a specific problem.
-2. Check that existing scenarios aren't broken.
+2. Check that existing scenarios aren't broken; run the tests and the linter.
 3. Update documentation if behavior or configuration changes.
 
 Smaller and focused PRs are reviewed and accepted faster.
