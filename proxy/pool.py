@@ -296,7 +296,7 @@ class _CfWorkerPool:
 
     def available_domains(self, worker_domains: List[str]) -> List[str]:
         now = time.time()
-        domains = list()
+        domains = []
         for domain in worker_domains:
             if domain in domains:
                 continue

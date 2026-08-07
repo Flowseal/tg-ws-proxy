@@ -252,11 +252,11 @@ def _sync_language_combobox(combo: Any, var: Any, cfg_value: str) -> None:
 
 
 def _entry(ctk, parent, theme, *, var=None, width=0, height=36, radius=10, **kw):
-    opts = dict(
-        font=(theme.ui_font_family, 13), corner_radius=radius,
-        fg_color=theme.bg, border_color=theme.field_border,
-        border_width=1, text_color=theme.text_primary,
-    )
+    opts = {
+        "font": (theme.ui_font_family, 13), "corner_radius": radius,
+        "fg_color": theme.bg, "border_color": theme.field_border,
+        "border_width": 1, "text_color": theme.text_primary,
+    }
     if var is not None:
         opts["textvariable"] = var
     if width:

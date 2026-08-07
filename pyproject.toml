@@ -73,5 +73,12 @@ packages = ["proxy", "ui", "utils"]
 [tool.hatch.version]
 path = "proxy/__init__.py"
 
+[tool.ruff]
+target-version = "py38"
+
 [tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B", "C4"]
 ignore = ["F403", "F405"]
+
+[tool.ruff.lint.per-file-ignores]
+"macos.py" = ["E402"]
