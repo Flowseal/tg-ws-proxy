@@ -202,6 +202,7 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
             try:
                 ws = await RawWebSocket.connect(worker_domain, worker_domain,
                                                 timeout=10.0, path=path)
+                break
             except Exception as exc:
                 cf_worker_pool.report_failure(worker_domain, exc)
                 log.warning("[%s] DC%d%s CF worker %s failed: %s",

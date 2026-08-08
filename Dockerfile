@@ -37,6 +37,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY proxy ./proxy
+COPY utils ./utils
 COPY docs/README.md LICENSE ./
 
 USER app
