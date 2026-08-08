@@ -138,7 +138,6 @@
   "update.download_fail": "Download failed:\n{error}",
   "update.rename_fail": "Failed to rename file:\n{error}",
   "update.move_fail": "Failed to move file:\n{error}",
-  "update.digest_fail": "Checksum of the downloaded file does not match the release. Update cancelled.",
 
   "error.dc_config": "DC → IP configuration error.",
 

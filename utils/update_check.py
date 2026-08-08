@@ -264,9 +264,7 @@ def get_status() -> Dict[str, Any]:
     return dict(_state)
 
 
-def get_update_asset(
-    exe_path: Path, current_version: str,
-) -> Optional[Tuple[str, str, str]]:
+def get_update_asset(exe_path: Path, current_version: str) -> Optional[Tuple[str, str]]:
     new_assets = _state.get("assets") or []
     if not new_assets:
         return None
@@ -321,6 +319,6 @@ def get_update_asset(
 
     for a in new_assets:
         if a.get("name") == target_name:
-            return a["url"], a["name"], (a.get("digest") or "")
+            return a["url"], a["name"]
 
     return None
