@@ -181,7 +181,8 @@ def update_ctk_form(
             done.set()
 
         def _on_update() -> None:
-            if not download_url:
+            digest = (download_digest or "").strip().lower()
+            if not download_url or not digest.startswith("sha256:"):
                 if release_url:
                     webbrowser.open(release_url)
                 _close_with("open")
@@ -190,8 +191,7 @@ def update_ctk_form(
                 b.configure(state="disabled")
             root.protocol("WM_DELETE_WINDOW", lambda: None)
             def _run():
-                _perform_update(download_url, set_status=_set_status,
-                                expected_digest=download_digest)
+                _perform_update(download_url, digest, set_status=_set_status)
                 root.after(0, lambda: [b.configure(state="normal") for b in btns])
                 root.after(0, lambda: root.protocol("WM_DELETE_WINDOW", lambda: _close_with("close")))
             threading.Thread(target=_run, daemon=True).start()
@@ -225,8 +225,8 @@ def update_ctk_form(
     return result["value"]
 
 
-def _perform_update(download_url: str, set_status=None,
-                    expected_digest: Optional[str] = None) -> None:
+def _perform_update(download_url: str, expected_digest: str,
+                    set_status=None) -> None:
     def _step(msg: str) -> None:
         log.info("Update: %s", msg)
         if set_status:
@@ -244,10 +244,7 @@ def _perform_update(download_url: str, set_status=None,
     cur_exe = Path(sys.executable)
     old_exe = cur_exe.with_name(cur_exe.stem + "_oldtgws.exe")
     tmp_path = None
-    wanted = (expected_digest or "").strip().lower()
-    if not wanted.startswith("sha256:"):
-        _err(t("update.digest_missing"))
-        return
+    wanted = expected_digest.strip().lower()
     try:
         fd, tmp_name = tempfile.mkstemp(dir=cur_exe.parent, suffix=".tmp")
         os.close(fd)
