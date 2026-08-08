@@ -560,7 +560,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
             stop_task = (asyncio.create_task(stop_event.wait())
                          if stop_event else None)
 
-            async def _listener_watchdog(server=server):
+            async def _listener_watchdog():
                 while True:
                     await asyncio.sleep(LISTENER_CHECK_INTERVAL)
                     socks = server.sockets
