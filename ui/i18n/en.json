@@ -113,6 +113,7 @@
   "tray.restart": "Restart proxy",
   "tray.settings": "Settings...",
   "tray.logs": "Open logs",
+  "tray.update": "Update ({current} → {new})",
   "tray.exit": "Exit",
 
   "dialog.restart_title": "Restart?",

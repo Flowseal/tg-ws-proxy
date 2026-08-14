@@ -34,7 +34,7 @@ try:
 except ImportError:
     Image = None
 
-from proxy import get_link_host
+from proxy import __version__, get_link_host
 
 from utils.win32_theme import (
     is_windows_dark_theme, 
@@ -317,6 +317,34 @@ def _perform_update(download_url: str, set_status=None) -> None:
     os._exit(0)
 
 
+def _trigger_update_flow(icon=None, item=None) -> None:
+    """Show the update dialog for an update already known to be available.
+
+    Reused by the tray "Update" item and the settings dialog's "Update"
+    button, so an update can still be started after the initial startup
+    prompt was skipped/closed.
+    """
+    from utils.update_check import RELEASES_PAGE_URL, get_status, get_update_asset
+
+    st = get_status()
+    if not st.get("has_update"):
+        return
+    url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
+    ver = st.get("latest") or "?"
+    asset = get_update_asset(Path(sys.executable), __version__) if IS_FROZEN else None
+
+    def _show() -> None:
+        choice = update_ctk_form(
+            t("update.available", version=ver),
+            download_url=asset[0] if asset else None,
+            release_url=url,
+        )
+        if choice == "open":
+            webbrowser.open(url)
+
+    threading.Thread(target=_show, daemon=True, name="manual-update").start()
+
+
 def _maybe_do_update(cfg: dict, is_exiting) -> None:
     if not cfg.get("check_updates", True):
         return
@@ -326,23 +354,14 @@ def _maybe_do_update(cfg: dict, is_exiting) -> None:
         if is_exiting():
             return
         try:
-            from proxy import __version__
-            from utils.update_check import RELEASES_PAGE_URL, get_status, get_update_asset, run_check
+            from utils.update_check import run_check
 
             run_check(__version__)
-            st = get_status()
-            if not st.get("has_update") or is_exiting():
+            if _tray_icon is not None:
+                _tray_icon.menu = _build_menu()
+            if is_exiting():
                 return
-            url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
-            ver = st.get("latest") or "?"
-            asset = get_update_asset(Path(sys.executable), __version__) if IS_FROZEN else None
-            choice = update_ctk_form(
-                t("update.available", version=ver),
-                download_url=asset[0] if asset else None,
-                release_url=url,
-            )
-            if choice == "open":
-                webbrowser.open(url)
+            _trigger_update_flow()
         except Exception as exc:
             log.warning("Update check failed: %s", repr(exc))
 
@@ -498,6 +517,7 @@ def _edit_config_dialog() -> None:
             show_autostart=_supports_autostart(),
             autostart_value=cfg.get("autostart", False),
             on_language_change=_refresh_tray_menu,
+            on_update_click=_trigger_update_flow,
         )
 
         _original_appearance = ctk.get_appearance_mode()
@@ -602,16 +622,25 @@ def _build_menu():
     host = _config.get("host", DEFAULT_CONFIG["host"])
     port = _config.get("port", DEFAULT_CONFIG["port"])
     link_host = get_link_host(host)
-    return pystray.Menu(
+    items = [
         pystray.MenuItem(t("tray.open_telegram", host=link_host, port=port), _on_open_in_telegram, default=True),
         pystray.MenuItem(t("tray.copy_link"), _on_copy_link),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(t("tray.restart"), _on_restart),
         pystray.MenuItem(t("tray.settings"), _on_edit_config),
         pystray.MenuItem(t("tray.logs"), _on_open_logs),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem(t("tray.exit"), _on_exit),
-    )
+    ]
+    from utils.update_check import get_status
+    st = get_status()
+    if st.get("has_update"):
+        items.append(pystray.Menu.SEPARATOR)
+        items.append(pystray.MenuItem(
+            t("tray.update", current=__version__, new=st.get("latest") or "?"),
+            _trigger_update_flow,
+        ))
+    items.append(pystray.Menu.SEPARATOR)
+    items.append(pystray.MenuItem(t("tray.exit"), _on_exit))
+    return pystray.Menu(*items)
 
 
 # entry point

@@ -113,6 +113,7 @@
   "tray.restart": "Перезапустить прокси",
   "tray.settings": "Настройки...",
   "tray.logs": "Открыть логи",
+  "tray.update": "Обновить ({current} → {new})",
   "tray.exit": "Выход",
 
   "dialog.restart_title": "Перезапустить?",
