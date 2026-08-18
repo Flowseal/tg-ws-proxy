@@ -14,6 +14,8 @@ Color = Union[str, Tuple[str, str]]
 
 FRAME_MS = 16
 SUPERSAMPLE = 4
+_REFRESH_HEAD_ANGLE = 270.0
+_REFRESH_GAP = 25.0
 CHECK_ANIM_MS = 190
 HOVER_ANIM_MS = 110
 
@@ -132,6 +134,37 @@ class Tween:
             return
         if self._on_done is not None:
             self._on_done()
+
+
+def refresh_image(size: int, color: str) -> Any:
+    if Image is None:
+        return None
+    box = size * SUPERSAMPLE
+    image = Image.new("RGBA", (box, box), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    stroke = max(1, round(box * 0.1))
+    margin = round(box * 0.22)
+    head = _REFRESH_HEAD_ANGLE + _REFRESH_GAP
+    draw.arc(
+        (margin, margin, box - margin - 1, box - margin - 1),
+        start=head, end=_REFRESH_HEAD_ANGLE + 360.0 - _REFRESH_GAP,
+        fill=color, width=stroke,
+    )
+    center = box / 2.0
+    radius = center - margin
+    angle = math.radians(head)
+    radial = (math.cos(angle), math.sin(angle))
+    tangent = (math.sin(angle), -math.cos(angle))
+    anchor = (center + radius * radial[0], center + radius * radial[1])
+    draw.polygon(
+        [
+            (anchor[0] + tangent[0] * stroke * 2.0, anchor[1] + tangent[1] * stroke * 2.0),
+            (anchor[0] + radial[0] * stroke * 1.3, anchor[1] + radial[1] * stroke * 1.3),
+            (anchor[0] - radial[0] * stroke * 1.3, anchor[1] - radial[1] * stroke * 1.3),
+        ],
+        fill=color,
+    )
+    return image.resize((size, size), Image.LANCZOS)
 
 
 class Icon:
