@@ -11,6 +11,7 @@ from proxy.balancer import balancer
 from utils.update_check import RELEASES_PAGE_URL, get_status
 
 
+from ui.ctk_checkbox import CtkCheckBox
 from ui.ctk_select import CtkSelect
 from ui.ctk_theme import (
     FIRST_RUN_FRAME_PAD,
@@ -280,11 +281,11 @@ def _entry(ctk, parent, theme, *, var=None, width=0, height=36, radius=10, **kw)
 
 
 def _checkbox(ctk, parent, theme, text, variable):
-    return ctk.CTkCheckBox(
+    return CtkCheckBox(
         parent, text=text, variable=variable,
         font=(theme.ui_font_family, 13), text_color=theme.text_primary,
-        fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
-        corner_radius=6, border_width=2, border_color=theme.field_border,
+        accent_color=theme.tg_blue, accent_hover_color=theme.tg_blue_hover,
+        border_color=theme.field_border, box_color=theme.bg,
     )
 
 
