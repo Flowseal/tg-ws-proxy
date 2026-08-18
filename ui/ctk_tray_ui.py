@@ -11,6 +11,7 @@ from proxy.balancer import balancer
 from utils.update_check import RELEASES_PAGE_URL, get_status
 
 
+from ui.ctk_select import CtkSelect
 from ui.ctk_theme import (
     FIRST_RUN_FRAME_PAD,
     CtkTheme,
@@ -251,6 +252,18 @@ def _sync_language_combobox(combo: Any, var: Any, cfg_value: str) -> None:
     var.set(label_from_language(cfg_value))
 
 
+def _select(parent, theme, *, values, variable, command=None):
+    return CtkSelect(
+        parent, values=values, variable=variable, command=command,
+        font=(theme.ui_font_family, 12), height=32, corner_radius=8,
+        fg_color=theme.bg, border_color=theme.field_border,
+        text_color=theme.text_primary, accent_color=theme.tg_blue,
+        arrow_color=theme.text_secondary,
+        dropdown_fg_color=theme.bg, dropdown_hover_color=theme.field_bg,
+        backdrop_color=theme.bg,
+    )
+
+
 def _entry(ctk, parent, theme, *, var=None, width=0, height=36, radius=10, **kw):
     opts = {
         "font": (theme.ui_font_family, 13), "corner_radius": radius,
@@ -424,22 +437,10 @@ def install_tray_config_form(
     _label(ctk, lang_col, theme, t("settings.language"), size=11).pack(
         anchor="w", pady=(0, 2)
     )
-    language_combo = ctk.CTkComboBox(
-        lang_col,
+    language_combo = _select(
+        lang_col, theme,
         values=[label for _, label in language_option_labels()],
         variable=language_var,
-        height=32,
-        font=(theme.ui_font_family, 12),
-        text_color=theme.text_primary,
-        fg_color=theme.bg,
-        border_color=theme.field_border,
-        button_color=theme.field_border,
-        button_hover_color=theme.text_secondary,
-        dropdown_fg_color=theme.field_bg,
-        dropdown_text_color=theme.text_primary,
-        dropdown_hover_color=theme.field_border,
-        corner_radius=8,
-        state="readonly",
     )
     language_combo.pack(fill="x")
     _sync_language_combobox(language_combo, language_var, lang_cfg)
@@ -447,22 +448,10 @@ def install_tray_config_form(
     _label(ctk, theme_col, theme, t("settings.theme"), size=11).pack(
         anchor="w", pady=(0, 2)
     )
-    theme_combo = ctk.CTkComboBox(
-        theme_col,
+    theme_combo = _select(
+        theme_col, theme,
         values=_appearance_options(),
         variable=appearance_var,
-        height=32,
-        font=(theme.ui_font_family, 12),
-        text_color=theme.text_primary,
-        fg_color=theme.bg,
-        border_color=theme.field_border,
-        button_color=theme.field_border,
-        button_hover_color=theme.text_secondary,
-        dropdown_fg_color=theme.field_bg,
-        dropdown_text_color=theme.text_primary,
-        dropdown_hover_color=theme.field_border,
-        corner_radius=8,
-        state="readonly",
         command=_on_appearance_change,
     )
     theme_combo.pack(fill="x")
