@@ -42,6 +42,7 @@
   "tip.host": "Address the proxy listens on.\nUsually 127.0.0.1 for localhost, 0.0.0.0 for all interfaces",
   "tip.port": "Proxy port. Telegram Desktop proxy settings must use the same port",
   "tip.secret": "Secret key for client authorization",
+  "tip.regen_secret": "Generate a new secret",
   "tip.dc": "Mapping of Telegram data center (DC) number to web.telegram.org dc server IP.\nEach line: «number:IP», e.g. 4:149.154.167.220. The proxy routes traffic to Telegram servers using these rules\n\nIf connection fails then fallbacks are used",
   "tip.verbose": "When enabled, more details are written to the log file — useful for troubleshooting",
   "tip.buf_kb": "Receive/send buffer size in kilobytes.\nA larger value allocates more memory per socket",

@@ -9,8 +9,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from proxy import __version__, get_link_host, parse_dc_ip_list, coerce_domain_list
 from proxy.balancer import balancer
 from utils.update_check import RELEASES_PAGE_URL, get_status
+from utils.win32_theme import apply_titlebar_theme
 
 
+from ui.ctk_anim import refresh_image
+from ui.ctk_checkbox import CtkCheckBox
+from ui.ctk_select import CtkSelect
 from ui.ctk_theme import (
     FIRST_RUN_FRAME_PAD,
     CtkTheme,
@@ -224,6 +228,7 @@ def _show_multi_connectivity_results(title_base: str, per_domain: dict,
     root.destroy()
 
 _INNER_W = 396
+_ICON_SOURCE_PX = 64
 
 _APPEARANCE_KEYS = ("auto", "light", "dark")
 _APPEARANCE_TO_CTK = {"auto": "system", "light": "Light", "dark": "Dark"}
@@ -246,9 +251,55 @@ def _appearance_to_cfg(label: str) -> str:
     return "auto"
 
 
+class _Retranslator:
+    def __init__(self) -> None:
+        self._items: List[Callable[[], None]] = []
+
+    def reset(self) -> None:
+        self._items = []
+
+    def text(self, widget: Any, key: str, **fmt: Any) -> Any:
+        self._items.append(lambda: widget.configure(text=t(key, **fmt)))
+        return widget
+
+    def tip(self, tooltips: Any, key: str, **fmt: Any) -> None:
+        items = tooltips if isinstance(tooltips, list) else [tooltips]
+
+        def apply() -> None:
+            for tooltip in items:
+                tooltip.text = t(key, **fmt)
+
+        self._items.append(apply)
+
+    def custom(self, apply: Callable[[], None]) -> None:
+        self._items.append(apply)
+
+    def apply(self) -> None:
+        for item in list(self._items):
+            try:
+                item()
+            except Exception:
+                pass
+
+
+_RETRANSLATOR = _Retranslator()
+
+
 def _sync_language_combobox(combo: Any, var: Any, cfg_value: str) -> None:
     combo.configure(values=[label for _, label in language_option_labels()])
     var.set(label_from_language(cfg_value))
+
+
+def _select(parent, theme, *, values, variable, command=None):
+    return CtkSelect(
+        parent, values=values, variable=variable, command=command,
+        font=(theme.ui_font_family, 12), height=32, corner_radius=8,
+        fg_color=theme.bg, border_color=theme.field_border,
+        text_color=theme.text_primary, accent_color=theme.tg_blue,
+        arrow_color=theme.text_secondary,
+        dropdown_fg_color=theme.bg, dropdown_hover_color=theme.field_bg,
+        backdrop_color=theme.bg,
+    )
 
 
 def _entry(ctk, parent, theme, *, var=None, width=0, height=36, radius=10, **kw):
@@ -267,11 +318,26 @@ def _entry(ctk, parent, theme, *, var=None, width=0, height=36, radius=10, **kw)
 
 
 def _checkbox(ctk, parent, theme, text, variable):
-    return ctk.CTkCheckBox(
+    return CtkCheckBox(
         parent, text=text, variable=variable,
         font=(theme.ui_font_family, 13), text_color=theme.text_primary,
+        accent_color=theme.tg_blue, accent_hover_color=theme.tg_blue_hover,
+        border_color=theme.field_border, box_color=theme.bg,
+    )
+
+
+def _icon_button(ctk, parent, theme, *, command):
+    image = refresh_image(_ICON_SOURCE_PX, "#ffffff")
+    opts = (
+        {"text": "", "image": ctk.CTkImage(light_image=image, dark_image=image, size=(16, 16))}
+        if image is not None
+        else {"text": "↺", "font": (theme.ui_font_family, 18)}
+    )
+    return ctk.CTkButton(
+        parent, width=36, height=36, corner_radius=10,
         fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
-        corner_radius=6, border_width=2, border_color=theme.field_border,
+        text_color="#ffffff", border_width=1, border_color=theme.field_border,
+        command=command, **opts,
     )
 
 
@@ -285,9 +351,9 @@ def _label(ctk, parent, theme, text, *, size=12, bold=False, secondary=True, **k
     )
 
 
-def _labeled_entry(ctk, parent, theme, label_text, value, *, tip="", width=0, pack_fill=False):
+def _labeled_entry(ctk, parent, theme, label_key, value, *, tip_key="", width=0, pack_fill=False):
     col = ctk.CTkFrame(parent, fg_color="transparent")
-    lbl = _label(ctk, col, theme, label_text)
+    lbl = _RETRANSLATOR.text(_label(ctk, col, theme, t(label_key)), label_key)
     lbl.pack(anchor="w", pady=(0, 2))
     var = ctk.StringVar(value=str(value))
     ent = _entry(ctk, col, theme, var=var, width=width)
@@ -295,8 +361,8 @@ def _labeled_entry(ctk, parent, theme, label_text, value, *, tip="", width=0, pa
         ent.pack(fill="x")
     else:
         ent.pack(anchor="w")
-    if tip:
-        attach_tooltip_to_widgets([lbl, ent, col], tip)
+    if tip_key:
+        _RETRANSLATOR.tip(attach_tooltip_to_widgets([lbl, ent, col], t(tip_key)), tip_key)
     return col, var
 
 
@@ -326,13 +392,15 @@ def _config_section(
     ctk: Any,
     parent: Any,
     theme: CtkTheme,
-    title: str,
+    title_key: str,
     *,
     bottom_spacer: int = 6,
 ) -> Any:
     wrap = ctk.CTkFrame(parent, fg_color="transparent")
     wrap.pack(fill="x", pady=(0, bottom_spacer))
-    _label(ctk, wrap, theme, title, secondary=False, bold=True).pack(anchor="w", pady=(0, 2))
+    title = _label(ctk, wrap, theme, t(title_key), secondary=False, bold=True)
+    _RETRANSLATOR.text(title, title_key)
+    title.pack(anchor="w", pady=(0, 2))
     card = ctk.CTkFrame(
         wrap, fg_color=theme.field_bg, corner_radius=10,
         border_width=1, border_color=theme.field_border,
@@ -376,13 +444,17 @@ def install_tray_config_form(
 ) -> TrayConfigFormWidgets:
     lang_cfg = cfg.get("language", default_config["language"])
     set_language(lang_cfg)
+    _RETRANSLATOR.reset()
 
     header = ctk.CTkFrame(frame, fg_color="transparent")
     header.pack(fill="x", pady=(0, 2))
-    ctk.CTkLabel(
-        header, text=t("settings.title"),
-        font=(theme.ui_font_family, 17, "bold"),
-        text_color=theme.text_primary, anchor="w",
+    _RETRANSLATOR.text(
+        ctk.CTkLabel(
+            header, text=t("settings.title"),
+            font=(theme.ui_font_family, 17, "bold"),
+            text_color=theme.text_primary, anchor="w",
+        ),
+        "settings.title",
     ).pack(side="left")
     ctk.CTkLabel(
         header, text=f"v{__version__}",
@@ -398,6 +470,9 @@ def install_tray_config_form(
         cfg_val = _appearance_to_cfg(choice)
         ctk.set_appearance_mode(_APPEARANCE_TO_CTK[cfg_val])
         cfg["appearance"] = cfg_val
+        apply_titlebar_theme(
+            frame.winfo_toplevel(), ctk.get_appearance_mode() == "Dark",
+        )
 
     ctk.CTkButton(
         header, text="Donate ♥", width=90, height=28,
@@ -410,7 +485,7 @@ def install_tray_config_form(
         ),
     ).pack(side="right", padx=(0, 6))
 
-    ui_inner = _config_section(ctk, frame, theme, t("section.interface"))
+    ui_inner = _config_section(ctk, frame, theme, "section.interface")
     ui_row = ctk.CTkFrame(ui_inner, fg_color="transparent")
     ui_row.pack(fill="x")
 
@@ -421,68 +496,55 @@ def install_tray_config_form(
     theme_col.pack(side="left", fill="x", expand=True, padx=(8, 0))
 
     language_var = ctk.StringVar(value=label_from_language(lang_cfg))
-    _label(ctk, lang_col, theme, t("settings.language"), size=11).pack(
-        anchor="w", pady=(0, 2)
-    )
-    language_combo = ctk.CTkComboBox(
-        lang_col,
+    _RETRANSLATOR.text(
+        _label(ctk, lang_col, theme, t("settings.language"), size=11), "settings.language",
+    ).pack(anchor="w", pady=(0, 2))
+    def _on_language_select(choice: str) -> None:
+        cfg["language"] = language_from_label(choice).value
+        set_language(cfg["language"])
+        _RETRANSLATOR.apply()
+        theme_combo.configure(values=_appearance_options())
+        appearance_var.set(_appearance_from_cfg(cfg.get("appearance", "auto")))
+        frame.winfo_toplevel().title(t("app.settings_title"))
+        if on_language_change is not None:
+            on_language_change()
+
+    language_combo = _select(
+        lang_col, theme,
         values=[label for _, label in language_option_labels()],
         variable=language_var,
-        height=32,
-        font=(theme.ui_font_family, 12),
-        text_color=theme.text_primary,
-        fg_color=theme.bg,
-        border_color=theme.field_border,
-        button_color=theme.field_border,
-        button_hover_color=theme.text_secondary,
-        dropdown_fg_color=theme.field_bg,
-        dropdown_text_color=theme.text_primary,
-        dropdown_hover_color=theme.field_border,
-        corner_radius=8,
-        state="readonly",
+        command=_on_language_select,
     )
     language_combo.pack(fill="x")
     _sync_language_combobox(language_combo, language_var, lang_cfg)
 
-    _label(ctk, theme_col, theme, t("settings.theme"), size=11).pack(
-        anchor="w", pady=(0, 2)
-    )
-    theme_combo = ctk.CTkComboBox(
-        theme_col,
+    _RETRANSLATOR.text(
+        _label(ctk, theme_col, theme, t("settings.theme"), size=11), "settings.theme",
+    ).pack(anchor="w", pady=(0, 2))
+    theme_combo = _select(
+        theme_col, theme,
         values=_appearance_options(),
         variable=appearance_var,
-        height=32,
-        font=(theme.ui_font_family, 12),
-        text_color=theme.text_primary,
-        fg_color=theme.bg,
-        border_color=theme.field_border,
-        button_color=theme.field_border,
-        button_hover_color=theme.text_secondary,
-        dropdown_fg_color=theme.field_bg,
-        dropdown_text_color=theme.text_primary,
-        dropdown_hover_color=theme.field_border,
-        corner_radius=8,
-        state="readonly",
         command=_on_appearance_change,
     )
     theme_combo.pack(fill="x")
 
-    conn = _config_section(ctk, frame, theme, t("section.mtproto"))
+    conn = _config_section(ctk, frame, theme, "section.mtproto")
 
     host_row = ctk.CTkFrame(conn, fg_color="transparent")
     host_row.pack(fill="x")
 
     host_col, host_var = _labeled_entry(
-        ctk, host_row, theme, t("label.host"),
+        ctk, host_row, theme, "label.host",
         cfg.get("host", default_config["host"]),
-        tip=t("tip.host"), width=160, pack_fill=True,
+        tip_key="tip.host", width=160, pack_fill=True,
     )
     host_col.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
     port_col, port_var = _labeled_entry(
-        ctk, host_row, theme, t("label.port"),
+        ctk, host_row, theme, "label.port",
         cfg.get("port", default_config["port"]),
-        tip=t("tip.port"), width=100,
+        tip_key="tip.port", width=100,
     )
     port_col.pack(side="left")
 
@@ -490,25 +552,28 @@ def install_tray_config_form(
     secret_row.pack(fill="x")
 
     secret_col, secret_var = _labeled_entry(
-        ctk, secret_row, theme, t("label.secret"),
+        ctk, secret_row, theme, "label.secret",
         cfg.get("secret", default_config["secret"]),
-        tip=t("tip.secret"), width=160, pack_fill=True,
+        tip_key="tip.secret", width=160, pack_fill=True,
     )
     secret_col.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
     regen_col = ctk.CTkFrame(secret_row, fg_color="transparent")
     regen_col.pack(side="left", anchor="s")
     ctk.CTkLabel(regen_col, text="", font=(theme.ui_font_family, 12)).pack(pady=(0, 2))
-    ctk.CTkButton(
-        regen_col, text="↺", width=36, height=36,
-        font=(theme.ui_font_family, 18), corner_radius=10,
-        fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
-        text_color="#ffffff", border_width=1, border_color=theme.field_border,
+    regen_btn = _icon_button(
+        ctk, regen_col, theme,
         command=lambda: secret_var.set(os.urandom(16).hex()),
-    ).pack()
+    )
+    regen_btn.pack()
+    _RETRANSLATOR.tip(
+        attach_ctk_tooltip(regen_btn, t("tip.regen_secret")), "tip.regen_secret",
+    )
 
-    dc_inner = _config_section(ctk, frame, theme, t("section.dc"))
-    dc_lbl = _label(ctk, dc_inner, theme, t("label.dc_hint"), size=11)
+    dc_inner = _config_section(ctk, frame, theme, "section.dc")
+    dc_lbl = _RETRANSLATOR.text(
+        _label(ctk, dc_inner, theme, t("label.dc_hint"), size=11), "label.dc_hint",
+    )
     dc_lbl.pack(anchor="w", pady=(0, 4))
     dc_textbox = ctk.CTkTextbox(
         dc_inner, width=_INNER_W, height=88,
@@ -518,9 +583,11 @@ def install_tray_config_form(
     )
     dc_textbox.pack(fill="x")
     dc_textbox.insert("1.0", "\n".join(cfg.get("dc_ip", default_config["dc_ip"])))
-    attach_tooltip_to_widgets([dc_lbl, dc_textbox], t("tip.dc"))
+    _RETRANSLATOR.tip(
+        attach_tooltip_to_widgets([dc_lbl, dc_textbox], t("tip.dc")), "tip.dc",
+    )
 
-    cf_inner = _config_section(ctk, frame, theme, t("section.cfproxy"))
+    cf_inner = _config_section(ctk, frame, theme, "section.cfproxy")
 
     cf_row = ctk.CTkFrame(cf_inner, fg_color="transparent")
     cf_row.pack(fill="x", pady=(0, 4))
@@ -528,9 +595,11 @@ def install_tray_config_form(
     cfproxy_var = ctk.BooleanVar(
         value=cfg.get("cfproxy", default_config.get("cfproxy", True))
     )
-    cf_cb = _checkbox(ctk, cf_row, theme, t("label.cf_enable"), cfproxy_var)
+    cf_cb = _RETRANSLATOR.text(
+        _checkbox(ctk, cf_row, theme, t("label.cf_enable"), cfproxy_var), "label.cf_enable",
+    )
     cf_cb.pack(side="left", padx=(0, 16))
-    attach_ctk_tooltip(cf_cb, t("tip.cfproxy"))
+    _RETRANSLATOR.tip(attach_ctk_tooltip(cf_cb, t("tip.cfproxy")), "tip.cfproxy")
 
     _cf_test_btn = [None]
 
@@ -581,13 +650,13 @@ def install_tray_config_form(
                         btn.after(0, lambda: btn.configure(text=t("button.test"), state="normal"))
             _threading.Thread(target=_worker_auto, daemon=True).start()
 
-    _cf_test_widget = ctk.CTkButton(
+    _cf_test_widget = _RETRANSLATOR.text(ctk.CTkButton(
         cf_row, text=t("button.test"), width=56, height=28,
         font=(theme.ui_font_family, 13), corner_radius=8,
         fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
         text_color="#ffffff", border_width=1, border_color=theme.field_border,
         command=_on_cf_test,
-    )
+    ), "button.test")
     _cf_test_widget.pack(side="right")
     _cf_test_btn[0] = _cf_test_widget
 
@@ -600,9 +669,15 @@ def install_tray_config_form(
     cf_custom_cb_var = ctk.BooleanVar(
         value=cfg.get("cfproxy_user_domain_enabled", bool(saved_user_domains))
     )
-    cf_custom_cb = _checkbox(ctk, cf_custom_row, theme, t("label.cf_custom_domain"), cf_custom_cb_var)
+    cf_custom_cb = _RETRANSLATOR.text(
+        _checkbox(ctk, cf_custom_row, theme, t("label.cf_custom_domain"), cf_custom_cb_var),
+        "label.cf_custom_domain",
+    )
     cf_custom_cb.pack(side="left", padx=(0, 10))
-    attach_ctk_tooltip(cf_custom_cb, t("tip.cfproxy_user_domain_cb"))
+    _RETRANSLATOR.tip(
+        attach_ctk_tooltip(cf_custom_cb, t("tip.cfproxy_user_domain_cb")),
+        "tip.cfproxy_user_domain_cb",
+    )
 
     ctk.CTkButton(
         cf_custom_row, text="?", width=28, height=32,
@@ -618,7 +693,9 @@ def install_tray_config_form(
         height=32, radius=8,
     )
     cf_domain_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
-    attach_ctk_tooltip(cf_domain_entry, t("tip.cfproxy_domain"))
+    _RETRANSLATOR.tip(
+        attach_ctk_tooltip(cf_domain_entry, t("tip.cfproxy_domain")), "tip.cfproxy_domain",
+    )
 
     def _sync_domain_entry(*_):
         state = "normal" if cf_custom_cb_var.get() else "disabled"
@@ -627,11 +704,14 @@ def install_tray_config_form(
     cf_custom_cb_var.trace_add("write", _sync_domain_entry)
     _sync_domain_entry()
 
-    cf_worker_inner = _config_section(ctk, frame, theme, t("section.cfworker"))
+    cf_worker_inner = _config_section(ctk, frame, theme, "section.cfworker")
 
     cf_worker_row = ctk.CTkFrame(cf_worker_inner, fg_color="transparent")
     cf_worker_row.pack(fill="x", pady=(0, 4))
-    cf_worker_lbl = _label(ctk, cf_worker_row, theme, t("label.cfworker_domains"), size=11)
+    cf_worker_lbl = _RETRANSLATOR.text(
+        _label(ctk, cf_worker_row, theme, t("label.cfworker_domains"), size=11),
+        "label.cfworker_domains",
+    )
     cf_worker_lbl.pack(side="left", anchor="w", pady=(0, 2))
 
     cf_worker_input = ctk.CTkFrame(cf_worker_inner, fg_color="transparent")
@@ -643,12 +723,17 @@ def install_tray_config_form(
     cfproxy_worker_enabled_var = ctk.BooleanVar(
         value=cfg.get("cfproxy_worker_enabled", bool(saved_worker_domains))
     )
-    cf_worker_cb = _checkbox(
-        ctk, cf_worker_input, theme, t("label.cf_custom_domain"),
-        cfproxy_worker_enabled_var,
+    cf_worker_cb = _RETRANSLATOR.text(
+        _checkbox(
+            ctk, cf_worker_input, theme, t("label.cf_custom_domain"),
+            cfproxy_worker_enabled_var,
+        ),
+        "label.cf_custom_domain",
     )
     cf_worker_cb.pack(side="left", padx=(0, 10))
-    attach_ctk_tooltip(cf_worker_cb, t("tip.cfworker_domain"))
+    _RETRANSLATOR.tip(
+        attach_ctk_tooltip(cf_worker_cb, t("tip.cfworker_domain")), "tip.cfworker_domain",
+    )
 
     cfproxy_worker_domain_var = ctk.StringVar(value=", ".join(saved_worker_domains))
     cf_worker_entry = _entry(
@@ -656,7 +741,10 @@ def install_tray_config_form(
         height=32, radius=8,
     )
     cf_worker_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
-    attach_tooltip_to_widgets([cf_worker_lbl, cf_worker_entry], t("tip.cfworker_domain"))
+    _RETRANSLATOR.tip(
+        attach_tooltip_to_widgets([cf_worker_lbl, cf_worker_entry], t("tip.cfworker_domain")),
+        "tip.cfworker_domain",
+    )
 
     _cfworker_test_btn = [None]
 
@@ -703,13 +791,13 @@ def install_tray_config_form(
         command=lambda: webbrowser.open(_get_doc_url("CfWorker")),
     ).pack(side="right")
 
-    _cfworker_test_widget = ctk.CTkButton(
+    _cfworker_test_widget = _RETRANSLATOR.text(ctk.CTkButton(
         cf_worker_row, text=t("button.test"), width=56, height=28,
         font=(theme.ui_font_family, 13), corner_radius=8,
         fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
         text_color="#ffffff", border_width=1, border_color=theme.field_border,
         command=_on_cfworker_test,
-    )
+    ), "button.test")
     _cfworker_test_widget.pack(side="right")
     _cfworker_test_btn[0] = _cfworker_test_widget
 
@@ -722,82 +810,105 @@ def install_tray_config_form(
     cfproxy_worker_domain_var.trace_add("write", _sync_cfworker_test_button)
     _sync_cfworker_entry()
 
-    log_inner = _config_section(ctk, frame, theme, t("section.logs"))
+    log_inner = _config_section(ctk, frame, theme, "section.logs")
 
     verbose_var = ctk.BooleanVar(value=cfg.get("verbose", False))
-    verbose_cb = _checkbox(ctk, log_inner, theme, t("label.verbose"), verbose_var)
+    verbose_cb = _RETRANSLATOR.text(
+        _checkbox(ctk, log_inner, theme, t("label.verbose"), verbose_var), "label.verbose",
+    )
     verbose_cb.pack(anchor="w", pady=(0, 6))
-    attach_ctk_tooltip(verbose_cb, t("tip.verbose"))
+    _RETRANSLATOR.tip(attach_ctk_tooltip(verbose_cb, t("tip.verbose")), "tip.verbose")
 
     adv_frame = ctk.CTkFrame(log_inner, fg_color="transparent")
     adv_frame.pack(fill="x")
 
     adv_rows = [
-        (t("label.buf_kb"), "buf_kb", t("tip.buf_kb")),
-        (t("label.pool_size"), "pool_size", t("tip.pool")),
-        (t("label.log_max_mb"), "log_max_mb", t("tip.log_mb")),
+        ("label.buf_kb", "buf_kb", "tip.buf_kb"),
+        ("label.pool_size", "pool_size", "tip.pool"),
+        ("label.log_max_mb", "log_max_mb", "tip.log_mb"),
     ]
-    for label_text, key, tip in adv_rows:
+    for label_key, key, tip_key in adv_rows:
         col = ctk.CTkFrame(adv_frame, fg_color="transparent")
         col.pack(fill="x", pady=(0, 0 if key == "log_max_mb" else 5))
-        adv_l = _label(ctk, col, theme, label_text, size=11)
+        adv_l = _RETRANSLATOR.text(
+            _label(ctk, col, theme, t(label_key), size=11), label_key,
+        )
         adv_l.pack(anchor="w", pady=(0, 2))
         adv_e = _entry(
             ctk, col, theme, width=_INNER_W, height=32, radius=8,
             textvariable=ctk.StringVar(value=str(cfg.get(key, default_config[key]))),
         )
         adv_e.pack(fill="x")
-        attach_tooltip_to_widgets([adv_l, adv_e, col], tip)
+        _RETRANSLATOR.tip(
+            attach_tooltip_to_widgets([adv_l, adv_e, col], t(tip_key)), tip_key,
+        )
 
     adv_entries = list(adv_frame.winfo_children())
     adv_keys = ("buf_kb", "pool_size", "log_max_mb")
 
-    upd_inner = _config_section(ctk, frame, theme, t("section.updates"))
+    upd_inner = _config_section(ctk, frame, theme, "section.updates")
     st = get_status()
     check_updates_var = ctk.BooleanVar(
         value=bool(cfg.get("check_updates", default_config.get("check_updates", True)))
     )
-    upd_cb = _checkbox(ctk, upd_inner, theme, t("label.check_updates"), check_updates_var)
+    upd_cb = _RETRANSLATOR.text(
+        _checkbox(ctk, upd_inner, theme, t("label.check_updates"), check_updates_var),
+        "label.check_updates",
+    )
     upd_cb.pack(anchor="w", pady=(0, 6))
-    attach_ctk_tooltip(upd_cb, t("tip.check_updates"))
+    _RETRANSLATOR.tip(
+        attach_ctk_tooltip(upd_cb, t("tip.check_updates")), "tip.check_updates",
+    )
 
-    if st.get("error"):
-        upd_status = t("updates.status_error")
-    elif not st.get("checked"):
-        upd_status = t("updates.status_pending")
-    elif st.get("has_update") and st.get("latest"):
-        upd_status = t("updates.status_available", latest=st["latest"], current=__version__)
-    elif st.get("ahead_of_release") and st.get("latest"):
-        upd_status = t("updates.status_ahead", current=__version__, latest=st["latest"])
-    else:
-        upd_status = t("updates.status_latest")
+    def _update_status_text() -> str:
+        if st.get("error"):
+            return t("updates.status_error")
+        if not st.get("checked"):
+            return t("updates.status_pending")
+        if st.get("has_update") and st.get("latest"):
+            return t("updates.status_available", latest=st["latest"], current=__version__)
+        if st.get("ahead_of_release") and st.get("latest"):
+            return t("updates.status_ahead", current=__version__, latest=st["latest"])
+        return t("updates.status_latest")
 
-    _label(ctk, upd_inner, theme, upd_status, size=11,
-           justify="left", wraplength=_INNER_W).pack(anchor="w", pady=(0, 8))
+    upd_status_lbl = _label(ctk, upd_inner, theme, _update_status_text(), size=11,
+                            justify="left", wraplength=_INNER_W)
+    upd_status_lbl.pack(anchor="w", pady=(0, 8))
+    _RETRANSLATOR.custom(
+        lambda: upd_status_lbl.configure(text=_update_status_text())
+    )
 
     rel_url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
-    ctk.CTkButton(
+    _RETRANSLATOR.text(ctk.CTkButton(
         upd_inner, text=t("button.open_release"), height=32,
         font=(theme.ui_font_family, 13), corner_radius=8,
         fg_color=theme.field_bg, hover_color=theme.field_border,
         text_color=theme.text_primary, border_width=1,
         border_color=theme.field_border,
         command=lambda u=rel_url: webbrowser.open(u),
-    ).pack(anchor="w")
+    ), "button.open_release").pack(anchor="w")
 
     autostart_var = None
     if show_autostart:
-        sys_inner = _config_section(ctk, frame, theme, t("section.windows_startup"), bottom_spacer=4)
+        sys_inner = _config_section(ctk, frame, theme, "section.windows_startup", bottom_spacer=4)
         autostart_var = ctk.BooleanVar(value=autostart_value)
-        as_cb = _checkbox(ctk, sys_inner, theme, t("label.autostart"), autostart_var)
+        as_cb = _RETRANSLATOR.text(
+            _checkbox(ctk, sys_inner, theme, t("label.autostart"), autostart_var),
+            "label.autostart",
+        )
         as_cb.pack(anchor="w", pady=(0, 4))
-        as_hint = _label(
-            ctk, sys_inner, theme,
-            t("label.autostart_hint"),
-            size=11, justify="left", wraplength=_INNER_W,
+        as_hint = _RETRANSLATOR.text(
+            _label(
+                ctk, sys_inner, theme,
+                t("label.autostart_hint"),
+                size=11, justify="left", wraplength=_INNER_W,
+            ),
+            "label.autostart_hint",
         )
         as_hint.pack(anchor="w")
-        attach_tooltip_to_widgets([as_cb, as_hint], t("tip.autostart"))
+        _RETRANSLATOR.tip(
+            attach_tooltip_to_widgets([as_cb, as_hint], t("tip.autostart")), "tip.autostart",
+        )
 
     return TrayConfigFormWidgets(
         host_var=host_var, port_var=port_var, secret_var=secret_var,
@@ -932,23 +1043,23 @@ def install_tray_config_buttons(
     ).pack(fill="x", pady=(4, 10))
     btn_frame = ctk.CTkFrame(frame, fg_color="transparent")
     btn_frame.pack(fill="x", pady=(0, 0))
-    save_btn = ctk.CTkButton(
+    save_btn = _RETRANSLATOR.text(ctk.CTkButton(
         btn_frame, text=t("button.save"), height=38,
         font=(theme.ui_font_family, 14, "bold"), corner_radius=10,
         fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
         text_color="#ffffff",
-        command=on_save)
+        command=on_save), "button.save")
     save_btn.pack(side="left", fill="x", expand=True, padx=(0, 8))
-    attach_ctk_tooltip(save_btn, t("tip.save"))
-    cancel_btn = ctk.CTkButton(
+    _RETRANSLATOR.tip(attach_ctk_tooltip(save_btn, t("tip.save")), "tip.save")
+    cancel_btn = _RETRANSLATOR.text(ctk.CTkButton(
         btn_frame, text=t("button.cancel"), height=38,
         font=(theme.ui_font_family, 14), corner_radius=10,
         fg_color=theme.field_bg, hover_color=theme.field_border,
         text_color=theme.text_primary, border_width=1,
         border_color=theme.field_border,
-        command=on_cancel)
+        command=on_cancel), "button.cancel")
     cancel_btn.pack(side="right", fill="x", expand=True)
-    attach_ctk_tooltip(cancel_btn, t("tip.cancel"))
+    _RETRANSLATOR.tip(attach_ctk_tooltip(cancel_btn, t("tip.cancel")), "tip.cancel")
 
 
 def populate_first_run_window(

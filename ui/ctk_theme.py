@@ -75,6 +75,7 @@ def create_ctk_toplevel(
     after_create: Optional[Callable[[Any], None]] = None,
 ) -> Any:
     root = ctk.CTkToplevel()
+    root._deactivate_windows_window_header_manipulation = True
     root.title(title)
     root.resizable(False, False)
     center_ctk_geometry(root, width, height)
