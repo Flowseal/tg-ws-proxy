@@ -319,6 +319,8 @@ def tray_settings_scroll_and_footer(
         scroll._parent_canvas.configure(yscrollincrement=4)
     except Exception:
         pass
+    from ui.macos_scroll import install_touchpad_scroll
+    install_touchpad_scroll(scroll)
     return scroll, footer
 
 
@@ -372,6 +374,7 @@ def install_tray_config_form(
     *,
     show_autostart: bool = False,
     autostart_value: bool = False,
+    startup_platform: str = "windows",
     on_language_change: Optional[Callable[[], None]] = None,
     on_update_click: Optional[Callable[[], None]] = None,
 ) -> TrayConfigFormWidgets:
@@ -809,7 +812,7 @@ def install_tray_config_form(
 
     autostart_var = None
     if show_autostart:
-        sys_inner = _config_section(ctk, frame, theme, t("section.windows_startup"), bottom_spacer=4)
+        sys_inner = _config_section(ctk, frame, theme, t("section.macos_startup" if startup_platform == "macos" else "section.windows_startup"), bottom_spacer=4)
         autostart_var = ctk.BooleanVar(value=autostart_value)
         as_cb = _checkbox(ctk, sys_inner, theme, t("label.autostart"), autostart_var)
         as_cb.pack(anchor="w", pady=(0, 4))
@@ -819,7 +822,7 @@ def install_tray_config_form(
             size=11, justify="left", wraplength=_INNER_W,
         )
         as_hint.pack(anchor="w")
-        attach_tooltip_to_widgets([as_cb, as_hint], t("tip.autostart"))
+        attach_tooltip_to_widgets([as_cb, as_hint], t("tip.mac_autostart" if startup_platform == "macos" else "tip.autostart"))
 
     return TrayConfigFormWidgets(
         host_var=host_var, port_var=port_var, secret_var=secret_var,

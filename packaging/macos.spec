@@ -15,7 +15,8 @@ a = Analysis(
     [os.path.join(os.path.dirname(SPEC), os.pardir, 'macos.py')],
     pathex=[],
     binaries=[],
-    datas=[(ctk_path, 'customtkinter/'), (_i18n_path, 'ui/i18n')] + certifi_datas,
+    datas=[(os.path.join(os.path.dirname(SPEC), os.pardir, 'icon.ico'), '.'),
+           (ctk_path, 'customtkinter/'), (_i18n_path, 'ui/i18n')] + certifi_datas,
     hiddenimports=[
         'tkinter',
         'customtkinter',
@@ -70,7 +71,7 @@ exe = EXE(
     upx=False,
     console=False,
     argv_emulation=False,
-    target_arch='universal2',
+    target_arch=os.environ.get('TG_WS_PROXY_TARGET_ARCH', 'universal2'),
     codesign_identity=None,
     entitlements_file=None,
 )

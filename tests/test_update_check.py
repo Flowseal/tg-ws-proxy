@@ -1,6 +1,8 @@
 import unittest
+from unittest import mock
 
 from utils.update_check import _extract_assets, _parse_version_tuple, _version_gt
+from utils.tray_common import maybe_notify_update
 
 
 class ParseVersionTupleTest(unittest.TestCase):
@@ -64,6 +66,33 @@ class ExtractAssetsTest(unittest.TestCase):
     def test_empty_input(self):
         self.assertEqual(_extract_assets(None), [])
         self.assertEqual(_extract_assets({}), [])
+
+
+class UpdateNotificationTest(unittest.TestCase):
+    def test_available_callback_replaces_release_page_prompt(self):
+        available = mock.Mock()
+        ask_open = mock.Mock()
+
+        class ImmediateThread:
+            def __init__(self, target, **kwargs):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        with mock.patch('utils.tray_common.threading.Thread', ImmediateThread), \
+                mock.patch('utils.tray_common.time.sleep'), \
+                mock.patch('utils.update_check.run_check'), \
+                mock.patch('utils.update_check.get_status', return_value={
+                    'has_update': True, 'latest': '2.0', 'html_url': 'https://example.invalid',
+                }):
+            maybe_notify_update(
+                {'check_updates': True}, lambda: False, ask_open,
+                on_update_available=available,
+            )
+
+        available.assert_called_once_with()
+        ask_open.assert_not_called()
 
 
 if __name__ == '__main__':

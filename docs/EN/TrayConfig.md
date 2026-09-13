@@ -28,5 +28,6 @@ The tray application stores data in:
 }
 ```
 
-The `check_updates` key: when `true`, performs a request to GitHub and compares the current version with the latest release (notification and link to download page only).  
-On Windows, the config may contain `autostart` (auto-start on system login).
+The `check_updates` key: when `true`, performs a request to GitHub and compares the current version with the latest release. Packaged Windows and macOS applications can install an available update from settings or the tray menu. Source runs open the release page instead.
+
+On Windows and macOS, the config may contain `autostart` (auto-start on system login).
