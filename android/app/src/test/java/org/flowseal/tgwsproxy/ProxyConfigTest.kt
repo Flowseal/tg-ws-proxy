@@ -133,10 +133,4 @@ class ProxyConfigTest {
         assertEquals("Fake TLS domain должен содержать только ASCII-символы.", result.errorMessage)
     }
 
-    @Test
-    fun android_upstream_mode_normalizes_to_direct_only() {
-        assertEquals(UpstreamMode.DIRECT, UpstreamMode.normalize(null))
-        assertEquals(UpstreamMode.DIRECT, UpstreamMode.normalize("auto"))
-        assertEquals(UpstreamMode.DIRECT, UpstreamMode.normalize("relay_ws"))
-    }
 }

@@ -5,7 +5,6 @@ import android.content.ContextWrapper
 import android.content.SharedPreferences
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ProxySettingsStoreTest {
@@ -97,14 +96,11 @@ class ProxySettingsStoreTest {
     }
 
     @Test
-    fun save_clears_legacy_relay_preferences() {
+    fun save_preserves_unrecognized_preferences() {
         val context = TestContext()
-        val legacyPrefs = context.getSharedPreferences("proxy_settings", Context.MODE_PRIVATE)
-        legacyPrefs.edit()
-            .putString("upstream_mode", "relay_ws")
-            .putString("relay_url", "wss://relay.example.com/connect")
-            .putString("relay_token", "relay-token")
-            .putFloat("direct_ws_timeout_seconds", 7.5f)
+        val preferences = context.getSharedPreferences("proxy_settings", Context.MODE_PRIVATE)
+        preferences.edit()
+            .putString("future_setting", "preserve-me")
             .apply()
 
         val store = ProxySettingsStore(context)
@@ -125,11 +121,7 @@ class ProxySettingsStoreTest {
             ),
         )
 
-        assertFalse(legacyPrefs.contains("upstream_mode"))
-        assertFalse(legacyPrefs.contains("relay_url"))
-        assertFalse(legacyPrefs.contains("relay_token"))
-        assertFalse(legacyPrefs.contains("direct_ws_timeout_seconds"))
-        assertNull(legacyPrefs.getString("relay_url", null))
+        assertEquals("preserve-me", preferences.getString("future_setting", null))
     }
 
     private class TestContext : ContextWrapper(null) {

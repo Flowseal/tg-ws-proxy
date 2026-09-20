@@ -62,10 +62,6 @@ class ProxySettingsStore(context: Context) {
             .putString(KEY_SECRET, config.secret)
             .putString(KEY_DC_IP_TEXT, config.dcIpList.joinToString("\n"))
             .putString(KEY_APPEARANCE, config.appearance)
-            .remove(KEY_UPSTREAM_MODE)
-            .remove(KEY_RELAY_URL)
-            .remove(KEY_RELAY_TOKEN)
-            .remove(KEY_DIRECT_WS_TIMEOUT_SECONDS)
             .putFloat(KEY_LOG_MAX_MB, config.logMaxMb.toFloat())
             .putInt(KEY_BUFFER_KB, config.bufferKb)
             .putInt(KEY_POOL_SIZE, config.poolSize)
@@ -94,10 +90,6 @@ class ProxySettingsStore(context: Context) {
         private const val KEY_SECRET = "secret"
         private const val KEY_DC_IP_TEXT = "dc_ip_text"
         private const val KEY_APPEARANCE = "appearance"
-        private const val KEY_UPSTREAM_MODE = "upstream_mode"
-        private const val KEY_RELAY_URL = "relay_url"
-        private const val KEY_RELAY_TOKEN = "relay_token"
-        private const val KEY_DIRECT_WS_TIMEOUT_SECONDS = "direct_ws_timeout_seconds"
         private const val KEY_LOG_MAX_MB = "log_max_mb"
         private const val KEY_BUFFER_KB = "buf_kb"
         private const val KEY_POOL_SIZE = "pool_size"
