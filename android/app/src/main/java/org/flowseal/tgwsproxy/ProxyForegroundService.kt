@@ -29,6 +29,7 @@ class ProxyForegroundService : Service() {
     private lateinit var lifecycle: ProxyLifecycleCoordinator
     @Volatile
     private var destroyed = false
+    private val trafficGate = TrafficPollGate()
     private var trafficJob: Job? = null
     private var lastTrafficSample: TrafficSample? = null
 
@@ -128,7 +129,6 @@ class ProxyForegroundService : Service() {
     private fun onRuntimeStarted(config: NormalizedProxyConfig) {
         if (destroyed) return
         ProxyServiceState.markStarted(config)
-        lastTrafficSample = null
         updateNotification(
             buildNotificationPayload(
                 config = config,
@@ -205,52 +205,65 @@ class ProxyForegroundService : Service() {
 
     private fun startTrafficUpdates(config: NormalizedProxyConfig) {
         stopTrafficUpdates()
-        trafficJob = serviceScope.launch {
-            while (isActive && ProxyServiceState.isRunning.value) {
-                val trafficResult = runCatching { readTrafficState() }
-                if (trafficResult.isFailure) {
-                    val error = trafficResult.exceptionOrNull()
-                    ProxyServiceState.markFailed(
-                        error?.message ?: getString(R.string.proxy_runtime_stopped_unexpectedly),
-                    )
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
-                    break
+        trafficGate.activate { ticket ->
+            trafficJob = serviceScope.launch {
+                while (isActive && ProxyServiceState.isRunning.value) {
+                    val keepPolling = trafficGate.poll(
+                        ticket,
+                        { isActive },
+                        { PythonProxyBridge.getTrafficStats(this@ProxyForegroundService) },
+                    ) { result ->
+                        val error = result.exceptionOrNull()
+                        if (error != null) {
+                            ProxyServiceState.markFailed(
+                                error.message ?: getString(R.string.proxy_runtime_stopped_unexpectedly),
+                            )
+                            stopForeground(STOP_FOREGROUND_REMOVE)
+                            stopSelf()
+                            false
+                        } else {
+                            val trafficState = readTrafficState(result.getOrThrow())
+                            if (!trafficState.running) {
+                                ProxyServiceState.markFailed(
+                                    trafficState.lastError
+                                        ?: getString(R.string.proxy_runtime_stopped_unexpectedly),
+                                )
+                                stopForeground(STOP_FOREGROUND_REMOVE)
+                                stopSelf()
+                                false
+                            } else {
+                                updateNotification(
+                                    buildNotificationPayload(
+                                        config = config,
+                                        trafficState = trafficState,
+                                        statusText = getString(
+                                            R.string.notification_running,
+                                            config.host,
+                                            config.port,
+                                        ),
+                                    ),
+                                )
+                                true
+                            }
+                        }
+                    } ?: break
+                    if (!keepPolling) break
+                    delay(1000)
                 }
-                val trafficState = trafficResult.getOrThrow()
-                if (!trafficState.running) {
-                    ProxyServiceState.markFailed(
-                        trafficState.lastError ?: getString(R.string.proxy_runtime_stopped_unexpectedly),
-                    )
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
-                    break
-                }
-                updateNotification(
-                    buildNotificationPayload(
-                        config = config,
-                        trafficState = trafficState,
-                        statusText = getString(
-                            R.string.notification_running,
-                            config.host,
-                            config.port,
-                        ),
-                    ),
-                )
-                delay(1000)
             }
         }
     }
 
     private fun stopTrafficUpdates() {
-        trafficJob?.cancel()
-        trafficJob = null
-        lastTrafficSample = null
+        trafficGate.invalidate {
+            trafficJob?.cancel()
+            trafficJob = null
+            lastTrafficSample = null
+        }
     }
 
-    private fun readTrafficState(): TrafficState {
+    private fun readTrafficState(current: ProxyTrafficStats): TrafficState {
         val nowMillis = System.currentTimeMillis()
-        val current = PythonProxyBridge.getTrafficStats(this)
         val previous = lastTrafficSample
         lastTrafficSample = TrafficSample(
             bytesUp = current.bytesUp,
