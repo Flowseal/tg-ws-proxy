@@ -1,6 +1,7 @@
 package org.flowseal.tgwsproxy
 
 import android.content.Context
+import android.app.NotificationManager
 import android.view.View
 import android.widget.EditText
 import android.widget.TextView
@@ -17,6 +18,40 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class SettingsUiParityTest {
+    @Test
+    fun runningNotificationChangesLanguageWithoutProxyRestart() {
+        prepare()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val config = ProxySettingsStore(context).load().validate().normalized!!
+        ProxyServiceState.markStarted(config)
+        try {
+            for ((language, expected) in listOf(
+                "en" to "Proxy active",
+                "ru" to "Прокси работает",
+                "en" to "Proxy active",
+            )) {
+                ProxySettingsStore(context).save(ProxyConfig(language = language).validate().normalized!!)
+                ProxyForegroundService.refreshLocale(context)
+                val deadline = System.currentTimeMillis() + 5000
+                var text = ""
+                while (System.currentTimeMillis() < deadline) {
+                    text = manager.activeNotifications.firstOrNull { it.id == 1001 }
+                        ?.notification?.extras?.getCharSequence("android.text")?.toString().orEmpty()
+                    if (text.contains(expected)) break
+                    Thread.sleep(50)
+                }
+                assertTrue("Wrong notification locale for $language: $text", text.contains(expected))
+                assertTrue(ProxyServiceState.isRunning.value)
+            }
+        } finally {
+            ProxyServiceState.markStopped()
+            context.stopService(android.content.Intent(context, ProxyForegroundService::class.java))
+            manager.cancel(1001)
+        }
+    }
+
     private fun prepare() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

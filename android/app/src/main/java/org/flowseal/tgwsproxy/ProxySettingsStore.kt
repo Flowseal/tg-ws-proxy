@@ -35,10 +35,6 @@ class ProxySettingsStore(context: Context) {
                 ProxyConfig.DEFAULT_POOL_SIZE,
             ).toString(),
             cfproxy = preferences.getBoolean(KEY_CFPROXY, ProxyConfig.DEFAULT_CFPROXY),
-            cfproxyPriority = preferences.getBoolean(
-                KEY_CFPROXY_PRIORITY,
-                ProxyConfig.DEFAULT_CFPROXY_PRIORITY,
-            ),
             cfproxyUserDomainText = preferences.getString(
                 KEY_CFPROXY_USER_DOMAINS,
                 preferences.getString(KEY_CFPROXY_USER_DOMAIN, ProxyConfig.DEFAULT_CFPROXY_USER_DOMAIN),
@@ -74,7 +70,7 @@ class ProxySettingsStore(context: Context) {
             .putInt(KEY_BUFFER_KB, config.bufferKb)
             .putInt(KEY_POOL_SIZE, config.poolSize)
             .putBoolean(KEY_CFPROXY, config.cfproxy)
-            .putBoolean(KEY_CFPROXY_PRIORITY, config.cfproxyPriority)
+            .remove(KEY_CFPROXY_PRIORITY)
             .putString(KEY_CFPROXY_USER_DOMAIN, config.cfproxyUserDomain)
             .putString(KEY_CFPROXY_USER_DOMAINS,
                 (config.cfproxyUserDomains.ifEmpty { listOfNotNull(config.cfproxyUserDomain.takeIf { it.isNotBlank() }) }).joinToString("\n"))

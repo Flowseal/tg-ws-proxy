@@ -35,7 +35,6 @@ class ProxyConfigTest {
     }
     private fun validConfig(
         cfproxy: Boolean = true,
-        cfproxyPriority: Boolean = true,
         cfproxyUserDomainText: String = "",
     ): ProxyConfig {
         return ProxyConfig(
@@ -47,7 +46,6 @@ class ProxyConfigTest {
             bufferKbText = "256",
             poolSizeText = "4",
             cfproxy = cfproxy,
-            cfproxyPriority = cfproxyPriority,
             cfproxyUserDomainText = cfproxyUserDomainText,
             checkUpdates = true,
             verbose = false,

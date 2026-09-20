@@ -148,6 +148,7 @@ class MainActivity : AppCompatActivity() {
         binding.errorText.isVisible = false
         val languageChanged = settingsStore.load().language != config.language
         settingsStore.save(config)
+        if (languageChanged) ProxyForegroundService.refreshLocale(this)
         if (applyAppearance(config.appearance)) {
             pendingPostRecreateAction = postRecreateAction
             return null
@@ -281,7 +282,6 @@ class MainActivity : AppCompatActivity() {
             language = selectedLanguageValue(),
             dcIpText = binding.dcIpInput.text?.toString().orEmpty(),
             cfproxy = binding.cfProxySwitch.isChecked,
-            cfproxyPriority = retained.cfproxyPriority,
             cfproxyUserDomainText = binding.cfProxyUserDomainInput.text?.toString().orEmpty(),
             cfproxyUserDomainEnabled = binding.cfProxyCustomDomainSwitch.isChecked,
             cfproxyWorkerDomainText = binding.cfProxyWorkerDomainInput.text?.toString().orEmpty(),

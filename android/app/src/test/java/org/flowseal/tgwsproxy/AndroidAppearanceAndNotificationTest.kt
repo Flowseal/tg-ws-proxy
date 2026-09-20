@@ -10,6 +10,22 @@ import org.junit.Test
 
 class AndroidAppearanceAndNotificationTest {
     @Test
+    fun localeRefreshUsesDedicatedNotificationOnlyServiceAction() {
+        val service = File(findResourcePath(
+            "app/src/main/java/org/flowseal/tgwsproxy/ProxyForegroundService.kt",
+            "src/main/java/org/flowseal/tgwsproxy/ProxyForegroundService.kt",
+        ).toString()).readText()
+        val activity = File(findResourcePath(
+            "app/src/main/java/org/flowseal/tgwsproxy/MainActivity.kt",
+            "src/main/java/org/flowseal/tgwsproxy/MainActivity.kt",
+        ).toString()).readText()
+
+        assertTrue(service.contains("ACTION_REFRESH_LOCALE ->"))
+        assertTrue(service.contains("refreshLocaleNotification()"))
+        assertTrue(service.contains("AndroidLanguageContext.wrap(this)"))
+        assertTrue(activity.contains("ProxyForegroundService.refreshLocale(this)"))
+    }
+    @Test
     fun releaseActionAlwaysOpensUpstreamApkListingEvenForStaleOrFailedStatus() {
         val expected = "https://github.com/Flowseal/tg-ws-proxy/releases/latest"
         for (status in listOf(
@@ -73,7 +89,6 @@ class AndroidAppearanceAndNotificationTest {
             bufferKb = 256,
             poolSize = 4,
             cfproxy = true,
-            cfproxyPriority = true,
             cfproxyUserDomain = "cdn.example.com",
             cfproxyUserDomains = listOf("cdn.example.com"),
             cfproxyUserDomainEnabled = true,
@@ -92,14 +107,14 @@ class AndroidAppearanceAndNotificationTest {
     fun notification_details_format_uses_fallback_summary_not_dc_count() {
         val details = ProxyForegroundService.formatNotificationDetailsForTest(
             routeLabel = "Direct Telegram WS",
-            fallbackSummary = NotificationSummary.FALLBACK_CFPROXY_PRIO,
+            fallbackSummary = NotificationSummary.FALLBACK_CFPROXY,
             upRate = "1.0 KB",
             downRate = "2.0 KB",
             totalUp = "3.0 KB",
             totalDown = "4.0 KB",
         )
 
-        assertTrue(details.contains("Fallback: CfProxy (prio)"))
+        assertTrue(details.contains("Fallback: CfProxy"))
         assertFalse(details.contains("relay"))
     }
 
@@ -199,7 +214,7 @@ class AndroidAppearanceAndNotificationTest {
 
         assertTrue(
             serviceSource.contains(
-                "\"cfproxy_fallback\" -> getString(R.string.notification_route_cfproxy)",
+                "\"cfproxy_fallback\" -> localized.getString(R.string.notification_route_cfproxy)",
             ),
         )
         assertTrue(stringsXml.contains("""<string name="notification_route_cfproxy">CfProxy fallback</string>"""))

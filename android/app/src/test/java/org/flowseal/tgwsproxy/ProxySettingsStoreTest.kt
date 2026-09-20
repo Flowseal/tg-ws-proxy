@@ -10,6 +10,19 @@ import org.junit.Test
 
 class ProxySettingsStoreTest {
     @Test
+    fun legacyPriorityKeyIsIgnoredAndRemovedOnNextSave() {
+        val context = TestContext()
+        val preferences = context.getSharedPreferences("proxy_settings", Context.MODE_PRIVATE)
+        preferences.edit().putBoolean("cfproxy_priority", false).apply()
+        val store = ProxySettingsStore(context)
+
+        store.save(store.load().validate().normalized!!)
+
+        assertFalse(preferences.contains("cfproxy_priority"))
+        assertFalse(ProxyConfig::class.java.declaredFields.any { it.name == "cfproxyPriority" })
+        assertFalse(NormalizedProxyConfig::class.java.declaredFields.any { it.name == "cfproxyPriority" })
+    }
+    @Test
     fun disabledLegacyDomainSurvivesMigrationWithoutBlockingValidation() {
         val context = TestContext()
         val preferences = context.getSharedPreferences("proxy_settings", Context.MODE_PRIVATE)
@@ -70,7 +83,6 @@ class ProxySettingsStoreTest {
                 bufferKb = 256,
                 poolSize = 4,
                 cfproxy = false,
-                cfproxyPriority = false,
                 cfproxyUserDomain = "cdn.example.com",
                 checkUpdates = true,
                 verbose = false,
@@ -80,7 +92,6 @@ class ProxySettingsStoreTest {
         val restored = store.load()
 
         assertFalse(restored.cfproxy)
-        assertFalse(restored.cfproxyPriority)
         assertEquals("cdn.example.com", restored.cfproxyUserDomainText)
         assertEquals("dark", restored.appearance)
     }
@@ -108,7 +119,6 @@ class ProxySettingsStoreTest {
                 bufferKb = 256,
                 poolSize = 4,
                 cfproxy = true,
-                cfproxyPriority = true,
                 cfproxyUserDomain = "",
                 checkUpdates = false,
                 verbose = false,

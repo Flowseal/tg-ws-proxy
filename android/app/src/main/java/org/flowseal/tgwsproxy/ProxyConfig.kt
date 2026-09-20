@@ -12,7 +12,6 @@ data class ProxyConfig(
     val bufferKbText: String = DEFAULT_BUFFER_KB.toString(),
     val poolSizeText: String = DEFAULT_POOL_SIZE.toString(),
     val cfproxy: Boolean = DEFAULT_CFPROXY,
-    val cfproxyPriority: Boolean = DEFAULT_CFPROXY_PRIORITY,
     val cfproxyUserDomainText: String = DEFAULT_CFPROXY_USER_DOMAIN,
     val cfproxyUserDomainEnabled: Boolean = cfproxyUserDomainText.isNotBlank(),
     val cfproxyWorkerDomainText: String = "",
@@ -87,7 +86,6 @@ data class ProxyConfig(
         }
 
         val cfproxyValue = cfproxy
-        val cfproxyPriorityValue = cfproxyPriority
         val cfproxyUserDomainValue = cfproxyUserDomainText.trim()
         val userDomains = splitDomains(cfproxyUserDomainValue)
         val workerDomains = splitDomains(cfproxyWorkerDomainText)
@@ -117,7 +115,6 @@ data class ProxyConfig(
                 bufferKb = bufferKbValue,
                 poolSize = poolSizeValue,
                 cfproxy = cfproxyValue,
-                cfproxyPriority = cfproxyPriorityValue,
                 cfproxyUserDomain = cfproxyUserDomainValue,
                 cfproxyUserDomains = userDomains,
                 cfproxyUserDomainEnabled = cfproxyUserDomainEnabled,
@@ -142,7 +139,6 @@ data class ProxyConfig(
         const val DEFAULT_BUFFER_KB = 256
         const val DEFAULT_POOL_SIZE = 4
         const val DEFAULT_CFPROXY = true
-        const val DEFAULT_CFPROXY_PRIORITY = true
         const val DEFAULT_CFPROXY_USER_DOMAIN = ""
         val DEFAULT_SECRET = generateSecret()
         val DEFAULT_DC_IP_LINES = listOf(
@@ -236,7 +232,6 @@ data class NormalizedProxyConfig(
     val bufferKb: Int,
     val poolSize: Int,
     val cfproxy: Boolean,
-    val cfproxyPriority: Boolean,
     val cfproxyUserDomain: String,
     val cfproxyUserDomains: List<String> = emptyList(),
     val cfproxyUserDomainEnabled: Boolean = false,

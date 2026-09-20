@@ -2,7 +2,6 @@ package org.flowseal.tgwsproxy
 
 object NotificationSummary {
     const val FALLBACK_CFPROXY = "Fallback: CfProxy"
-    const val FALLBACK_CFPROXY_PRIO = "Fallback: CfProxy (prio)"
     const val FALLBACK_CFPROXY_CUSTOM = "Fallback: CfProxy custom"
     const val FALLBACK_TCP = "Fallback: TCP"
 

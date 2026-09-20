@@ -32,6 +32,8 @@ class ProxyForegroundService : Service() {
     private val trafficGate = TrafficPollGate()
     private var trafficJob: Job? = null
     private var lastTrafficSample: TrafficSample? = null
+    @Volatile
+    private var lastTrafficState = TrafficState()
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AndroidLanguageContext.wrap(newBase))
@@ -93,6 +95,16 @@ class ProxyForegroundService : Service() {
                 START_STICKY
             }
 
+            ACTION_REFRESH_LOCALE -> {
+                refreshLocaleNotification()
+                if (ProxyServiceState.isRunning.value || ProxyServiceState.isStarting.value) {
+                    START_STICKY
+                } else {
+                    stopSelf()
+                    START_NOT_STICKY
+                }
+            }
+
             else -> {
                 val config = loadValidatedConfig() ?: return START_NOT_STICKY
                 beginProxyStart(config)
@@ -114,8 +126,9 @@ class ProxyForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun buildNotification(payload: NotificationPayload): Notification {
+        val localized = AndroidLanguageContext.wrap(this)
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(getString(R.string.notification_title))
+            .setContentTitle(localized.getString(R.string.notification_title))
             .setContentText(payload.statusText)
             .setSubText(payload.endpointText)
             .setStyle(
@@ -125,7 +138,7 @@ class ProxyForegroundService : Service() {
             .setContentIntent(createOpenAppPendingIntent())
             .addAction(
                 0,
-                getString(R.string.notification_action_stop),
+                localized.getString(R.string.notification_action_stop),
                 createStopPendingIntent(),
             )
             .setOngoing(true)
@@ -140,7 +153,8 @@ class ProxyForegroundService : Service() {
             buildNotificationPayload(
                 config = config,
                 trafficState = TrafficState(running = true),
-                statusText = getString(R.string.notification_running, config.host, config.port),
+                statusText = AndroidLanguageContext.wrap(this).getString(
+                    R.string.notification_running, config.host, config.port),
             ),
         )
         startTrafficUpdates(config)
@@ -164,7 +178,7 @@ class ProxyForegroundService : Service() {
                 buildNotificationPayload(
                     config = config,
                     trafficState = TrafficState(),
-                    statusText = getString(
+                    statusText = AndroidLanguageContext.wrap(this).getString(
                         R.string.notification_starting,
                         config.host,
                         config.port,
@@ -187,16 +201,36 @@ class ProxyForegroundService : Service() {
         manager.notify(NOTIFICATION_ID, buildNotification(payload))
     }
 
+    private fun refreshLocaleNotification() {
+        val config = ProxyServiceState.activeConfig.value ?: return
+        val starting = ProxyServiceState.isStarting.value
+        if (!starting && !ProxyServiceState.isRunning.value) return
+        val localized = AndroidLanguageContext.wrap(this)
+        createNotificationChannel()
+        val status = if (starting) R.string.notification_starting else R.string.notification_running
+        updateNotification(buildNotificationPayload(
+            config,
+            if (starting) TrafficState() else lastTrafficState,
+            localized.getString(status, config.host, config.port),
+        ))
+    }
+
     private fun buildNotificationPayload(
         config: NormalizedProxyConfig,
         trafficState: TrafficState,
         statusText: String,
     ): NotificationPayload {
-        val endpointText = getString(R.string.notification_endpoint, config.host, config.port)
-        val fallbackSummary = NotificationSummary.formatFallbackSummary(config)
-        val detailsText = getString(
+        val localized = AndroidLanguageContext.wrap(this)
+        val endpointText = localized.getString(R.string.notification_endpoint, config.host, config.port)
+        val fallbackSummary = localized.getString(when {
+            !config.cfproxy -> R.string.notification_fallback_tcp
+            config.cfproxyUserDomainEnabled && config.cfproxyUserDomains.isNotEmpty() ->
+                R.string.notification_fallback_cfproxy_custom
+            else -> R.string.notification_fallback_cfproxy
+        })
+        val detailsText = localized.getString(
             R.string.notification_details,
-            routeLabel(trafficState.lastTransportRoute),
+            routeLabel(localized, trafficState.lastTransportRoute),
             fallbackSummary,
             formatRate(trafficState.upBytesPerSecond),
             formatRate(trafficState.downBytesPerSecond),
@@ -230,6 +264,7 @@ class ProxyForegroundService : Service() {
                             false
                         } else {
                             val trafficState = readTrafficState(result.getOrThrow())
+                            lastTrafficState = trafficState
                             if (!trafficState.running) {
                                 ProxyServiceState.markFailed(
                                     trafficState.lastError
@@ -243,7 +278,7 @@ class ProxyForegroundService : Service() {
                                     buildNotificationPayload(
                                         config = config,
                                         trafficState = trafficState,
-                                        statusText = getString(
+                                        statusText = AndroidLanguageContext.wrap(this@ProxyForegroundService).getString(
                                             R.string.notification_running,
                                             config.host,
                                             config.port,
@@ -266,6 +301,7 @@ class ProxyForegroundService : Service() {
             trafficJob?.cancel()
             trafficJob = null
             lastTrafficSample = null
+            lastTrafficState = TrafficState()
         }
     }
 
@@ -304,12 +340,12 @@ class ProxyForegroundService : Service() {
         )
     }
 
-    private fun routeLabel(lastTransportRoute: String?): String {
+    private fun routeLabel(localized: Context, lastTransportRoute: String?): String {
         return when (lastTransportRoute) {
-            "telegram_ws_direct" -> getString(R.string.notification_route_direct)
-            "cfproxy_fallback" -> getString(R.string.notification_route_cfproxy)
-            "tcp_fallback" -> getString(R.string.notification_route_tcp)
-            else -> getString(R.string.notification_route_unknown)
+            "telegram_ws_direct" -> localized.getString(R.string.notification_route_direct)
+            "cfproxy_fallback" -> localized.getString(R.string.notification_route_cfproxy)
+            "tcp_fallback" -> localized.getString(R.string.notification_route_tcp)
+            else -> localized.getString(R.string.notification_route_unknown)
         }
     }
 
@@ -383,10 +419,11 @@ class ProxyForegroundService : Service() {
         val manager = getSystemService(NotificationManager::class.java)
         val channel = NotificationChannel(
             CHANNEL_ID,
-            getString(R.string.notification_channel_name),
+            AndroidLanguageContext.wrap(this).getString(R.string.notification_channel_name),
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = getString(R.string.notification_channel_description)
+            description = AndroidLanguageContext.wrap(this@ProxyForegroundService)
+                .getString(R.string.notification_channel_description)
         }
         manager.createNotificationChannel(channel)
     }
@@ -397,6 +434,7 @@ class ProxyForegroundService : Service() {
         private const val ACTION_START = "org.flowseal.tgwsproxy.action.START"
         private const val ACTION_STOP = "org.flowseal.tgwsproxy.action.STOP"
         private const val ACTION_RESTART = "org.flowseal.tgwsproxy.action.RESTART"
+        private const val ACTION_REFRESH_LOCALE = "org.flowseal.tgwsproxy.action.REFRESH_LOCALE"
 
         @JvmStatic
         fun formatNotificationDetailsForTest(
@@ -429,6 +467,13 @@ class ProxyForegroundService : Service() {
                 action = ACTION_RESTART
             }
             androidx.core.content.ContextCompat.startForegroundService(context, intent)
+        }
+
+        fun refreshLocale(context: Context) {
+            if (!ProxyServiceState.isRunning.value && !ProxyServiceState.isStarting.value) return
+            context.startService(Intent(context, ProxyForegroundService::class.java).apply {
+                action = ACTION_REFRESH_LOCALE
+            })
         }
     }
 }

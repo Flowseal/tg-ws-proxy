@@ -88,6 +88,9 @@
     <string name="notification_route_cfproxy">CfProxy fallback</string>
     <string name="notification_route_tcp">Direct TCP fallback</string>
     <string name="notification_route_unknown">Starting…</string>
+    <string name="notification_fallback_tcp">Fallback: TCP</string>
+    <string name="notification_fallback_cfproxy">Fallback: CfProxy</string>
+    <string name="notification_fallback_cfproxy_custom">Fallback: CfProxy custom</string>
     <string name="saved_config_invalid">Saved proxy settings are invalid.</string>
     <string name="proxy_start_failed_generic">Failed to start embedded Python proxy.</string>
     <string name="proxy_runtime_stopped_unexpectedly">Proxy runtime stopped unexpectedly.</string>

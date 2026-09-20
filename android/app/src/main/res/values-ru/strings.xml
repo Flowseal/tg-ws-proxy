@@ -88,6 +88,9 @@
     <string name="notification_route_cfproxy">Резервный CfProxy</string>
     <string name="notification_route_tcp">Резервный прямой TCP</string>
     <string name="notification_route_unknown">Запуск…</string>
+    <string name="notification_fallback_tcp">Резерв: TCP</string>
+    <string name="notification_fallback_cfproxy">Резерв: CfProxy</string>
+    <string name="notification_fallback_cfproxy_custom">Резерв: CfProxy (свои домены)</string>
     <string name="saved_config_invalid">Сохранённые настройки прокси недействительны.</string>
     <string name="proxy_start_failed_generic">Не удалось запустить встроенный Python-прокси.</string>
     <string name="proxy_runtime_stopped_unexpectedly">Прокси неожиданно остановился.</string>
