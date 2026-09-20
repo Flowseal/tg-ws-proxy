@@ -79,10 +79,13 @@ class ProxyForegroundService : Service() {
 
             ACTION_RESTART -> {
                 val config = loadValidatedConfig() ?: return START_NOT_STICKY
-                ProxyServiceState.clearError()
-                beginProxyStart(config)
-                stopTrafficUpdates()
-                lifecycle.start(config, restart = true)
+                ProxyRestartSequence.run(
+                    config,
+                    clearError = ProxyServiceState::clearError,
+                    invalidateTraffic = ::stopTrafficUpdates,
+                    publishStarting = ::beginProxyStart,
+                    requestRestart = { lifecycle.start(it, restart = true) },
+                )
                 START_STICKY
             }
 
