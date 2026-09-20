@@ -20,10 +20,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.Locale
+import java.util.concurrent.Executors
 
 class ProxyForegroundService : Service() {
     private lateinit var settingsStore: ProxySettingsStore
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val commandExecutor = Executors.newSingleThreadExecutor()
+    private lateinit var lifecycle: ProxyLifecycleCoordinator
+    @Volatile
+    private var destroyed = false
     private var trafficJob: Job? = null
     private var lastTrafficSample: TrafficSample? = null
 
@@ -31,15 +36,43 @@ class ProxyForegroundService : Service() {
         super.onCreate()
         settingsStore = ProxySettingsStore(this)
         createNotificationChannel()
+        lifecycle = ProxyLifecycleCoordinator(
+            commandExecutor,
+            object : ProxyLifecycleCoordinator.Backend {
+                override fun start(config: NormalizedProxyConfig) {
+                    PythonProxyBridge.start(this@ProxyForegroundService, config)
+                }
+
+                override fun stop() {
+                    PythonProxyBridge.stop(this@ProxyForegroundService)
+                }
+            },
+            object : ProxyLifecycleCoordinator.Listener {
+                override fun started(config: NormalizedProxyConfig) {
+                    onRuntimeStarted(config)
+                }
+
+                override fun stopped() {
+                    ProxyServiceState.markStopped()
+                    finishService()
+                }
+
+                override fun failed(error: Throwable) {
+                    ProxyServiceState.markFailed(
+                        error.message ?: getString(R.string.proxy_start_failed_generic),
+                    )
+                    finishService()
+                }
+            },
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         return when (intent?.action) {
             ACTION_STOP -> {
                 ProxyServiceState.clearError()
-                serviceScope.launch {
-                    stopProxyRuntime(removeNotification = true, stopService = true)
-                }
+                stopTrafficUpdates()
+                lifecycle.stop()
                 START_NOT_STICKY
             }
 
@@ -47,29 +80,26 @@ class ProxyForegroundService : Service() {
                 val config = loadValidatedConfig() ?: return START_NOT_STICKY
                 ProxyServiceState.clearError()
                 beginProxyStart(config)
-                serviceScope.launch {
-                    stopRuntimeOnly()
-                    startProxyRuntime(config)
-                }
+                stopTrafficUpdates()
+                lifecycle.start(config, restart = true)
                 START_STICKY
             }
 
             else -> {
                 val config = loadValidatedConfig() ?: return START_NOT_STICKY
                 beginProxyStart(config)
-                serviceScope.launch {
-                    startProxyRuntime(config)
-                }
+                lifecycle.start(config)
                 START_STICKY
             }
         }
     }
 
     override fun onDestroy() {
+        destroyed = true
         stopTrafficUpdates()
         serviceScope.cancel()
-        runCatching { PythonProxyBridge.stop(this) }
-        ProxyServiceState.markStopped()
+        lifecycle.destroy()
+        commandExecutor.shutdown()
         super.onDestroy()
     }
 
@@ -95,34 +125,18 @@ class ProxyForegroundService : Service() {
             .build()
     }
 
-    private suspend fun startProxyRuntime(config: NormalizedProxyConfig) {
-        val result = runCatching {
-            PythonProxyBridge.start(this, config)
-        }
-
-        result.onSuccess {
-            ProxyServiceState.markStarted(config)
-            lastTrafficSample = null
-            updateNotification(
-                buildNotificationPayload(
-                    config = config,
-                    trafficState = TrafficState(running = true),
-                    statusText = getString(
-                        R.string.notification_running,
-                        config.host,
-                        config.port,
-                    ),
-                ),
-            )
-            startTrafficUpdates(config)
-        }.onFailure { error ->
-            ProxyServiceState.markFailed(
-                error.message ?: getString(R.string.proxy_start_failed_generic),
-            )
-            stopTrafficUpdates()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-        }
+    private fun onRuntimeStarted(config: NormalizedProxyConfig) {
+        if (destroyed) return
+        ProxyServiceState.markStarted(config)
+        lastTrafficSample = null
+        updateNotification(
+            buildNotificationPayload(
+                config = config,
+                trafficState = TrafficState(running = true),
+                statusText = getString(R.string.notification_running, config.host, config.port),
+            ),
+        )
+        startTrafficUpdates(config)
     }
 
     private fun loadValidatedConfig(): NormalizedProxyConfig? {
@@ -153,21 +167,12 @@ class ProxyForegroundService : Service() {
         )
     }
 
-    private fun stopProxyRuntime(removeNotification: Boolean, stopService: Boolean) {
-        stopRuntimeOnly()
-        ProxyServiceState.markStopped()
-
-        if (removeNotification) {
+    private fun finishService() {
+        stopTrafficUpdates()
+        if (!destroyed) {
             stopForeground(STOP_FOREGROUND_REMOVE)
-        }
-        if (stopService) {
             stopSelf()
         }
-    }
-
-    private fun stopRuntimeOnly() {
-        stopTrafficUpdates()
-        runCatching { PythonProxyBridge.stop(this) }
     }
 
     private fun updateNotification(payload: NotificationPayload) {
