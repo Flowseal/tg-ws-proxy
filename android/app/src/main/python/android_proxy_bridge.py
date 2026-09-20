@@ -1,8 +1,12 @@
 """Chaquopy entry points for the Android service."""
 import json
 import os
+import ssl
 import threading
+import certifi
 from pathlib import Path
+from itertools import zip_longest
+from urllib.request import Request, urlopen
 
 from android_cfproxy_diagnostics import run_diagnostics
 
@@ -16,6 +20,51 @@ from proxy.stats import stats
 _LOCK = threading.RLock()
 _RUNTIME = None
 _LAST_ERROR = None
+_RELEASES_API = 'https://api.github.com/repos/Flowseal/tg-ws-proxy/releases/latest'
+_RELEASES_URL = 'https://github.com/Flowseal/tg-ws-proxy/releases/latest'
+
+
+def _fetch_latest_release(timeout):
+    request = Request(_RELEASES_API, headers={
+        'Accept': 'application/vnd.github+json',
+        'User-Agent': 'tg-ws-proxy-android',
+    })
+    context = ssl.create_default_context(cafile=certifi.where())
+    with urlopen(request, timeout=timeout, context=context) as response:
+        raw = response.read(65537)
+    if len(raw) > 65536:
+        raise ValueError('Release response is too large')
+    return json.loads(raw)
+
+
+def _version_parts(value):
+    value = str(value or '').strip().lstrip('vV')
+    if value.endswith('-legacy32'):
+        value = value[:-len('-legacy32')]
+    parts = value.split('.')
+    if not parts or any(not part.isdigit() for part in parts):
+        raise ValueError('Invalid release version')
+    return tuple(int(part) for part in parts)
+
+
+def get_update_status_json(current_version, check_now=False):
+    status = {'checked': False, 'current': current_version,
+              'html_url': _RELEASES_URL}
+    if not check_now:
+        return json.dumps(status)
+    status['checked'] = True
+    try:
+        release = _fetch_latest_release(timeout=5)
+        latest = str(release['tag_name']).strip().lstrip('vV')
+        latest_parts = _version_parts(latest)
+        current_parts = _version_parts(current_version)
+        comparison = next((a - b for a, b in zip_longest(
+            latest_parts, current_parts, fillvalue=0) if a != b), 0)
+        status.update(latest=latest, has_update=comparison > 0,
+                      ahead_of_release=comparison < 0)
+    except (OSError, TimeoutError, ValueError, KeyError, TypeError) as exc:
+        status['error'] = str(exc) or type(exc).__name__
+    return json.dumps(status)
 
 
 def _remember_error(message):
@@ -60,7 +109,6 @@ def start_proxy(app_dir, host, port, secret, dc_ip_list, log_max_mb=5.0,
         _LAST_ERROR = None
         runtime = ProxyAppRuntime(Path(app_dir), logger_name='tg-ws-android',
                                   on_error=_remember_error)
-        runtime.reset_log_file()
         runtime.setup_logging(verbose=verbose, log_max_mb=float(log_max_mb))
         cfg = {
             'host': host, 'port': int(port), 'secret': str(secret).strip(),

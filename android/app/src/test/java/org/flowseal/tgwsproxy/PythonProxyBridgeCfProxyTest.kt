@@ -85,7 +85,7 @@ class PythonProxyBridgeCfProxyTest {
         val kotlin = File("src/main/java/org/flowseal/tgwsproxy/PythonProxyBridge.kt").readText()
         assertTrue(python.contains("from proxy.app_runtime import ProxyAppRuntime"))
         assertFalse(kotlin.contains("config.relayUrl"))
-        assertFalse(kotlin.contains("get_update_status_json"))
+        assertTrue(kotlin.contains("get_update_status_json"))
         assertTrue(kotlin.contains("run_cfproxy_test_json"))
     }
 }

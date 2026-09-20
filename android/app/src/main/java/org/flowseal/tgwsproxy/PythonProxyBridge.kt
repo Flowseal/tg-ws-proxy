@@ -63,9 +63,20 @@ object PythonProxyBridge {
     }
 
     fun getUpdateStatus(context: Context, checkNow: Boolean = false): ProxyUpdateStatus {
+        val currentVersion = context.packageManager.getPackageInfo(context.packageName, 0)
+            .versionName ?: "unknown"
+        val payload = getModule(context).callAttr(
+            "get_update_status_json", currentVersion, checkNow,
+        ).toString()
+        val json = JSONObject(payload)
         return ProxyUpdateStatus(
-            currentVersion = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown",
+            currentVersion = currentVersion,
+            latestVersion = json.optString("latest").ifBlank { null },
+            hasUpdate = json.optBoolean("has_update", false),
+            aheadOfRelease = json.optBoolean("ahead_of_release", false),
+            checked = json.optBoolean("checked", false),
             htmlUrl = "https://github.com/Flowseal/tg-ws-proxy/releases/latest",
+            error = json.optString("error").ifBlank { null },
         )
     }
 
