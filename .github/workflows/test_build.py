@@ -11,6 +11,21 @@ WORKFLOW = pathlib.Path(__file__).with_name("build.yml")
 
 
 class ReleaseWorkflowTest(unittest.TestCase):
+    def test_gradle_wrapper_is_executable_in_git_checkout(self):
+        mode = subprocess.check_output(
+            ["git", "ls-files", "--stage", "android/gradlew"],
+            cwd=WORKFLOW.parents[2], text=True,
+        ).split()[0]
+        self.assertEqual(mode, "100755")
+
+    def test_android_setup_does_not_request_removed_sdk_tools_package(self):
+        jobs = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)["jobs"]
+        setup_steps = [step for job in jobs.values() for step in job.get("steps", [])
+                       if step.get("uses") == "android-actions/setup-android@v3"]
+        self.assertEqual(len(setup_steps), 2)
+        for step in setup_steps:
+            self.assertEqual(step.get("with", {}).get("packages"), "platform-tools")
+
     def test_missing_signing_secrets_do_not_block_desktop_release(self):
         jobs = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)["jobs"]
         steps = jobs["build-android-release"]["steps"]

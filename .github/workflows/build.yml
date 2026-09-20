@@ -583,6 +583,8 @@ jobs:
           python -m pip install PyYAML==6.0.2
           python .github/workflows/test_build.py
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
       - name: Test and build both debug variants
@@ -640,6 +642,8 @@ jobs:
           python-version: "3.11"
       - uses: android-actions/setup-android@v3
         if: steps.signing.outputs.available == 'true'
+        with:
+          packages: platform-tools
       - name: Install Android SDK packages
         if: steps.signing.outputs.available == 'true'
         run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
