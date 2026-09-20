@@ -44,7 +44,7 @@ cd android
   assembleStandardDebug assembleLegacy32Debug
 ```
 
-Debug APK находятся в `android/app/build/outputs/apk/{standard,legacy32}/debug/`. `standard` рассчитан на arm64-v8a/x86_64, `legacy32` на armeabi-v7a. Готовые подписанные APK доступны в [релизах Flowseal](https://github.com/Flowseal/tg-ws-proxy/releases/latest). Для release-сборки требуются `ANDROID_KEYSTORE_FILE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` и `ANDROID_KEY_PASSWORD`; debug-сборка не требует секретов. Установите подходящий APK, настройте прокси в приложении, запустите его и откройте ссылку подключения в Telegram на том же устройстве.
+Debug APK находятся в `android/app/build/outputs/apk/{standard,legacy32}/debug/`. `standard` рассчитан на arm64-v8a/x86_64, `legacy32` на armeabi-v7a. Подписанные APK появляются в [релизах Flowseal](https://github.com/Flowseal/tg-ws-proxy/releases/latest) только при успешной Android release-сборке; если APK в релизе нет, соберите debug APK локально. Для release-сборки требуются `ANDROID_KEYSTORE_FILE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` и `ANDROID_KEY_PASSWORD`; debug-сборка не требует секретов. Установите подходящий APK, настройте прокси в приложении, запустите его и откройте ссылку подключения в Telegram на том же устройстве.
 
 ## Консольный режим из исходников
 

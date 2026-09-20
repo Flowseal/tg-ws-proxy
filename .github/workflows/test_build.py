@@ -38,7 +38,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         for job_name in ("build-windows-x64", "build-windows-arm64", "build-win7", "build-macos", "build-linux"):
             self.assertIn(f"needs.{job_name}.result == 'success'", release_if)
         self.assertNotIn("needs.build-android-release.result == 'success'", release_if)
-        self.assertNotIn("needs.validate-android.result == 'success'", release_if)
+        self.assertIn("needs.validate-android.result == 'success'", release_if)
         self.assertIn("dist/tg-ws-proxy-android-*.apk", jobs["release"]["steps"][-1]["with"]["files"])
 
     def test_android_upload_is_optional_but_build_errors_remain_fatal(self):
@@ -71,6 +71,18 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.touch()
             subprocess.run(["bash", "-e", "-c", verify["run"]], cwd=temp_dir, check=True)
+
+    def test_pull_requests_run_android_and_workflow_contracts(self):
+        workflow = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)
+        self.assertEqual("read", workflow["permissions"]["contents"])
+        self.assertEqual("write", workflow["jobs"]["release"]["permissions"]["contents"])
+        self.assertIn("pull_request", workflow["on"])
+        paths = workflow["on"]["pull_request"]["paths"]
+        self.assertIn("android/**", paths)
+        self.assertIn(".github/workflows/build.yml", paths)
+        steps = workflow["jobs"]["validate-android"]["steps"]
+        self.assertTrue(any("test_build.py" in step.get("run", "") for step in steps))
+        self.assertTrue(any("PyYAML" in step.get("run", "") for step in steps))
 
 
 if __name__ == "__main__":

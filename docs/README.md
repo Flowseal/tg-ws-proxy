@@ -60,7 +60,7 @@
 
 ## Android
 
-Скачайте APK из [последнего релиза Flowseal](https://github.com/Flowseal/tg-ws-proxy/releases/latest): обычный `tg-ws-proxy-android-<версия>.apk` для 64-битных устройств или `tg-ws-proxy-android-<версия>-legacy32.apk` для 32-битных. Установите APK, разрешив установку из выбранного источника, запустите приложение и задайте порт/secret. После запуска прокси откройте ссылку подключения в Telegram на том же устройстве. Прокси и Telegram должны оставаться запущенными; для сборки из исходников см. [инструкцию](./RU/BuildFromSource.md#android).
+Если в [последнем релизе Flowseal](https://github.com/Flowseal/tg-ws-proxy/releases/latest) опубликованы Android APK, выберите `tg-ws-proxy-android-<версия>.apk` для 64-битного устройства или `tg-ws-proxy-android-<версия>-legacy32.apk` для 32-битного. Подписанные APK могут отсутствовать, если Android release-сборка недоступна; в этом случае соберите debug APK по [инструкции](./RU/BuildFromSource.md#android). Установите подходящий APK, запустите приложение и задайте порт/secret. После запуска прокси откройте ссылку подключения в Telegram на том же устройстве. Прокси и Telegram должны оставаться запущенными.
 
 ## Windows: быстрый вход
 

@@ -44,7 +44,7 @@ cd android
   assembleStandardDebug assembleLegacy32Debug
 ```
 
-Debug APKs are under `android/app/build/outputs/apk/{standard,legacy32}/debug/`. Use `standard` on arm64-v8a/x86_64 devices and `legacy32` on armeabi-v7a devices. Signed APKs are available from the [Flowseal releases](https://github.com/Flowseal/tg-ws-proxy/releases/latest). Release builds need `ANDROID_KEYSTORE_FILE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`; debug builds need no signing secrets. Install the matching APK, configure and start the proxy in the app, then open its connection link in Telegram on the same device.
+Debug APKs are under `android/app/build/outputs/apk/{standard,legacy32}/debug/`. Use `standard` on arm64-v8a/x86_64 devices and `legacy32` on armeabi-v7a devices. Signed APKs appear in [Flowseal releases](https://github.com/Flowseal/tg-ws-proxy/releases/latest) only when Android release signing succeeds; if a release has no APK, build a debug APK locally. Release builds need `ANDROID_KEYSTORE_FILE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`; debug builds need no signing secrets. Install the matching APK, configure and start the proxy in the app, then open its connection link in Telegram on the same device.
 
 ## Console Mode from Source
 
