@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
     <cloud-backup>
+        <exclude domain="root" path="./" />
         <exclude domain="sharedpref" path="proxy_settings.xml" />
+        <exclude domain="file" path="tg-ws-proxy/" />
     </cloud-backup>
     <device-transfer>
+        <exclude domain="root" path="./" />
         <exclude domain="sharedpref" path="proxy_settings.xml" />
+        <exclude domain="file" path="tg-ws-proxy/" />
     </device-transfer>
 </data-extraction-rules>

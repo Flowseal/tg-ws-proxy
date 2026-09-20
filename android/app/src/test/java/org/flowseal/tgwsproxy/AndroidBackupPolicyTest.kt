@@ -16,7 +16,7 @@ class AndroidBackupPolicyTest {
     }
 
     @Test
-    fun extractionRulesExcludeSecretPreferencesFromCloudAndDeviceTransfer() {
+    fun extractionRulesExcludeAllSecretStoresFromCloudAndDeviceTransfer() {
         val path = Paths.get("src/main/res/xml/data_extraction_rules.xml")
         val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(path.toFile())
         for (section in listOf("cloud-backup", "device-transfer")) {
@@ -27,6 +27,11 @@ class AndroidBackupPolicyTest {
                 val exclude = excludes.item(index) as org.w3c.dom.Element
                 exclude.getAttribute("domain") == "sharedpref" &&
                     exclude.getAttribute("path") == "proxy_settings.xml"
+            })
+            assertTrue((0 until excludes.length).any { index ->
+                val exclude = excludes.item(index) as org.w3c.dom.Element
+                exclude.getAttribute("domain") == "file" &&
+                    exclude.getAttribute("path") == "tg-ws-proxy/"
             })
         }
     }

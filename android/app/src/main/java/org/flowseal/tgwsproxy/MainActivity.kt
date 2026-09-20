@@ -32,6 +32,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var settingsStore: ProxySettingsStore
     private lateinit var diagnosticsModel: CfProxyDiagnosticsViewModel
     private var currentUpdateStatus: ProxyUpdateStatus? = null
+    private val latestUpdateRequest = LatestUpdateRequest()
     private var pendingPostRecreateAction = PendingPostRecreateAction.NONE
     private val appearanceOptions by lazy {
         appearanceModes().map { mode ->
@@ -81,8 +82,12 @@ class MainActivity : AppCompatActivity() {
         binding.openReleasePageButton.setOnClickListener { onOpenReleasePageClicked() }
         binding.donateButton.setOnClickListener { onOpenDonateClicked() }
         binding.secretRegenerateButton.setOnClickListener { onRegenerateSecretClicked() }
-        binding.checkUpdatesSwitch.setOnCheckedChangeListener { _, _ ->
-            renderUpdateStatus(currentUpdateStatus, binding.checkUpdatesSwitch.isChecked)
+        binding.checkUpdatesSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (!isChecked) {
+                latestUpdateRequest.invalidate()
+                currentUpdateStatus = null
+            }
+            renderUpdateStatus(currentUpdateStatus, isChecked)
         }
         binding.cfProxySwitch.setOnCheckedChangeListener { _, isChecked ->
             renderCfProxyState(isChecked)
@@ -175,6 +180,7 @@ class MainActivity : AppCompatActivity() {
         if (config.checkUpdates) {
             refreshUpdateStatus(checkNow = true)
         } else {
+            latestUpdateRequest.invalidate()
             currentUpdateStatus = null
             renderUpdateStatus(null, false)
         }
@@ -404,6 +410,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshUpdateStatus(checkNow: Boolean) {
+        val request = latestUpdateRequest.begin()
         lifecycleScope.launch {
             val status = runCatching {
                 withContext(Dispatchers.IO) {
@@ -414,6 +421,9 @@ class MainActivity : AppCompatActivity() {
                     currentVersion = currentAppVersionName(),
                     error = exc.message ?: exc.javaClass.simpleName,
                 )
+            }
+            if (!latestUpdateRequest.isCurrent(request) || !binding.checkUpdatesSwitch.isChecked) {
+                return@launch
             }
             currentUpdateStatus = status
             renderUpdateStatus(status, binding.checkUpdatesSwitch.isChecked)
