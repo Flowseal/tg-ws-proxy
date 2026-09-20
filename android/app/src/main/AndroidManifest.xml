@@ -9,6 +9,8 @@
 
     <application
         android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@drawable/ic_proxy_app"
         android:label="@string/app_name"
         android:roundIcon="@drawable/ic_proxy_app"
