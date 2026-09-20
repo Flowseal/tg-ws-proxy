@@ -7,8 +7,56 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 class AndroidAppearanceAndNotificationTest {
+    @Test
+    fun stalePollCannotPublishAfterLocaleRefresh() {
+        val gate = NotificationPublishGate()
+        val language = AtomicReference("en")
+        val published = AtomicReference("")
+        val pollBuilding = CountDownLatch(1)
+        val releasePoll = CountDownLatch(1)
+        val refreshStarted = CountDownLatch(1)
+        val refreshPublished = CountDownLatch(1)
+        val poll = Thread {
+            gate.publish(
+                build = {
+                    val captured = language.get()
+                    pollBuilding.countDown()
+                    check(releasePoll.await(5, TimeUnit.SECONDS))
+                    captured
+                },
+                publish = { published.set(it) },
+            )
+        }
+        poll.start()
+        assertTrue(pollBuilding.await(5, TimeUnit.SECONDS))
+        language.set("ru")
+        val refresh = Thread {
+            refreshStarted.countDown()
+            gate.publish(build = { language.get() }, publish = {
+                published.set(it)
+                refreshPublished.countDown()
+            })
+        }
+        refresh.start()
+        assertTrue(refreshStarted.await(5, TimeUnit.SECONDS))
+        assertFalse(refreshPublished.await(100, TimeUnit.MILLISECONDS))
+        releasePoll.countDown()
+        poll.join(5000)
+        refresh.join(5000)
+        assertFalse(poll.isAlive)
+        assertFalse(refresh.isAlive)
+        assertEquals("ru", published.get())
+
+        // A later poll reads the current locale rather than reusing a stale payload.
+        gate.publish(build = { language.get() }, publish = { published.set(it) })
+        assertEquals("ru", published.get())
+    }
+
     @Test
     fun localeRefreshUsesDedicatedNotificationOnlyServiceAction() {
         val service = File(findResourcePath(
@@ -23,6 +71,8 @@ class AndroidAppearanceAndNotificationTest {
         assertTrue(service.contains("ACTION_REFRESH_LOCALE ->"))
         assertTrue(service.contains("refreshLocaleNotification()"))
         assertTrue(service.contains("AndroidLanguageContext.wrap(this)"))
+        assertTrue(service.contains("notificationGate.publish("))
+        assertTrue(service.contains("publishNotification(config, trafficState, starting = false)"))
         assertTrue(activity.contains("ProxyForegroundService.refreshLocale(this)"))
     }
     @Test

@@ -30,6 +30,7 @@ class ProxyForegroundService : Service() {
     @Volatile
     private var destroyed = false
     private val trafficGate = TrafficPollGate()
+    private val notificationGate = NotificationPublishGate()
     private var trafficJob: Job? = null
     private var lastTrafficSample: TrafficSample? = null
     @Volatile
@@ -125,8 +126,7 @@ class ProxyForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun buildNotification(payload: NotificationPayload): Notification {
-        val localized = AndroidLanguageContext.wrap(this)
+    private fun buildNotification(localized: Context, payload: NotificationPayload): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(localized.getString(R.string.notification_title))
             .setContentText(payload.statusText)
@@ -149,14 +149,7 @@ class ProxyForegroundService : Service() {
     private fun onRuntimeStarted(config: NormalizedProxyConfig) {
         if (destroyed) return
         ProxyServiceState.markStarted(config)
-        updateNotification(
-            buildNotificationPayload(
-                config = config,
-                trafficState = TrafficState(running = true),
-                statusText = AndroidLanguageContext.wrap(this).getString(
-                    R.string.notification_running, config.host, config.port),
-            ),
-        )
+        publishNotification(config, TrafficState(running = true), starting = false)
         startTrafficUpdates(config)
     }
 
@@ -172,20 +165,7 @@ class ProxyForegroundService : Service() {
 
     private fun beginProxyStart(config: NormalizedProxyConfig) {
         ProxyServiceState.markStarting(config)
-        startForeground(
-            NOTIFICATION_ID,
-            buildNotification(
-                buildNotificationPayload(
-                    config = config,
-                    trafficState = TrafficState(),
-                    statusText = AndroidLanguageContext.wrap(this).getString(
-                        R.string.notification_starting,
-                        config.host,
-                        config.port,
-                    ),
-                ),
-            ),
-        )
+        publishNotification(config, TrafficState(), starting = true, foreground = true)
     }
 
     private fun finishService() {
@@ -196,31 +176,53 @@ class ProxyForegroundService : Service() {
         }
     }
 
-    private fun updateNotification(payload: NotificationPayload) {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, buildNotification(payload))
+    private fun publishNotification(
+        config: NormalizedProxyConfig,
+        trafficState: TrafficState,
+        starting: Boolean,
+        foreground: Boolean = false,
+    ) {
+        notificationGate.publish(
+            build = {
+                val localized = AndroidLanguageContext.wrap(this)
+                val status = if (starting) R.string.notification_starting else R.string.notification_running
+                val payload = buildNotificationPayload(
+                    localized,
+                    config,
+                    trafficState,
+                    localized.getString(status, config.host, config.port),
+                )
+                buildNotification(localized, payload)
+            },
+            publish = { notification ->
+                if (foreground) {
+                    startForeground(NOTIFICATION_ID, notification)
+                } else {
+                    getSystemService(NotificationManager::class.java)
+                        .notify(NOTIFICATION_ID, notification)
+                }
+            },
+        )
     }
 
     private fun refreshLocaleNotification() {
         val config = ProxyServiceState.activeConfig.value ?: return
         val starting = ProxyServiceState.isStarting.value
         if (!starting && !ProxyServiceState.isRunning.value) return
-        val localized = AndroidLanguageContext.wrap(this)
         createNotificationChannel()
-        val status = if (starting) R.string.notification_starting else R.string.notification_running
-        updateNotification(buildNotificationPayload(
+        publishNotification(
             config,
             if (starting) TrafficState() else lastTrafficState,
-            localized.getString(status, config.host, config.port),
-        ))
+            starting,
+        )
     }
 
     private fun buildNotificationPayload(
+        localized: Context,
         config: NormalizedProxyConfig,
         trafficState: TrafficState,
         statusText: String,
     ): NotificationPayload {
-        val localized = AndroidLanguageContext.wrap(this)
         val endpointText = localized.getString(R.string.notification_endpoint, config.host, config.port)
         val fallbackSummary = localized.getString(when {
             !config.cfproxy -> R.string.notification_fallback_tcp
@@ -274,17 +276,7 @@ class ProxyForegroundService : Service() {
                                 stopSelf()
                                 false
                             } else {
-                                updateNotification(
-                                    buildNotificationPayload(
-                                        config = config,
-                                        trafficState = trafficState,
-                                        statusText = AndroidLanguageContext.wrap(this@ProxyForegroundService).getString(
-                                            R.string.notification_running,
-                                            config.host,
-                                            config.port,
-                                        ),
-                                    ),
-                                )
+                                publishNotification(config, trafficState, starting = false)
                                 true
                             }
                         }
@@ -483,6 +475,14 @@ private data class NotificationPayload(
     val endpointText: String,
     val detailsText: String,
 )
+
+internal class NotificationPublishGate {
+    fun <T> publish(build: () -> T, publish: (T) -> Unit) {
+        synchronized(this) {
+            publish(build())
+        }
+    }
+}
 
 private data class TrafficSample(
     val bytesUp: Long,
