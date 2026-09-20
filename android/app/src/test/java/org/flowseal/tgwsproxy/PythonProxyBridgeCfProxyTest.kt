@@ -8,6 +8,39 @@ import org.junit.Test
 
 class PythonProxyBridgeCfProxyTest {
     @Test
+    fun diagnosticArgumentsChooseAutoCustomWorkerAndSecurity() {
+        val auto = ProxyConfig(cfproxyUserDomainText = "saved.example",
+            cfproxyUserDomainEnabled = false, noSecure = true).validate().normalized!!
+        assertEquals(listOf("auto", emptyList<String>(), true),
+            PythonProxyBridge.diagnosticArguments(auto, worker = false))
+        val custom = ProxyConfig(cfproxyUserDomainText = "one.example\ntwo.example",
+            cfproxyUserDomainEnabled = true).validate().normalized!!
+        assertEquals(listOf("custom", listOf("one.example", "two.example"), false),
+            PythonProxyBridge.diagnosticArguments(custom, worker = false))
+        val worker = ProxyConfig(cfproxyWorkerDomainText = "w1.example\nw2.example",
+            cfproxyWorkerEnabled = true, noSecure = true).validate().normalized!!
+        assertEquals(listOf("worker", listOf("w1.example", "w2.example"), true),
+            PythonProxyBridge.diagnosticArguments(worker, worker = true))
+    }
+    @Test
+    fun diagnosticMapKeepsPerDomainPartialFailureDetails() {
+        val result = PythonProxyBridge.cfProxyTestResultFromMap(mapOf(
+            "ok" to true, "mode" to "worker", "secure" to false,
+            "success_count" to 1, "total_count" to 12,
+            "per_domain" to mapOf(
+                "one.example" to mapOf("1" to "ok", "2" to "HTTP 403"),
+                "two.example" to mapOf("1" to "timeout"),
+            ),
+        ))
+        assertEquals("worker", result.mode)
+        assertEquals(1, result.successCount)
+        assertEquals(12, result.totalCount)
+        assertEquals(false, result.secure)
+        assertTrue(result.detailLines().contains("one.example: 1/2"))
+        assertTrue(result.detailLines().contains("DC2: HTTP 403"))
+        assertTrue(result.detailLines().contains("two.example: 0/1"))
+    }
+    @Test
     fun startArgumentsPreserveListsFlagsAndUpstreamFields() {
         val config = ProxyConfig(
             cfproxyUserDomainText = "one.example\ntwo.example",
@@ -50,6 +83,6 @@ class PythonProxyBridgeCfProxyTest {
         assertTrue(python.contains("from proxy.app_runtime import ProxyAppRuntime"))
         assertFalse(kotlin.contains("config.relayUrl"))
         assertFalse(kotlin.contains("get_update_status_json"))
-        assertFalse(kotlin.contains("run_cfproxy_test_json"))
+        assertTrue(kotlin.contains("run_cfproxy_test_json"))
     }
 }

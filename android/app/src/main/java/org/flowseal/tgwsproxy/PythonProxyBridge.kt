@@ -69,34 +69,64 @@ object PythonProxyBridge {
         )
     }
 
-    fun runCfProxyTest(context: Context, customDomain: String): CfProxyTestResult {
-        return CfProxyTestResult(detail = "CfProxy diagnostics unavailable in this build")
+    fun runCfProxyTest(
+        context: Context,
+        config: NormalizedProxyConfig,
+        worker: Boolean = false,
+    ): CfProxyTestResult {
+        val payload = getModule(context).callAttr(
+            "run_cfproxy_test_json", *diagnosticArguments(config, worker).toTypedArray(),
+        ).toString()
+        return parseCfProxyTestResult(payload)
+    }
+
+    internal fun diagnosticArguments(config: NormalizedProxyConfig, worker: Boolean): List<Any> {
+        val mode = when {
+            worker -> "worker"
+            config.cfproxyUserDomainEnabled && config.cfproxyUserDomains.isNotEmpty() -> "custom"
+            else -> "auto"
+        }
+        val domains = when (mode) {
+            "worker" -> config.cfproxyWorkerDomains
+            "custom" -> config.cfproxyUserDomains
+            else -> emptyList()
+        }
+        return listOf(mode, domains, config.noSecure)
     }
 
     internal fun parseCfProxyTestResult(payload: String): CfProxyTestResult {
         val json = JSONObject(payload)
-        return cfProxyTestResultFromMap(
-            mapOf(
-                "ok" to json.opt("ok"),
-                "mode" to json.opt("mode"),
-                "domain" to json.opt("domain"),
-                "selected_domain" to json.opt("selected_domain"),
-                "ip" to json.opt("ip"),
-                "status" to json.opt("status"),
-                "detail" to json.opt("detail"),
-            ),
-        )
+        val domains = json.optJSONObject("per_domain") ?: JSONObject()
+        val perDomain = linkedMapOf<String, Map<String, String>>()
+        for (domain in domains.keys()) {
+            val cases = domains.optJSONObject(domain) ?: continue
+            val perDc = linkedMapOf<String, String>()
+            for (dc in cases.keys()) perDc[dc] = cases.optString(dc)
+            perDomain[domain] = perDc
+        }
+        return cfProxyTestResultFromMap(mapOf(
+            "ok" to json.optBoolean("ok"),
+            "mode" to json.optString("mode", "auto"),
+            "selected_domain" to json.optString("selected_domain"),
+            "secure" to json.optBoolean("secure", true),
+            "success_count" to json.optInt("success_count"),
+            "total_count" to json.optInt("total_count"),
+            "per_domain" to perDomain,
+        ))
     }
 
     internal fun cfProxyTestResultFromMap(values: Map<String, Any?>): CfProxyTestResult {
+        @Suppress("UNCHECKED_CAST")
+        val domains = values["per_domain"] as? Map<String, Map<String, String>> ?: emptyMap()
         return CfProxyTestResult(
             ok = values["ok"] as? Boolean ?: false,
             mode = values["mode"]?.toString().orEmpty().ifBlank { "auto" },
-            domain = values["domain"]?.toString().orEmpty().ifBlank { null },
-            selectedDomain = values["selected_domain"]?.toString().orEmpty().ifBlank { null },
-            ip = values["ip"]?.toString().orEmpty().ifBlank { null },
-            status = values["status"]?.toString().orEmpty().ifBlank { null },
-            detail = values["detail"]?.toString().orEmpty().ifBlank { null },
+            selectedDomain = values["selected_domain"]?.toString()
+                ?.takeUnless { it.isBlank() || it == "null" },
+            secure = values["secure"] as? Boolean ?: true,
+            successCount = (values["success_count"] as? Number)?.toInt() ?: 0,
+            totalCount = (values["total_count"] as? Number)?.toInt() ?: 0,
+            perDomain = domains,
         )
     }
 
@@ -143,9 +173,16 @@ data class ProxyUpdateStatus(
 data class CfProxyTestResult(
     val ok: Boolean = false,
     val mode: String = "auto",
-    val domain: String? = null,
     val selectedDomain: String? = null,
-    val ip: String? = null,
-    val status: String? = null,
-    val detail: String? = null,
-)
+    val secure: Boolean = true,
+    val successCount: Int = 0,
+    val totalCount: Int = 0,
+    val perDomain: Map<String, Map<String, String>> = emptyMap(),
+) {
+    fun detailLines(): String = perDomain.entries.joinToString("\n") { (domain, cases) ->
+        val ok = cases.count { it.value == "ok" }
+        val failures = cases.entries.filter { it.value != "ok" }
+            .joinToString(", ") { (dc, error) -> "DC$dc: $error" }
+        "$domain: $ok/${cases.size}" + if (failures.isNotEmpty()) " ($failures)" else ""
+    }
+}

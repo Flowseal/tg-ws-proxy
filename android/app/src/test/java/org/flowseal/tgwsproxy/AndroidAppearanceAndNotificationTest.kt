@@ -102,6 +102,14 @@ class AndroidAppearanceAndNotificationTest {
             assertTrue("Missing $control", layout.contains("@+id/$control"))
         }
         assertFalse(layout.contains("@+id/cfProxyPrioritySwitch"))
+        assertFalse(layout.contains("@+id/proxyProtocolSwitch"))
+        assertTrue(layout.contains("@+id/cfProxyWorkerTestButton"))
+        assertTrue(layout.contains("@+id/cfProxyTestResult"))
+        val activity = File(findResourcePath(
+            "app/src/main/java/org/flowseal/tgwsproxy/MainActivity.kt",
+            "src/main/java/org/flowseal/tgwsproxy/MainActivity.kt",
+        ).toString()).readText()
+        assertTrue(activity.contains("proxyProtocol = retained.proxyProtocol"))
     }
     @Test
     fun disabledCustomDomainsDoNotClaimCustomRoute() {

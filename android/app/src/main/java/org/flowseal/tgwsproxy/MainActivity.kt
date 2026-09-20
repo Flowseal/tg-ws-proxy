@@ -16,10 +16,12 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -28,6 +30,7 @@ import org.flowseal.tgwsproxy.databinding.ActivityMainBinding
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var settingsStore: ProxySettingsStore
+    private lateinit var diagnosticsModel: CfProxyDiagnosticsViewModel
     private var currentUpdateStatus: ProxyUpdateStatus? = null
     private var pendingPostRecreateAction = PendingPostRecreateAction.NONE
     private val appearanceOptions by lazy {
@@ -62,6 +65,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         settingsStore = initialSettingsStore
+        diagnosticsModel = ViewModelProvider(this)[CfProxyDiagnosticsViewModel::class.java]
         pendingPostRecreateAction = savedInstanceState
             ?.getString(STATE_PENDING_POST_RECREATE_ACTION)
             ?.let(PendingPostRecreateAction::fromValue)
@@ -89,7 +93,13 @@ class MainActivity : AppCompatActivity() {
         binding.cfProxyWorkerSwitch.setOnCheckedChangeListener { _, isChecked ->
             renderWorkerDomainState(isChecked)
         }
-        binding.cfProxyTestButton.setOnClickListener { onCfProxyTestClicked() }
+        binding.cfProxyTestButton.setOnClickListener { onCfProxyTestClicked(worker = false) }
+        binding.cfProxyWorkerTestButton.setOnClickListener { onCfProxyTestClicked(worker = true) }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                diagnosticsModel.state.collect(::renderDiagnosticsState)
+            }
+        }
         binding.disableBatteryOptimizationButton.setOnClickListener {
             AndroidSystemStatus.openBatteryOptimizationSettings(this)
         }
@@ -289,6 +299,7 @@ class MainActivity : AppCompatActivity() {
             noSecure = binding.noSecureSwitch.isChecked,
             fakeTlsDomain = binding.fakeTlsDomainInput.text?.toString().orEmpty(),
             forceTestDc = retained.forceTestDc,
+            // Desktop has no toggle and Android defaults to loopback; retain migrated values.
             proxyProtocol = retained.proxyProtocol,
             logMaxMbText = binding.logMaxMbInput.text?.toString().orEmpty(),
             bufferKbText = binding.bufferKbInput.text?.toString().orEmpty(),
@@ -308,54 +319,69 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun onCfProxyTestClicked() {
-        val customDomain = if (binding.cfProxyCustomDomainSwitch.isChecked) {
-            binding.cfProxyUserDomainInput.text?.toString().orEmpty().trim()
-        } else {
-            ""
-        }
-        if (binding.cfProxyCustomDomainSwitch.isChecked && customDomain.isBlank()) {
-            Snackbar.make(
-                binding.root,
-                getString(R.string.cfproxy_test_failed, "empty custom domain"),
-                Snackbar.LENGTH_LONG,
-            ).show()
+    private fun onCfProxyTestClicked(worker: Boolean) {
+        val validation = collectConfigFromForm().validate()
+        val config = validation.normalized
+        if (config == null) {
+            diagnosticsModel.reportValidationError(validation.errorMessage.orEmpty())
             return
         }
+        if (worker && (!config.cfproxyWorkerEnabled || config.cfproxyWorkerDomains.isEmpty())) {
+            diagnosticsModel.reportValidationError(getString(R.string.cfproxy_test_worker_required))
+            return
+        }
+        if (!worker && config.cfproxyUserDomainEnabled && config.cfproxyUserDomains.isEmpty()) {
+            diagnosticsModel.reportValidationError(getString(R.string.cfproxy_test_custom_required))
+            return
+        }
+        diagnosticsModel.run(applicationContext, config, worker)
+    }
 
-        lifecycleScope.launch {
-            binding.cfProxyTestButton.isEnabled = false
-            binding.cfProxyTestButton.text = getString(R.string.cfproxy_test_running)
-            val result = runCatching {
-                withContext(Dispatchers.IO) {
-                    PythonProxyBridge.runCfProxyTest(this@MainActivity, customDomain)
+    private fun renderDiagnosticsState(state: CfProxyDiagnosticsState) {
+        binding.cfProxyTestButton.isEnabled = binding.cfProxySwitch.isChecked && !state.running
+        binding.cfProxyWorkerTestButton.isEnabled = binding.cfProxyWorkerSwitch.isChecked &&
+            !state.running
+        binding.cfProxyTestButton.setText(
+            if (state.running) R.string.cfproxy_test_running else R.string.cfproxy_test_button,
+        )
+        val result = state.result
+        val text = when {
+            state.running -> getString(R.string.cfproxy_test_running)
+            state.error != null -> getString(R.string.cfproxy_test_failed, state.error)
+            result != null -> {
+                val status = when {
+                    result.successCount == result.totalCount && result.totalCount > 0 ->
+                        R.string.cfproxy_test_all_ok
+                    result.ok -> R.string.cfproxy_test_partial
+                    else -> R.string.cfproxy_test_none_ok
+                }
+                val mode = when (result.mode) {
+                    "custom" -> R.string.cfproxy_test_mode_custom
+                    "worker" -> R.string.cfproxy_test_mode_worker
+                    else -> R.string.cfproxy_test_mode_auto
+                }
+                buildString {
+                    append(getString(status))
+                    append("\n")
+                    append(getString(R.string.cfproxy_test_summary,
+                        getString(mode),
+                        getString(if (result.secure) R.string.cfproxy_test_secure
+                                  else R.string.cfproxy_test_insecure),
+                        result.successCount, result.totalCount))
+                    result.selectedDomain?.let {
+                        append("\n")
+                        append(getString(R.string.cfproxy_test_selected, it))
+                    }
+                    if (result.perDomain.isNotEmpty()) {
+                        append("\n")
+                        append(result.detailLines())
+                    }
                 }
             }
-            binding.cfProxyTestButton.isEnabled = true
-            binding.cfProxyTestButton.text = getString(R.string.cfproxy_test_button)
-            val message = result.fold(
-                onSuccess = { cfResult ->
-                    if (cfResult.ok) {
-                        getString(
-                            R.string.cfproxy_test_passed,
-                            cfResult.selectedDomain ?: cfResult.domain ?: "ok",
-                        )
-                    } else {
-                        getString(
-                            R.string.cfproxy_test_failed,
-                            cfResult.detail ?: "unknown",
-                        )
-                    }
-                },
-                onFailure = { error ->
-                    getString(
-                        R.string.cfproxy_test_failed,
-                        error.message ?: error.javaClass.simpleName,
-                    )
-                },
-            )
-            Snackbar.make(binding.root, message, Snackbar.LENGTH_LONG).show()
+            else -> ""
         }
+        binding.cfProxyTestResult.text = text
+        binding.cfProxyTestResult.isVisible = text.isNotEmpty()
     }
 
     private fun refreshUpdateStatus(checkNow: Boolean) {
@@ -611,6 +637,7 @@ class MainActivity : AppCompatActivity() {
     private fun renderWorkerDomainState(enabled: Boolean) {
         binding.cfProxyWorkerDomainLayout.isEnabled = enabled
         binding.cfProxyWorkerDomainInput.isEnabled = enabled
+        binding.cfProxyWorkerTestButton.isEnabled = enabled && !diagnosticsModel.state.value.running
     }
 
     companion object {

@@ -4,6 +4,8 @@ import os
 import threading
 from pathlib import Path
 
+from android_cfproxy_diagnostics import run_diagnostics
+
 # Chaquopy cannot rely on desktop cryptography or system libcrypto.
 os.environ['TG_WS_PROXY_CRYPTO_BACKEND'] = 'python'
 
@@ -113,3 +115,8 @@ def get_runtime_stats_json():
         payload['running'] = is_running()
         payload['last_error'] = _LAST_ERROR
     return json.dumps(payload)
+
+
+def run_cfproxy_test_json(mode, domains, no_secure=False, probe=None):
+    return json.dumps(run_diagnostics(mode, _normalize_domain_list(domains),
+                                      no_secure=no_secure, probe=probe))

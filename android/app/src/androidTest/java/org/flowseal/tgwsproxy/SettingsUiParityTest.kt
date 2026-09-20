@@ -19,6 +19,54 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class SettingsUiParityTest {
     @Test
+    fun packagedDiagnosticsHelperLoadsWithoutNetwork() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val config = ProxyConfig().validate().normalized!!
+        val failure = runCatching {
+            PythonProxyBridge.runCfProxyTest(context, config, worker = true)
+        }.exceptionOrNull()
+        assertTrue("Expected empty worker-domain validation", failure != null)
+        assertTrue(failure.toString().contains("At least one domain is required"))
+    }
+
+    @Test
+    fun diagnosticJsonParserKeepsPartialFailureDetails() {
+        val result = PythonProxyBridge.parseCfProxyTestResult("""{
+            "ok":true,"mode":"worker","secure":false,"success_count":1,"total_count":12,
+            "per_domain":{"one.example":{"1":"ok","2":"HTTP 403"}}
+        }""")
+        assertEquals(1, result.successCount)
+        assertFalse(result.secure)
+        assertTrue(result.detailLines().contains("DC2: HTTP 403"))
+    }
+
+    @Test
+    fun diagnosticsWorkerValidationAndResultSurviveRecreation() {
+        prepare()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                view<MaterialSwitch>(activity, "cfProxySwitch").isChecked = false
+                view<MaterialSwitch>(activity, "cfProxyWorkerSwitch").isChecked = true
+                view<EditText>(activity, "cfProxyWorkerDomainInput").setText("")
+                val workerButton = view<View>(activity, "cfProxyWorkerTestButton")
+                assertTrue(workerButton.isShown)
+                assertTrue(workerButton.isEnabled)
+                workerButton.performClick()
+                assertTrue(view<TextView>(activity, "cfProxyTestResult").text.isNotBlank())
+            }
+            scenario.recreate()
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            scenario.onActivity { activity ->
+                val result = view<TextView>(activity, "cfProxyTestResult")
+                assertTrue(result.isShown)
+                assertTrue(result.text.contains(activity.getString(R.string.cfproxy_test_worker_required)))
+                assertEquals(0, activity.resources.getIdentifier(
+                    "proxyProtocolSwitch", "id", activity.packageName))
+            }
+        }
+    }
+
+    @Test
     fun runningNotificationChangesLanguageWithoutProxyRestart() {
         prepare()
         val instrumentation = InstrumentationRegistry.getInstrumentation()

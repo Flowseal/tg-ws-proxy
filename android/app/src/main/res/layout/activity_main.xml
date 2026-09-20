@@ -425,6 +425,22 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
                     android:text="@string/cfproxy_test_button" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/cfProxyWorkerTestButton"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/cfproxy_worker_test_button" />
+
+                <TextView
+                    android:id="@+id/cfProxyTestResult"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:textIsSelectable="true"
+                    android:visibility="gone" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
