@@ -10,11 +10,8 @@ object NotificationSummary {
         if (!config.cfproxy) {
             return FALLBACK_TCP
         }
-        if (config.cfproxyUserDomain.isNotBlank()) {
+        if (config.cfproxyUserDomainEnabled && config.cfproxyUserDomains.isNotEmpty()) {
             return FALLBACK_CFPROXY_CUSTOM
-        }
-        if (config.cfproxyPriority) {
-            return FALLBACK_CFPROXY_PRIO
         }
         return FALLBACK_CFPROXY
     }

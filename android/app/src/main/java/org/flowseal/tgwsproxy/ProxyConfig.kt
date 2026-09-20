@@ -14,6 +14,14 @@ data class ProxyConfig(
     val cfproxy: Boolean = DEFAULT_CFPROXY,
     val cfproxyPriority: Boolean = DEFAULT_CFPROXY_PRIORITY,
     val cfproxyUserDomainText: String = DEFAULT_CFPROXY_USER_DOMAIN,
+    val cfproxyUserDomainEnabled: Boolean = cfproxyUserDomainText.isNotBlank(),
+    val cfproxyWorkerDomainText: String = "",
+    val cfproxyWorkerEnabled: Boolean = false,
+    val noSecure: Boolean = false,
+    val fakeTlsDomain: String = "",
+    val forceTestDc: Boolean = false,
+    val proxyProtocol: Boolean = false,
+    val language: String = "ru",
     val checkUpdates: Boolean = false,
     val verbose: Boolean = false,
 ) {
@@ -90,11 +98,10 @@ data class ProxyConfig(
         val cfproxyValue = cfproxy
         val cfproxyPriorityValue = cfproxyPriority
         val cfproxyUserDomainValue = cfproxyUserDomainText.trim()
-        if (
-            cfproxyValue &&
-            cfproxyUserDomainValue.isNotEmpty() &&
-            !isHostname(cfproxyUserDomainValue)
-        ) {
+        val userDomains = splitDomains(cfproxyUserDomainValue)
+        val workerDomains = splitDomains(cfproxyWorkerDomainText)
+        if ((userDomains + workerDomains).any { !isHostname(it) } ||
+            (fakeTlsDomain.isNotBlank() && !isHostname(fakeTlsDomain.trim()))) {
             return ValidationResult(
                 errorMessage = "CfProxy domain должен быть доменным именем без схемы и пути."
             )
@@ -113,6 +120,15 @@ data class ProxyConfig(
                 cfproxy = cfproxyValue,
                 cfproxyPriority = cfproxyPriorityValue,
                 cfproxyUserDomain = cfproxyUserDomainValue,
+                cfproxyUserDomains = userDomains,
+                cfproxyUserDomainEnabled = cfproxyUserDomainEnabled,
+                cfproxyWorkerDomains = workerDomains,
+                cfproxyWorkerEnabled = cfproxyWorkerEnabled,
+                noSecure = noSecure,
+                fakeTlsDomain = fakeTlsDomain.trim(),
+                forceTestDc = forceTestDc,
+                proxyProtocol = proxyProtocol,
+                language = if (language == "en") "en" else "ru",
                 checkUpdates = checkUpdates,
                 verbose = verbose,
             )
@@ -150,6 +166,12 @@ data class ProxyConfig(
                 else -> "auto"
             }
         }
+
+        private fun splitDomains(value: String): List<String> = value
+            .split(Regex("[,;\\r\\n]+"))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
 
         fun generateSecretForUi(): String {
             return generateSecret()
@@ -217,6 +239,15 @@ data class NormalizedProxyConfig(
     val cfproxy: Boolean,
     val cfproxyPriority: Boolean,
     val cfproxyUserDomain: String,
+    val cfproxyUserDomains: List<String> = emptyList(),
+    val cfproxyUserDomainEnabled: Boolean = false,
+    val cfproxyWorkerDomains: List<String> = emptyList(),
+    val cfproxyWorkerEnabled: Boolean = false,
+    val noSecure: Boolean = false,
+    val fakeTlsDomain: String = "",
+    val forceTestDc: Boolean = false,
+    val proxyProtocol: Boolean = false,
+    val language: String = "ru",
     val checkUpdates: Boolean,
     val verbose: Boolean,
 )

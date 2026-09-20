@@ -10,6 +10,36 @@ import org.junit.Test
 
 class ProxySettingsStoreTest {
     @Test
+    fun legacySingleDomainMigratesAndNewFieldsRoundTrip() {
+        val context = TestContext()
+        val prefs = context.getSharedPreferences("proxy_settings", Context.MODE_PRIVATE)
+        prefs.edit().putString("cfproxy_user_domain", "old.example").apply()
+        val store = ProxySettingsStore(context)
+        assertEquals("old.example", store.load().cfproxyUserDomainText)
+        val normalized = store.load().copy(
+            cfproxyUserDomainEnabled = false,
+            cfproxyUserDomainText = "old.example\nnew.example",
+            cfproxyWorkerEnabled = true,
+            cfproxyWorkerDomainText = "worker.example",
+            noSecure = true,
+            fakeTlsDomain = "tls.example",
+            forceTestDc = true,
+            proxyProtocol = true,
+            language = "en",
+        ).validate().normalized!!
+        store.save(normalized)
+        val restored = store.load()
+        assertEquals("old.example\nnew.example", restored.cfproxyUserDomainText)
+        assertFalse(restored.cfproxyUserDomainEnabled)
+        assertEquals("worker.example", restored.cfproxyWorkerDomainText)
+        assertEquals(true, restored.cfproxyWorkerEnabled)
+        assertEquals(true, restored.noSecure)
+        assertEquals("en", restored.language)
+        assertEquals("tls.example", restored.fakeTlsDomain)
+        assertEquals(true, restored.forceTestDc)
+        assertEquals(true, restored.proxyProtocol)
+    }
+    @Test
     fun save_and_load_preserve_cfproxy_fields() {
         val context = TestContext()
         val store = ProxySettingsStore(context)

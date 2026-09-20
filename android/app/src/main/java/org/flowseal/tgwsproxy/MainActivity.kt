@@ -236,7 +236,7 @@ class MainActivity : AppCompatActivity() {
         binding.dcIpInput.setText(config.dcIpText)
         binding.cfProxySwitch.isChecked = config.cfproxy
         binding.cfProxyPrioritySwitch.isChecked = config.cfproxyPriority
-        binding.cfProxyCustomDomainSwitch.isChecked = config.cfproxyUserDomainText.isNotBlank()
+        binding.cfProxyCustomDomainSwitch.isChecked = config.cfproxyUserDomainEnabled
         binding.cfProxyUserDomainInput.setText(config.cfproxyUserDomainText)
         binding.logMaxMbInput.setText(config.logMaxMbText)
         binding.bufferKbInput.setText(config.bufferKbText)
@@ -249,6 +249,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun collectConfigFromForm(): ProxyConfig {
+        val retained = settingsStore.load()
         return ProxyConfig(
             host = binding.hostInput.text?.toString().orEmpty(),
             portText = binding.portInput.text?.toString().orEmpty(),
@@ -257,11 +258,15 @@ class MainActivity : AppCompatActivity() {
             dcIpText = binding.dcIpInput.text?.toString().orEmpty(),
             cfproxy = binding.cfProxySwitch.isChecked,
             cfproxyPriority = binding.cfProxyPrioritySwitch.isChecked,
-            cfproxyUserDomainText = if (binding.cfProxyCustomDomainSwitch.isChecked) {
-                binding.cfProxyUserDomainInput.text?.toString().orEmpty()
-            } else {
-                ""
-            },
+            cfproxyUserDomainText = binding.cfProxyUserDomainInput.text?.toString().orEmpty(),
+            cfproxyUserDomainEnabled = binding.cfProxyCustomDomainSwitch.isChecked,
+            cfproxyWorkerDomainText = retained.cfproxyWorkerDomainText,
+            cfproxyWorkerEnabled = retained.cfproxyWorkerEnabled,
+            noSecure = retained.noSecure,
+            fakeTlsDomain = retained.fakeTlsDomain,
+            forceTestDc = retained.forceTestDc,
+            proxyProtocol = retained.proxyProtocol,
+            language = retained.language,
             logMaxMbText = binding.logMaxMbInput.text?.toString().orEmpty(),
             bufferKbText = binding.bufferKbInput.text?.toString().orEmpty(),
             poolSizeText = binding.poolSizeInput.text?.toString().orEmpty(),

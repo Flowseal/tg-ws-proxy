@@ -29,8 +29,14 @@ object PythonProxyBridge {
             config.poolSize,
             config.verbose,
             config.cfproxy,
-            config.cfproxyUserDomain,
-            config.cfproxyUserDomain.isNotBlank(),
+            config.cfproxyUserDomains,
+            config.cfproxyUserDomainEnabled,
+            config.cfproxyWorkerDomains,
+            config.cfproxyWorkerEnabled,
+            config.noSecure,
+            config.forceTestDc,
+            config.fakeTlsDomain,
+            config.proxyProtocol,
         )
 
     fun stop(context: Context) {

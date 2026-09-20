@@ -9,8 +9,16 @@ import java.net.URLEncoder
 object TelegramProxyIntent {
     private fun encode(value: String) = URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
-    fun proxyUri(config: NormalizedProxyConfig): String =
-            "tg://proxy?server=${encode(config.host)}&port=${config.port}&secret=dd${encode(config.secret)}"
+    fun proxyUri(config: NormalizedProxyConfig): String {
+        val secret = if (config.fakeTlsDomain.isNotBlank()) {
+            val domainHex = config.fakeTlsDomain.toByteArray(Charsets.US_ASCII)
+                .joinToString("") { "%02x".format(it) }
+            "ee${config.secret}$domainHex"
+        } else {
+            "dd${config.secret}"
+        }
+        return "tg://proxy?server=${encode(config.host)}&port=${config.port}&secret=${encode(secret)}"
+    }
 
     fun open(context: Context, config: NormalizedProxyConfig): Boolean {
         return open(config) { uri ->

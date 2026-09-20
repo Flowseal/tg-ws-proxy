@@ -1,10 +1,33 @@
 package org.flowseal.tgwsproxy
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProxyConfigTest {
+    @Test
+    fun multiDomainOptionsReachNormalizedConfig() {
+        val config = ProxyConfig(
+            cfproxyUserDomainText = "one.example\ntwo.example",
+            cfproxyUserDomainEnabled = false,
+            cfproxyWorkerDomainText = "worker.example",
+            cfproxyWorkerEnabled = true,
+            noSecure = true,
+            fakeTlsDomain = "tls.example",
+            forceTestDc = true,
+            proxyProtocol = true,
+        ).validate().normalized!!
+        assertEquals(listOf("one.example", "two.example"), config.cfproxyUserDomains)
+        assertFalse(config.cfproxyUserDomainEnabled)
+        assertEquals(listOf("worker.example"), config.cfproxyWorkerDomains)
+        assertTrue(config.cfproxyWorkerEnabled)
+        assertTrue(config.noSecure)
+        assertEquals("tls.example", config.fakeTlsDomain)
+        assertTrue(config.forceTestDc)
+        assertTrue(config.proxyProtocol)
+    }
     private fun validConfig(
         cfproxy: Boolean = true,
         cfproxyPriority: Boolean = true,
@@ -76,14 +99,13 @@ class ProxyConfigTest {
     }
 
     @Test
-    fun validate_ignores_cfproxy_domain_when_cfproxy_disabled() {
+    fun validate_rejects_invalid_retained_cfproxy_domain_before_python_boundary() {
         val result = validConfig(
             cfproxy = false,
             cfproxyUserDomainText = "https://cdn.example.com/path",
         ).validate()
 
-        assertNull(result.errorMessage)
-        assertEquals("https://cdn.example.com/path", result.normalized?.cfproxyUserDomain)
+        assertEquals("CfProxy domain должен быть доменным именем без схемы и пути.", result.errorMessage)
     }
 
     @Test

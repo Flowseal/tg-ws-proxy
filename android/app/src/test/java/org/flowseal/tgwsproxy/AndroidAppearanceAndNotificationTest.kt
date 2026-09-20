@@ -9,6 +9,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AndroidAppearanceAndNotificationTest {
+    @Test
+    fun disabledCustomDomainsDoNotClaimCustomRoute() {
+        val config = ProxyConfig(
+            cfproxy = true,
+            cfproxyUserDomainText = "custom.example",
+            cfproxyUserDomainEnabled = false,
+        ).validate().normalized!!
+        assertEquals(NotificationSummary.FALLBACK_CFPROXY,
+            NotificationSummary.formatFallbackSummary(config))
+    }
     private fun findResourcePath(vararg candidates: String): java.nio.file.Path {
         return candidates
             .map { Paths.get(it) }
@@ -37,6 +47,8 @@ class AndroidAppearanceAndNotificationTest {
             cfproxy = true,
             cfproxyPriority = true,
             cfproxyUserDomain = "cdn.example.com",
+            cfproxyUserDomains = listOf("cdn.example.com"),
+            cfproxyUserDomainEnabled = true,
             checkUpdates = true,
             verbose = false,
             appearance = "dark",
