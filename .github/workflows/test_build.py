@@ -52,6 +52,26 @@ class ReleaseWorkflowTest(unittest.TestCase):
                         if step.get("uses") == "actions/setup-python@v6"]
             self.assertEqual(versions, ["3.12", "3.11"])
 
+    def test_desktop_assets_remain_required_before_release(self):
+        jobs = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)["jobs"]
+        steps = jobs["release"]["steps"]
+        release_index = next(i for i, step in enumerate(steps)
+                             if step.get("uses") == "softprops/action-gh-release@v2")
+        verify = next(step for step in steps[:release_index]
+                      if step.get("name") == "Verify desktop release assets")
+        desktop_assets = [line.strip() for line in steps[release_index]["with"]["files"].splitlines()
+                          if line.strip() and "android" not in line]
+        for asset in desktop_assets:
+            self.assertIn(asset, verify["run"])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = subprocess.run(["bash", "-e", "-c", verify["run"]], cwd=temp_dir)
+            self.assertNotEqual(result.returncode, 0)
+            for asset in desktop_assets:
+                path = pathlib.Path(temp_dir) / asset
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            subprocess.run(["bash", "-e", "-c", verify["run"]], cwd=temp_dir, check=True)
+
 
 if __name__ == "__main__":
     unittest.main()

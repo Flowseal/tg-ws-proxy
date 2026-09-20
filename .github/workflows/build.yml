@@ -691,6 +691,23 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Verify desktop release assets
+        run: |
+          for asset in \
+            dist/TgWsProxy_windows.exe \
+            dist/TgWsProxy_windows_arm64.exe \
+            dist/TgWsProxy_windows_7_64bit.exe \
+            dist/TgWsProxy_windows_7_32bit.exe \
+            dist/TgWsProxy_macos_universal.dmg \
+            dist/TgWsProxy_linux_amd64 \
+            dist/TgWsProxy_linux_amd64.deb \
+            dist/TgWsProxy_linux_amd64.rpm; do
+            if [ ! -f "$asset" ]; then
+              echo "::error::Missing desktop release asset: $asset"
+              exit 1
+            fi
+          done
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
