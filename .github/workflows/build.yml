@@ -549,8 +549,95 @@ jobs:
             dist/TgWsProxy_linux_amd64.deb
             dist/TgWsProxy_linux_amd64.rpm
 
+  validate-android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: android/**/*.gradle.kts
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+      - name: Test and build both debug variants
+        run: |
+          ./gradlew testStandardDebugUnitTest testLegacy32DebugUnitTest \
+            assembleStandardDebug assembleLegacy32Debug
+      - name: Upload debug APKs
+        uses: actions/upload-artifact@v7
+        with:
+          name: TgWsProxy-android-debug
+          path: |
+            android/app/build/outputs/apk/standard/debug/app-standard-debug.apk
+            android/app/build/outputs/apk/legacy32/debug/app-legacy32-debug.apk
+          if-no-files-found: error
+
+  build-android-release:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.make_release == 'true' }}
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: android/**/*.gradle.kts
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+      - name: Prepare signing keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$ANDROID_KEYSTORE_PASSWORD"
+          test -n "$ANDROID_KEY_ALIAS"
+          test -n "$ANDROID_KEY_PASSWORD"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/android-release.keystore"
+          test -s "$RUNNER_TEMP/android-release.keystore"
+      - name: Build signed APKs
+        env:
+          ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/android-release.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew assembleStandardRelease assembleLegacy32Release
+      - name: Stage release APKs
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp app/build/outputs/apk/standard/release/app-standard-release.apk "dist/tg-ws-proxy-android-${VERSION}.apk"
+          cp app/build/outputs/apk/legacy32/release/app-legacy32-release.apk "dist/tg-ws-proxy-android-${VERSION}-legacy32.apk"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: TgWsProxy-android-release
+          path: android/dist/*.apk
+          if-no-files-found: error
+
   release:
-    needs: [build-windows-x64, build-windows-arm64, build-win7, build-macos, build-linux]
+    needs: [build-windows-x64, build-windows-arm64, build-win7, build-macos, build-linux, validate-android, build-android-release]
     runs-on: ubuntu-latest
     if: >-
       ${{ github.event.inputs.make_release == 'true'
@@ -587,6 +674,8 @@ jobs:
             dist/TgWsProxy_linux_amd64
             dist/TgWsProxy_linux_amd64.deb
             dist/TgWsProxy_linux_amd64.rpm
+            dist/tg-ws-proxy-android-${{ github.event.inputs.version }}.apk
+            dist/tg-ws-proxy-android-${{ github.event.inputs.version }}-legacy32.apk
           draft: false
           prerelease: false
         env:

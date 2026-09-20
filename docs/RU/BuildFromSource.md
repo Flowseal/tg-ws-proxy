@@ -34,6 +34,18 @@ pip install -e .
 tg-ws-proxy-tray-linux
 ```
 
+## Android
+
+Для локальной сборки нужны JDK 17, Android SDK с платформой 34 и build-tools 34.0.0, Python 3.12 и доступ к Gradle/Chaquopy-зависимостям. Из корня репозитория:
+
+```bash
+cd android
+./gradlew testStandardDebugUnitTest testLegacy32DebugUnitTest \
+  assembleStandardDebug assembleLegacy32Debug
+```
+
+Debug APK находятся в `android/app/build/outputs/apk/{standard,legacy32}/debug/`. `standard` рассчитан на arm64-v8a/x86_64, `legacy32` на armeabi-v7a. Готовые подписанные APK доступны в [релизах Flowseal](https://github.com/Flowseal/tg-ws-proxy/releases/latest). Для release-сборки требуются `ANDROID_KEYSTORE_FILE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` и `ANDROID_KEY_PASSWORD`; debug-сборка не требует секретов. Установите подходящий APK, настройте прокси в приложении, запустите его и откройте ссылку подключения в Telegram на том же устройстве.
+
 ## Консольный режим из исходников
 
 ```bash

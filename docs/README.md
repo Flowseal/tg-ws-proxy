@@ -48,6 +48,7 @@
   - **[Windows](./RU/README.windows.md)**
   - **[macOS](./RU/README.macos.md)**
   - **[Linux](./RU/README.linux.md)**
+  - **[Android](./RU/BuildFromSource.md#android)**
   - **[Docker](./RU/README.docker.md)**
 - [Настройка Cloudflare Worker'а (бесплатный аналог CF-прокси)](./RU/CfWorker.md)
 - [Настройка Cloudflare-домена (CF-прокси)](./RU/CfProxy.md)
@@ -56,6 +57,10 @@
 - [Файлы конфигурации Tray-приложения](./RU/TrayConfig.md)
 - [Установка из исходников](./RU/BuildFromSource.md)
 - [Руководство для контрибьюторов](./CONTRIBUTING.md)
+
+## Android
+
+Скачайте APK из [последнего релиза Flowseal](https://github.com/Flowseal/tg-ws-proxy/releases/latest): обычный `tg-ws-proxy-android-<версия>.apk` для 64-битных устройств или `tg-ws-proxy-android-<версия>-legacy32.apk` для 32-битных. Установите APK, разрешив установку из выбранного источника, запустите приложение и задайте порт/secret. После запуска прокси откройте ссылку подключения в Telegram на том же устройстве. Прокси и Telegram должны оставаться запущенными; для сборки из исходников см. [инструкцию](./RU/BuildFromSource.md#android).
 
 ## Windows: быстрый вход
 
