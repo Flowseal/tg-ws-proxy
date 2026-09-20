@@ -477,6 +477,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None,
 
     ws_pool.reset()
     cf_worker_pool.reset()
+    stats.last_transport_route = None
     ws_blacklist.clear()
     dc_fail_until.clear()
     ip_fail_until.clear()
@@ -499,8 +500,6 @@ async def _run(stop_event: Optional[asyncio.Event] = None,
         return
     server = await asyncio.start_server(client_cb, proxy_config.host, proxy_config.port)
     _server_instance = server
-    if on_ready is not None:
-        on_ready()
 
     for sock in server.sockets:
         try:
@@ -557,9 +556,6 @@ async def _run(stop_event: Optional[asyncio.Event] = None,
 
     log_stats_task = asyncio.create_task(log_stats())
 
-    await ws_pool.warmup()
-    await cf_worker_pool.warmup()
-
     async def _quiet_cancel(t):
         if not t.done():
             t.cancel()
@@ -569,6 +565,10 @@ async def _run(stop_event: Optional[asyncio.Event] = None,
             pass
 
     try:
+        await ws_pool.warmup()
+        await cf_worker_pool.warmup()
+        if on_ready is not None:
+            on_ready()
         while True:
             serve_task = asyncio.create_task(server.serve_forever())
             stop_task = (asyncio.create_task(stop_event.wait())
@@ -627,6 +627,10 @@ async def _run(stop_event: Optional[asyncio.Event] = None,
             log.warning("Server restored, listening on %s:%d",
                         proxy_config.host, proxy_config.port)
     finally:
+        for task in list(_client_tasks):
+            task.cancel()
+        if _client_tasks:
+            await asyncio.gather(*_client_tasks, return_exceptions=True)
         log_stats_task.cancel()
         try:
             await log_stats_task
@@ -637,7 +641,10 @@ async def _run(stop_event: Optional[asyncio.Event] = None,
             await server.wait_closed()
         except Exception:
             pass
-    _server_instance = None
+        ws_pool.reset()
+        cf_worker_pool.reset()
+        _server_instance = None
+        _server_stop_event = None
 
 
 def run_proxy(stop_event: Optional[asyncio.Event] = None):
