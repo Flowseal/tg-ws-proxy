@@ -435,7 +435,11 @@ async def _handle_client(reader, writer, secret: bytes):
         except Exception:
             pass
 
-        await ws.send(relay_init)
+        try:
+            await ws.send(relay_init)
+        except BaseException:
+            await ws.close()
+            raise
         stats.last_transport_route = 'telegram_ws_direct'
 
         await bridge_ws_reencrypt(clt_reader, clt_writer, ws, label, ctx,
@@ -562,9 +566,13 @@ async def _run(stop_event: Optional[asyncio.Event] = None,
             t.cancel()
         try:
             await t
-        except (asyncio.CancelledError, Exception):
+        except asyncio.CancelledError:
+            if asyncio.current_task().cancelling():
+                raise
+        except Exception:
             pass
 
+    waiters = []
     try:
         await ws_pool.warmup()
         await cf_worker_pool.warmup()
@@ -637,6 +645,10 @@ async def _run(stop_event: Optional[asyncio.Event] = None,
             log.warning("Server restored, listening on %s:%d",
                         proxy_config.host, proxy_config.port)
     finally:
+        for task in waiters:
+            task.cancel()
+        if waiters:
+            await asyncio.gather(*waiters, return_exceptions=True)
         for task in list(_client_tasks):
             task.cancel()
         if _client_tasks:

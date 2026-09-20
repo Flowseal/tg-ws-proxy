@@ -1,8 +1,118 @@
 import os
 import unittest
+import asyncio
+from unittest.mock import patch
+
+import pytest
+
+from proxy import bridge
 
 from proxy._aes import Cipher, algorithms, modes
 from proxy.bridge import MsgSplitter
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('route', ['worker', 'cf', 'tcp'])
+async def test_failed_relay_init_closes_unowned_transport(monkeypatch, route):
+    class WebSocket:
+        closed = False
+        async def send(self, data):
+            raise RuntimeError('send failed')
+        async def close(self):
+            self.closed = True
+
+    class Writer:
+        closed = False
+        def write(self, data):
+            raise RuntimeError('write failed')
+        def close(self):
+            self.closed = True
+        async def wait_closed(self):
+            pass
+
+    if route == 'tcp':
+        transport = Writer()
+        async def connect(*args):
+            return object(), transport
+        monkeypatch.setattr(bridge.asyncio, 'open_connection', connect)
+        call = bridge._tcp_fallback(None, None, '127.0.0.1', 443,
+                                    b'init', 'test', None)
+    else:
+        transport = WebSocket()
+        async def connect(*args, **kwargs):
+            return transport
+        monkeypatch.setattr(bridge.RawWebSocket, 'connect', connect)
+        if route == 'worker':
+            monkeypatch.setattr(bridge.proxy_config, 'cfproxy_worker_domains',
+                                ['example.com'])
+            monkeypatch.setattr(bridge.cf_worker_pool, 'get',
+                                lambda *args: asyncio.sleep(0, result=None))
+            monkeypatch.setattr(bridge.cf_worker_pool, 'available_domains',
+                                lambda domains: domains)
+            call = bridge._cfproxy_worker_fallback(
+                None, None, b'init', 'test', None, dc=1,
+                is_test_dc=False, is_media=False, fallback_dst='127.0.0.1')
+        else:
+            monkeypatch.setattr(bridge.balancer, 'get_domains_for_dc',
+                                lambda dc: ['example.com'])
+            call = bridge._cfproxy_fallback(
+                None, None, b'init', 'test', None, dc=1, is_media=False)
+    with pytest.raises(RuntimeError, match='failed'):
+        await call
+    assert transport.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('route', ['worker', 'cf', 'tcp'])
+async def test_cancelled_relay_init_closes_unowned_transport(monkeypatch, route):
+    entered = asyncio.Event()
+    class Transport:
+        closed = False
+        def write(self, data):
+            pass
+        async def drain(self):
+            entered.set()
+            await asyncio.Future()
+        async def send(self, data):
+            await self.drain()
+        async def close(self):
+            self.closed = True
+        def close_writer(self):
+            self.closed = True
+
+    transport = Transport()
+    if route == 'tcp':
+        transport.close = transport.close_writer
+        async def connect(*args):
+            return object(), transport
+        monkeypatch.setattr(bridge.asyncio, 'open_connection', connect)
+        call = bridge._tcp_fallback(None, None, '127.0.0.1', 443,
+                                    b'init', 'test', None)
+    else:
+        async def connect(*args, **kwargs):
+            return transport
+        monkeypatch.setattr(bridge.RawWebSocket, 'connect', connect)
+        if route == 'worker':
+            monkeypatch.setattr(bridge.proxy_config, 'cfproxy_worker_domains',
+                                ['example.com'])
+            monkeypatch.setattr(bridge.cf_worker_pool, 'get',
+                                lambda *args: asyncio.sleep(0, result=None))
+            monkeypatch.setattr(bridge.cf_worker_pool, 'available_domains',
+                                lambda domains: domains)
+            call = bridge._cfproxy_worker_fallback(
+                None, None, b'init', 'test', None, dc=1,
+                is_test_dc=False, is_media=False, fallback_dst='127.0.0.1')
+        else:
+            monkeypatch.setattr(bridge.balancer, 'get_domains_for_dc',
+                                lambda dc: ['example.com'])
+            call = bridge._cfproxy_fallback(
+                None, None, b'init', 'test', None, dc=1, is_media=False)
+    task = asyncio.create_task(call)
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert transport.closed
 from proxy.utils import (
     PROTO_ABRIDGED_INT,
     PROTO_INTERMEDIATE_INT,

@@ -214,7 +214,11 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
             return False
 
     stats.connections_cfproxy += 1
-    await ws.send(relay_init)
+    try:
+        await ws.send(relay_init)
+    except BaseException:
+        await ws.close()
+        raise
     stats.last_transport_route = 'cf_worker_fallback'
     await bridge_ws_reencrypt(reader, writer, ws, label, ctx,
                               dc=dc, is_media=is_media,
@@ -251,7 +255,11 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
         log.info("[%s] Switched active CF domain", label)
 
     stats.connections_cfproxy += 1
-    await ws.send(relay_init)
+    try:
+        await ws.send(relay_init)
+    except BaseException:
+        await ws.close()
+        raise
     stats.last_transport_route = 'cfproxy_fallback'
     await bridge_ws_reencrypt(reader, writer, ws, label, ctx,
                                dc=dc, is_media=is_media,
@@ -269,8 +277,12 @@ async def _tcp_fallback(reader, writer, dst, port, relay_init, label, ctx: Crypt
         return False
 
     stats.connections_tcp_fallback += 1
-    rw.write(relay_init)
-    await rw.drain()
+    try:
+        rw.write(relay_init)
+        await rw.drain()
+    except BaseException:
+        rw.close()
+        raise
     stats.last_transport_route = 'tcp_fallback'
     await _bridge_tcp_reencrypt(reader, writer, rr, rw, label, ctx)
     return True

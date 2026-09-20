@@ -8,6 +8,92 @@ from proxy import tg_ws_proxy
 
 
 @pytest.mark.asyncio
+async def test_direct_relay_init_failure_closes_websocket(monkeypatch):
+    class Writer:
+        transport = None
+        def get_extra_info(self, key):
+            return None
+        def close(self):
+            pass
+        async def wait_closed(self):
+            pass
+
+    class WS:
+        closed = False
+        async def send(self, data):
+            raise RuntimeError('send failed')
+        async def close(self):
+            self.closed = True
+
+    ws = WS()
+    monkeypatch.setattr(tg_ws_proxy, 'set_sock_opts', lambda *args: None)
+    monkeypatch.setattr(tg_ws_proxy, '_read_client_init',
+                        lambda *args: asyncio.sleep(
+                            0, result=(b'handshake', None, Writer(), 'test')))
+    monkeypatch.setattr(tg_ws_proxy, '_try_handshake',
+                        lambda *args: (1, False, tg_ws_proxy.PROTO_TAG_ABRIDGED,
+                                       b'\x00' * 48))
+    monkeypatch.setattr(tg_ws_proxy, '_build_crypto_ctx', lambda *args: None)
+    monkeypatch.setattr(tg_ws_proxy.proxy_config, 'dc_redirects', {1: '127.0.0.1'})
+    monkeypatch.setattr(tg_ws_proxy.ws_pool, 'get',
+                        lambda *args: asyncio.sleep(0, result=ws))
+    monkeypatch.setattr(tg_ws_proxy, 'MsgSplitter', lambda *args: None)
+    await tg_ws_proxy._handle_client(None, Writer(), b'\x00' * 16)
+    assert ws.closed
+
+
+@pytest.mark.asyncio
+async def test_run_cancellation_during_child_cleanup_leaves_no_listener_tasks(monkeypatch):
+    original = dict(proxy_config.__dict__)
+    entered_cleanup = asyncio.Event()
+    watchdog_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    class Server:
+        sockets = []
+        def close(self):
+            pass
+        async def wait_closed(self):
+            pass
+        async def serve_forever(self):
+            await watchdog_started.wait()
+    monkeypatch.setattr(tg_ws_proxy.asyncio, 'start_server',
+                        lambda *args: asyncio.sleep(0, result=Server()))
+    monkeypatch.setattr(tg_ws_proxy.ws_pool, 'warmup', lambda: asyncio.sleep(0))
+    monkeypatch.setattr(tg_ws_proxy.cf_worker_pool, 'warmup',
+                        lambda: asyncio.sleep(0))
+    monkeypatch.setattr(tg_ws_proxy, 'LISTENER_CHECK_INTERVAL', 3600)
+    # The watchdog's cancellation cleanup is made observable via sleep.
+    original_sleep = tg_ws_proxy.asyncio.sleep
+    async def controlled_sleep(delay, *args, **kwargs):
+        if delay == 3600:
+            watchdog_started.set()
+            try:
+                await original_sleep(delay)
+            finally:
+                entered_cleanup.set()
+                await release_cleanup.wait()
+        else:
+            return await original_sleep(delay, *args, **kwargs)
+    monkeypatch.setattr(tg_ws_proxy.asyncio, 'sleep', controlled_sleep)
+    proxy_config.secret = '00' * 16
+    proxy_config.cfproxy_user_domains = ['example.com']
+    task = asyncio.create_task(tg_ws_proxy._run())
+    try:
+        await asyncio.wait_for(entered_cleanup.wait(), 2)
+        task.cancel()
+        release_cleanup.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await original_sleep(0)
+        assert not [t for t in asyncio.all_tasks()
+                    if not t.done() and '_listener_watchdog' in
+                    t.get_coro().__qualname__]
+    finally:
+        release_cleanup.set()
+        proxy_config.__dict__.update(original)
+
+
+@pytest.mark.asyncio
 async def test_warmup_failure_releases_listener_and_allows_restart(monkeypatch):
     original = dict(proxy_config.__dict__)
     original_route = stats.last_transport_route

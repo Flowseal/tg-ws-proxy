@@ -106,6 +106,15 @@ class RawWebSocket:
             timeout=min(timeout, 10),
         )
         
+        try:
+            return await RawWebSocket._finish_connect(
+                reader, writer, domain, path, timeout)
+        except BaseException:
+            writer.close()
+            raise
+
+    @staticmethod
+    async def _finish_connect(reader, writer, domain, path, timeout):
         set_sock_opts(writer.transport, proxy_config.buffer_size)
 
         ws_key = base64.b64encode(os.urandom(16)).decode()
