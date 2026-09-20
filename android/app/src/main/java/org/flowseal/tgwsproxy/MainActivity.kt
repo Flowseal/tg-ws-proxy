@@ -35,6 +35,14 @@ class MainActivity : AppCompatActivity() {
             mode to appearanceLabelForValue(mode)
         }
     }
+    private val languageOptions by lazy {
+        listOf("ru" to getString(R.string.language_russian),
+            "en" to getString(R.string.language_english))
+    }
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AndroidLanguageContext.wrap(newBase))
+    }
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -42,7 +50,7 @@ class MainActivity : AppCompatActivity() {
         if (!granted) {
             Toast.makeText(
                 this,
-                "Без уведомлений Android может скрыть foreground service.",
+                getString(R.string.notification_permission_warning),
                 Toast.LENGTH_LONG,
             ).show()
         }
@@ -78,6 +86,9 @@ class MainActivity : AppCompatActivity() {
         binding.cfProxyCustomDomainSwitch.setOnCheckedChangeListener { _, isChecked ->
             renderCustomCfProxyDomainState(isChecked)
         }
+        binding.cfProxyWorkerSwitch.setOnCheckedChangeListener { _, isChecked ->
+            renderWorkerDomainState(isChecked)
+        }
         binding.cfProxyTestButton.setOnClickListener { onCfProxyTestClicked() }
         binding.disableBatteryOptimizationButton.setOnClickListener {
             AndroidSystemStatus.openBatteryOptimizationSettings(this)
@@ -86,6 +97,7 @@ class MainActivity : AppCompatActivity() {
             AndroidSystemStatus.openAppSettings(this)
         }
         setupAppearanceDropdown()
+        setupLanguageDropdown()
 
         val config = settingsStore.load()
         renderConfig(config)
@@ -134,9 +146,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.errorText.isVisible = false
+        val languageChanged = settingsStore.load().language != config.language
         settingsStore.save(config)
         if (applyAppearance(config.appearance)) {
             pendingPostRecreateAction = postRecreateAction
+            return null
+        }
+        if (languageChanged) {
+            pendingPostRecreateAction = postRecreateAction
+            recreate()
             return null
         }
         pendingPostRecreateAction = PendingPostRecreateAction.NONE
@@ -233,11 +251,15 @@ class MainActivity : AppCompatActivity() {
         binding.portInput.setText(config.portText)
         binding.secretInput.setText(config.secretText)
         binding.appearanceInput.setText(appearanceLabelForValue(config.appearance), false)
+        binding.languageInput.setText(languageLabelForValue(config.language), false)
         binding.dcIpInput.setText(config.dcIpText)
         binding.cfProxySwitch.isChecked = config.cfproxy
-        binding.cfProxyPrioritySwitch.isChecked = config.cfproxyPriority
         binding.cfProxyCustomDomainSwitch.isChecked = config.cfproxyUserDomainEnabled
         binding.cfProxyUserDomainInput.setText(config.cfproxyUserDomainText)
+        binding.cfProxyWorkerSwitch.isChecked = config.cfproxyWorkerEnabled
+        binding.cfProxyWorkerDomainInput.setText(config.cfproxyWorkerDomainText)
+        binding.noSecureSwitch.isChecked = config.noSecure
+        binding.fakeTlsDomainInput.setText(config.fakeTlsDomain)
         binding.logMaxMbInput.setText(config.logMaxMbText)
         binding.bufferKbInput.setText(config.bufferKbText)
         binding.poolSizeInput.setText(config.poolSizeText)
@@ -246,6 +268,7 @@ class MainActivity : AppCompatActivity() {
         renderUpdateStatus(currentUpdateStatus, config.checkUpdates)
         renderCfProxyState(config.cfproxy)
         renderCustomCfProxyDomainState(binding.cfProxyCustomDomainSwitch.isChecked)
+        renderWorkerDomainState(binding.cfProxyWorkerSwitch.isChecked)
     }
 
     private fun collectConfigFromForm(): ProxyConfig {
@@ -255,18 +278,18 @@ class MainActivity : AppCompatActivity() {
             portText = binding.portInput.text?.toString().orEmpty(),
             secretText = binding.secretInput.text?.toString().orEmpty(),
             appearance = selectedAppearanceValue(),
+            language = selectedLanguageValue(),
             dcIpText = binding.dcIpInput.text?.toString().orEmpty(),
             cfproxy = binding.cfProxySwitch.isChecked,
-            cfproxyPriority = binding.cfProxyPrioritySwitch.isChecked,
+            cfproxyPriority = retained.cfproxyPriority,
             cfproxyUserDomainText = binding.cfProxyUserDomainInput.text?.toString().orEmpty(),
             cfproxyUserDomainEnabled = binding.cfProxyCustomDomainSwitch.isChecked,
-            cfproxyWorkerDomainText = retained.cfproxyWorkerDomainText,
-            cfproxyWorkerEnabled = retained.cfproxyWorkerEnabled,
-            noSecure = retained.noSecure,
-            fakeTlsDomain = retained.fakeTlsDomain,
+            cfproxyWorkerDomainText = binding.cfProxyWorkerDomainInput.text?.toString().orEmpty(),
+            cfproxyWorkerEnabled = binding.cfProxyWorkerSwitch.isChecked,
+            noSecure = binding.noSecureSwitch.isChecked,
+            fakeTlsDomain = binding.fakeTlsDomainInput.text?.toString().orEmpty(),
             forceTestDc = retained.forceTestDc,
             proxyProtocol = retained.proxyProtocol,
-            language = retained.language,
             logMaxMbText = binding.logMaxMbInput.text?.toString().orEmpty(),
             bufferKbText = binding.bufferKbInput.text?.toString().orEmpty(),
             poolSizeText = binding.poolSizeInput.text?.toString().orEmpty(),
@@ -276,7 +299,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onOpenReleasePageClicked() {
-        val url = currentUpdateStatus?.htmlUrl ?: RELEASES_PAGE_URL
+        val url = releasePageUrl(currentUpdateStatus)
         val opened = runCatching {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }.isSuccess
@@ -518,6 +541,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun setupLanguageDropdown() {
+        val adapter = NonFilteringArrayAdapter(
+            this, android.R.layout.simple_list_item_1, languageOptions.map { it.second },
+        )
+        binding.languageInput.setAdapter(adapter)
+        binding.languageInput.setOnClickListener { binding.languageInput.showDropDown() }
+        binding.languageInput.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) binding.languageInput.showDropDown()
+        }
+    }
+
     private fun applyAppearance(mode: String): Boolean {
         val nightMode = when (ProxyConfig.normalizeAppearance(mode)) {
             "light" -> AppCompatDelegate.MODE_NIGHT_NO
@@ -546,9 +580,17 @@ class MainActivity : AppCompatActivity() {
             ?: ProxyConfig.DEFAULT_APPEARANCE
     }
 
+    private fun languageLabelForValue(value: String): String =
+        languageOptions.firstOrNull { it.first == value }?.second
+            ?: getString(R.string.language_russian)
+
+    private fun selectedLanguageValue(): String {
+        val selectedLabel = binding.languageInput.text?.toString().orEmpty()
+        return languageOptions.firstOrNull { it.second == selectedLabel }?.first ?: "ru"
+    }
+
     private fun renderCfProxyState(enabled: Boolean) {
         val showDetails = shouldShowCfProxyDetails(enabled)
-        binding.cfProxyPrioritySwitch.isVisible = showDetails
         binding.cfProxyCustomDomainSwitch.isVisible = showDetails
         binding.cfProxyUserDomainLayout.isVisible = showDetails
         binding.cfProxyTestButton.isVisible = showDetails
@@ -564,9 +606,11 @@ class MainActivity : AppCompatActivity() {
         val allowEdit = shouldEnableCustomCfProxyDomain(enabled)
         binding.cfProxyUserDomainLayout.isEnabled = allowEdit
         binding.cfProxyUserDomainInput.isEnabled = allowEdit
-        if (!allowEdit) {
-            binding.cfProxyUserDomainInput.setText("")
-        }
+    }
+
+    private fun renderWorkerDomainState(enabled: Boolean) {
+        binding.cfProxyWorkerDomainLayout.isEnabled = enabled
+        binding.cfProxyWorkerDomainInput.isEnabled = enabled
     }
 
     companion object {
@@ -576,6 +620,10 @@ class MainActivity : AppCompatActivity() {
 
         @JvmStatic
         fun appearanceModes(): List<String> = listOf("auto", "light", "dark")
+
+        @JvmStatic
+        fun releasePageUrl(status: ProxyUpdateStatus?): String =
+            status?.htmlUrl?.takeIf { it == RELEASES_PAGE_URL } ?: RELEASES_PAGE_URL
 
         @JvmStatic
         fun shouldShowCfProxyDetails(enabled: Boolean): Boolean {

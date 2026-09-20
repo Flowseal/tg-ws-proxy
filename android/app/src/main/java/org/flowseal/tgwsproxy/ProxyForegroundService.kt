@@ -33,6 +33,10 @@ class ProxyForegroundService : Service() {
     private var trafficJob: Job? = null
     private var lastTrafficSample: TrafficSample? = null
 
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AndroidLanguageContext.wrap(newBase))
+    }
+
     override fun onCreate() {
         super.onCreate()
         settingsStore = ProxySettingsStore(this)

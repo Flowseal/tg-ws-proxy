@@ -30,7 +30,7 @@
     <string name="updates_status_newer">Installed version %1$s is newer than the latest GitHub release.</string>
     <string name="updates_status_available">Version %1$s is available on GitHub (installed: %2$s).</string>
     <string name="updates_status_error">Update check failed: %1$s</string>
-    <string name="updates_open_release_button">Open Release Page</string>
+    <string name="updates_open_release_button">Open Flowseal releases for Android APK</string>
     <string name="host_hint">Proxy host</string>
     <string name="port_hint">Proxy port</string>
     <string name="secret_hint">MTProto secret (32 hex characters)</string>
@@ -40,12 +40,16 @@
     <string name="appearance_auto">Auto</string>
     <string name="appearance_light">Light</string>
     <string name="appearance_dark">Dark</string>
+    <string name="language_label">Language</string>
+    <string name="language_english">English</string>
+    <string name="language_russian">Русский</string>
     <string name="dc_ip_hint">DC to IP mappings (one DC:IP per line)</string>
     <string name="cfproxy_section_label">CfProxy fallback</string>
     <string name="cfproxy_enable_label">Enable CfProxy fallback</string>
-    <string name="cfproxy_priority_label">Try CfProxy before direct TCP fallback</string>
     <string name="cfproxy_custom_domain_label">Custom domain</string>
-    <string name="cfproxy_user_domain_hint">CfProxy user domain</string>
+    <string name="cfproxy_user_domain_hint">Custom CfProxy domains (one per line)</string>
+    <string name="cfproxy_worker_enable_label">Enable CfProxy worker fallback</string>
+    <string name="cfproxy_worker_domains_hint">Worker domains (one per line)</string>
     <string name="cfproxy_test_button">CfProxy Test</string>
     <string name="cfproxy_test_running">Testing CfProxy…</string>
     <string name="cfproxy_test_passed">CfProxy OK: %1$s</string>
@@ -54,6 +58,8 @@
     <string name="buffer_kb_hint">Socket buffer size (KB)</string>
     <string name="pool_size_hint">WS pool size per DC</string>
     <string name="verbose_label">Verbose logging</string>
+    <string name="no_secure_label">Disable secure mode</string>
+    <string name="fake_tls_domain_hint">Fake TLS domain (optional)</string>
     <string name="save_button">Save Settings</string>
     <string name="start_button">Start Service</string>
     <string name="stop_button">Stop Service</string>
@@ -72,6 +78,7 @@
     <string name="notification_title">TG WS Proxy</string>
     <string name="notification_channel_name">Proxy service</string>
     <string name="notification_channel_description">Keeps the Telegram proxy service alive in the foreground.</string>
+    <string name="notification_permission_warning">Without notifications, Android may hide the foreground service.</string>
     <string name="notification_starting">Starting proxy %1$s:%2$d</string>
     <string name="notification_running">Proxy active %1$s:%2$d</string>
     <string name="notification_endpoint">%1$s:%2$d</string>

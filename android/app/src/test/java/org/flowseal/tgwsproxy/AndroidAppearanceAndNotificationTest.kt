@@ -10,6 +10,34 @@ import org.junit.Test
 
 class AndroidAppearanceAndNotificationTest {
     @Test
+    fun releaseActionAlwaysOpensUpstreamApkListingEvenForStaleOrFailedStatus() {
+        val expected = "https://github.com/Flowseal/tg-ws-proxy/releases/latest"
+        for (status in listOf(
+            null,
+            ProxyUpdateStatus(htmlUrl = expected),
+            ProxyUpdateStatus(htmlUrl = ""),
+            ProxyUpdateStatus(error = "offline", htmlUrl = "https://github.com/fork/releases/latest"),
+            ProxyUpdateStatus(htmlUrl = "https://example.org/windows-installer.exe"),
+        )) {
+            assertEquals(expected, MainActivity.releasePageUrl(status))
+        }
+    }
+    @Test
+    fun settingsLayoutExposesUpstreamControlsWithoutObsoletePriority() {
+        val layout = File(findResourcePath(
+            "app/src/main/res/layout/activity_main.xml",
+            "src/main/res/layout/activity_main.xml",
+        ).toString()).readText()
+        for (control in listOf(
+            "cfProxyCustomDomainSwitch", "cfProxyUserDomainInput",
+            "cfProxyWorkerSwitch", "cfProxyWorkerDomainInput",
+            "noSecureSwitch", "fakeTlsDomainInput", "languageInput",
+        )) {
+            assertTrue("Missing $control", layout.contains("@+id/$control"))
+        }
+        assertFalse(layout.contains("@+id/cfProxyPrioritySwitch"))
+    }
+    @Test
     fun disabledCustomDomainsDoNotClaimCustomRoute() {
         val config = ProxyConfig(
             cfproxy = true,

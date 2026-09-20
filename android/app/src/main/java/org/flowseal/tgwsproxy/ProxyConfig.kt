@@ -26,22 +26,24 @@ data class ProxyConfig(
     val verbose: Boolean = false,
 ) {
     fun validate(): ValidationResult {
+        fun error(ru: String, en: String): ValidationResult =
+            ValidationResult(errorMessage = if (language == "en") en else ru)
+
         val hostValue = host.trim()
         if (!isIpv4Address(hostValue)) {
-            return ValidationResult(errorMessage = "IP-адрес прокси указан некорректно.")
+            return error("IP-адрес прокси указан некорректно.", "Proxy IP address is invalid.")
         }
 
         val portValue = portText.trim().toIntOrNull()
-            ?: return ValidationResult(errorMessage = "Порт должен быть числом.")
+            ?: return error("Порт должен быть числом.", "Port must be a number.")
         if (portValue !in 1..65535) {
-            return ValidationResult(errorMessage = "Порт должен быть в диапазоне 1-65535.")
+            return error("Порт должен быть в диапазоне 1-65535.", "Port must be in the range 1-65535.")
         }
 
         val secretValue = secretText.trim().lowercase()
         if (secretValue.length != 32 || !secretValue.all { it in "0123456789abcdef" }) {
-            return ValidationResult(
-                errorMessage = "MTProto secret должен содержать ровно 32 hex-символа."
-            )
+            return error("MTProto secret должен содержать ровно 32 hex-символа.",
+                "MTProto secret must contain exactly 32 hex characters.")
         }
 
         val lines = dcIpText
@@ -51,7 +53,7 @@ data class ProxyConfig(
             .toList()
 
         if (lines.isEmpty()) {
-            return ValidationResult(errorMessage = "Добавьте хотя бы один DC:IP маппинг.")
+            return error("Добавьте хотя бы один DC:IP маппинг.", "Add at least one DC:IP mapping.")
         }
 
         for (line in lines) {
@@ -59,40 +61,29 @@ data class ProxyConfig(
             val dcValue = parts.firstOrNull()?.toIntOrNull()
             val ipValue = parts.getOrNull(1)?.trim().orEmpty()
             if (parts.size != 2 || dcValue == null || !isIpv4Address(ipValue)) {
-                return ValidationResult(errorMessage = "Строка \"$line\" должна быть в формате DC:IP.")
+                return error("Строка \"$line\" должна быть в формате DC:IP.",
+                    "Line \"$line\" must use the DC:IP format.")
             }
         }
 
         val appearanceValue = normalizeAppearance(appearance)
 
         val logMaxMbValue = logMaxMbText.trim().toDoubleOrNull()
-            ?: return ValidationResult(
-                errorMessage = "Размер лог-файла должен быть числом."
-            )
+            ?: return error("Размер лог-файла должен быть числом.", "Log size must be a number.")
         if (logMaxMbValue <= 0.0) {
-            return ValidationResult(
-                errorMessage = "Размер лог-файла должен быть больше нуля."
-            )
+            return error("Размер лог-файла должен быть больше нуля.", "Log size must be greater than zero.")
         }
 
         val bufferKbValue = bufferKbText.trim().toIntOrNull()
-            ?: return ValidationResult(
-                errorMessage = "Буфер сокета должен быть целым числом."
-            )
+            ?: return error("Буфер сокета должен быть целым числом.", "Socket buffer must be an integer.")
         if (bufferKbValue < 4) {
-            return ValidationResult(
-                errorMessage = "Буфер сокета должен быть не меньше 4 KB."
-            )
+            return error("Буфер сокета должен быть не меньше 4 KB.", "Socket buffer must be at least 4 KB.")
         }
 
         val poolSizeValue = poolSizeText.trim().toIntOrNull()
-            ?: return ValidationResult(
-                errorMessage = "Размер WS pool должен быть целым числом."
-            )
+            ?: return error("Размер WS pool должен быть целым числом.", "WS pool size must be an integer.")
         if (poolSizeValue < 0) {
-            return ValidationResult(
-                errorMessage = "Размер WS pool не может быть отрицательным."
-            )
+            return error("Размер WS pool не может быть отрицательным.", "WS pool size cannot be negative.")
         }
 
         val cfproxyValue = cfproxy
@@ -102,14 +93,17 @@ data class ProxyConfig(
         val workerDomains = splitDomains(cfproxyWorkerDomainText)
         val activeUserDomains = if (cfproxy && cfproxyUserDomainEnabled) userDomains else emptyList()
         val activeWorkerDomains = if (cfproxyWorkerEnabled) workerDomains else emptyList()
-        if ((activeUserDomains + activeWorkerDomains).any { !isHostname(it) } ||
-            (fakeTlsDomain.isNotBlank() && !isHostname(fakeTlsDomain.trim()))) {
-            return ValidationResult(
-                errorMessage = "CfProxy domain должен быть доменным именем без схемы и пути."
-            )
+        if ((activeUserDomains + activeWorkerDomains).any { !isHostname(it) }) {
+            return error("CfProxy domain должен быть доменным именем без схемы и пути.",
+                "CfProxy domain must be a hostname without scheme or path.")
+        }
+        if (fakeTlsDomain.isNotBlank() && !isHostname(fakeTlsDomain.trim())) {
+            return error("Fake TLS domain должен быть доменным именем без схемы и пути.",
+                "Fake TLS domain must be a hostname without scheme or path.")
         }
         if (fakeTlsDomain.any { it.code > 127 }) {
-            return ValidationResult(errorMessage = "Fake TLS domain должен содержать только ASCII-символы.")
+            return error("Fake TLS domain должен содержать только ASCII-символы.",
+                "Fake TLS domain must contain only ASCII characters.")
         }
 
         return ValidationResult(

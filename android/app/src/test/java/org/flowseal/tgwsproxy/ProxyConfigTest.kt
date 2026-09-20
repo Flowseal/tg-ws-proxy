@@ -8,6 +8,11 @@ import org.junit.Test
 
 class ProxyConfigTest {
     @Test
+    fun englishLanguageReturnsEnglishValidationErrors() {
+        val result = ProxyConfig(language = "en", fakeTlsDomain = "not/a/domain").validate()
+        assertEquals("Fake TLS domain must be a hostname without scheme or path.", result.errorMessage)
+    }
+    @Test
     fun multiDomainOptionsReachNormalizedConfig() {
         val config = ProxyConfig(
             cfproxyUserDomainText = "one.example\ntwo.example",

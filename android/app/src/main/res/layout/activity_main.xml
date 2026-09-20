@@ -63,6 +63,24 @@
                         android:inputType="none" />
                 </com.google.android.material.textfield.TextInputLayout>
 
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/languageLayout"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:hint="@string/language_label"
+                    app:endIconMode="dropdown_menu">
+
+                    <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                        android:id="@+id/languageInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:focusable="false"
+                        android:clickable="true"
+                        android:cursorVisible="false"
+                        android:inputType="none" />
+                </com.google.android.material.textfield.TextInputLayout>
+
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/donateButton"
                     style="@style/Widget.Material3.Button.OutlinedButton"
@@ -355,13 +373,6 @@
                     android:text="@string/cfproxy_enable_label" />
 
                 <com.google.android.material.materialswitch.MaterialSwitch
-                    android:id="@+id/cfProxyPrioritySwitch"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="@string/cfproxy_priority_label" />
-
-                <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/cfProxyCustomDomainSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -379,8 +390,32 @@
                         android:id="@+id/cfProxyUserDomainInput"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:inputType="textUri"
-                        android:maxLines="1" />
+                        android:gravity="top|start"
+                        android:inputType="textMultiLine|textNoSuggestions"
+                        android:minLines="3" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/cfProxyWorkerSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/cfproxy_worker_enable_label" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/cfProxyWorkerDomainLayout"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:hint="@string/cfproxy_worker_domains_hint">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/cfProxyWorkerDomainInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="top|start"
+                        android:inputType="textMultiLine|textNoSuggestions"
+                        android:minLines="3" />
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <com.google.android.material.button.MaterialButton
@@ -417,6 +452,27 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="14dp"
                     android:text="@string/verbose_label" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/noSecureSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/no_secure_label" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:hint="@string/fake_tls_domain_hint">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/fakeTlsDomainInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="textUri"
+                        android:maxLines="1" />
+                </com.google.android.material.textfield.TextInputLayout>
 
                 <com.google.android.material.textfield.TextInputLayout
                     android:layout_width="match_parent"

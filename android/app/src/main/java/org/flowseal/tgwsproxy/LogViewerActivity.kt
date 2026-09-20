@@ -1,5 +1,6 @@
 package org.flowseal.tgwsproxy
 
+import android.content.Context
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import org.flowseal.tgwsproxy.databinding.ActivityLogViewerBinding
@@ -7,6 +8,10 @@ import java.io.File
 
 class LogViewerActivity : AppCompatActivity() {
     private lateinit var binding: ActivityLogViewerBinding
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AndroidLanguageContext.wrap(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
