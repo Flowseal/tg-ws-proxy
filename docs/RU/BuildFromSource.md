@@ -36,7 +36,7 @@ tg-ws-proxy-tray-linux
 
 ## Android
 
-Для локальной сборки нужны JDK 17, Android SDK с платформой 34 и build-tools 34.0.0, Python 3.12 и доступ к Gradle/Chaquopy-зависимостям. Из корня репозитория:
+Для локальной сборки нужны JDK 17, Android SDK с платформой 34 и build-tools 34.0.0, Python 3.12 для `standard`, Python 3.11 для `legacy32` и доступ к Gradle/Chaquopy-зависимостям. Из корня репозитория:
 
 ```bash
 cd android

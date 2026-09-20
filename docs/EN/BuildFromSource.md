@@ -36,7 +36,7 @@ tg-ws-proxy-tray-linux
 
 ## Android
 
-Local builds require JDK 17, Android SDK platform 34 and build-tools 34.0.0, Python 3.12, and access to Gradle/Chaquopy dependencies. From the repository root:
+Local builds require JDK 17, Android SDK platform 34 and build-tools 34.0.0, Python 3.12 for `standard`, Python 3.11 for `legacy32`, and access to Gradle/Chaquopy dependencies. From the repository root:
 
 ```bash
 cd android

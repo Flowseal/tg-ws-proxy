@@ -565,6 +565,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
       - uses: android-actions/setup-android@v3
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
@@ -588,20 +591,46 @@ jobs:
       run:
         working-directory: android
     steps:
+      - name: Check Android signing secrets
+        id: signing
+        working-directory: .
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && \
+             [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            echo 'Android signing secrets unavailable; desktop release will proceed without APKs.'
+          fi
       - uses: actions/checkout@v6
+        if: steps.signing.outputs.available == 'true'
       - uses: actions/setup-java@v5
+        if: steps.signing.outputs.available == 'true'
         with:
           distribution: temurin
           java-version: "17"
           cache: gradle
           cache-dependency-path: android/**/*.gradle.kts
       - uses: actions/setup-python@v6
+        if: steps.signing.outputs.available == 'true'
         with:
           python-version: "3.12"
+      - uses: actions/setup-python@v6
+        if: steps.signing.outputs.available == 'true'
+        with:
+          python-version: "3.11"
       - uses: android-actions/setup-android@v3
+        if: steps.signing.outputs.available == 'true'
       - name: Install Android SDK packages
+        if: steps.signing.outputs.available == 'true'
         run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
       - name: Prepare signing keystore
+        if: steps.signing.outputs.available == 'true'
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -616,6 +645,7 @@ jobs:
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/android-release.keystore"
           test -s "$RUNNER_TEMP/android-release.keystore"
       - name: Build signed APKs
+        if: steps.signing.outputs.available == 'true'
         env:
           ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/android-release.keystore
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -623,6 +653,7 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: ./gradlew assembleStandardRelease assembleLegacy32Release
       - name: Stage release APKs
+        if: steps.signing.outputs.available == 'true'
         env:
           VERSION: ${{ github.event.inputs.version }}
         run: |
@@ -631,6 +662,7 @@ jobs:
           cp app/build/outputs/apk/standard/release/app-standard-release.apk "dist/tg-ws-proxy-android-${VERSION}.apk"
           cp app/build/outputs/apk/legacy32/release/app-legacy32-release.apk "dist/tg-ws-proxy-android-${VERSION}-legacy32.apk"
       - uses: actions/upload-artifact@v7
+        if: steps.signing.outputs.available == 'true'
         with:
           name: TgWsProxy-android-release
           path: android/dist/*.apk
@@ -640,12 +672,18 @@ jobs:
     needs: [build-windows-x64, build-windows-arm64, build-win7, build-macos, build-linux, validate-android, build-android-release]
     runs-on: ubuntu-latest
     if: >-
-      ${{ github.event.inputs.make_release == 'true'
+      ${{ !cancelled()
+          && github.event.inputs.make_release == 'true'
           && github.event.inputs.build_windows_x64 == 'true'
           && github.event.inputs.build_windows_arm64 == 'true'
           && github.event.inputs.build_win7 == 'true'
           && github.event.inputs.build_macos == 'true'
-          && github.event.inputs.build_linux == 'true' }}
+          && github.event.inputs.build_linux == 'true'
+          && needs.build-windows-x64.result == 'success'
+          && needs.build-windows-arm64.result == 'success'
+          && needs.build-win7.result == 'success'
+          && needs.build-macos.result == 'success'
+          && needs.build-linux.result == 'success' }}
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -674,8 +712,8 @@ jobs:
             dist/TgWsProxy_linux_amd64
             dist/TgWsProxy_linux_amd64.deb
             dist/TgWsProxy_linux_amd64.rpm
-            dist/tg-ws-proxy-android-${{ github.event.inputs.version }}.apk
-            dist/tg-ws-proxy-android-${{ github.event.inputs.version }}-legacy32.apk
+            dist/tg-ws-proxy-android-*.apk
+          fail_on_unmatched_files: false
           draft: false
           prerelease: false
         env:
