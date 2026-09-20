@@ -19,6 +19,41 @@ class FakeThread:
         self.alive = False
 
 
+def test_disabled_invalid_domains_are_retained_but_not_applied(tmp_path):
+    original = dict(core_config.proxy_config.__dict__)
+    runtime = ProxyAppRuntime(tmp_path, thread_factory=FakeThread)
+    legacy = 'https://legacy.example/path'
+    try:
+        for fallback_enabled, user_enabled in ((False, True), (True, False)):
+            assert runtime.start_proxy({
+                'dc_ip': ['2:149.154.167.220'],
+                'cfproxy': fallback_enabled,
+                'cfproxy_user_domain': [legacy],
+                'cfproxy_user_domain_enabled': user_enabled,
+                'cfproxy_worker_domain': [legacy],
+                'cfproxy_worker_enabled': False,
+            })
+            assert runtime.config['cfproxy_user_domain'] == [legacy]
+            assert runtime.config['cfproxy_worker_domain'] == [legacy]
+            assert core_config.proxy_config.cfproxy_user_domains == []
+            assert core_config.proxy_config.cfproxy_worker_domains == []
+            runtime.stop_proxy()
+        assert not runtime.start_proxy({
+            'dc_ip': ['2:149.154.167.220'],
+            'cfproxy': True,
+            'cfproxy_user_domain': [legacy],
+            'cfproxy_user_domain_enabled': True,
+        })
+        assert not runtime.start_proxy({
+            'dc_ip': ['2:149.154.167.220'],
+            'cfproxy_worker_domain': [legacy],
+            'cfproxy_worker_enabled': True,
+        })
+    finally:
+        runtime.stop_proxy()
+        core_config.proxy_config.__dict__.update(original)
+
+
 def test_mapping_and_singleton(tmp_path):
     original = dict(core_config.proxy_config.__dict__)
     runtime = ProxyAppRuntime(tmp_path, thread_factory=FakeThread)

@@ -141,7 +141,11 @@ class ProxyAppRuntime:
                 active.get('cfproxy_user_domains', active.get('cfproxy_user_domain', '')))
             worker_domains = core_config.coerce_domain_list(
                 active.get('cfproxy_worker_domain', []))
-            for domain in user_domains + worker_domains:
+            active_user_domains = (user_domains if active.get('cfproxy', True) and
+                                   active.get('cfproxy_user_domain_enabled', True) else [])
+            active_worker_domains = (worker_domains if
+                                     active.get('cfproxy_worker_enabled', False) else [])
+            for domain in active_user_domains + active_worker_domains:
                 if not core_config._is_valid_domain(domain):
                     raise ValueError('Invalid CF domain: %s' % domain)
             secret = str(active.get('secret') or '').strip() or os.urandom(16).hex()
@@ -152,8 +156,8 @@ class ProxyAppRuntime:
                 buffer_size=max(4, int(active['buf_kb'])) * 1024,
                 pool_size=max(0, int(active['pool_size'])),
                 fallback_cfproxy=bool(active['cfproxy']),
-                cfproxy_user_domains=user_domains if active.get('cfproxy_user_domain_enabled', True) else [],
-                cfproxy_worker_domains=worker_domains if active.get('cfproxy_worker_enabled', False) else [],
+                cfproxy_user_domains=active_user_domains,
+                cfproxy_worker_domains=active_worker_domains,
                 disable_secure=bool(active.get('no_secure', False)),
                 force_test_dc=bool(active.get('force_test_dc', False)),
                 fake_tls_domain=str(active.get('fake_tls_domain') or ''),

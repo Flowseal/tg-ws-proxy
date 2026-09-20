@@ -36,6 +36,12 @@ def _normalize_dc_ip_list(values):
     return [str(item).strip() for item in items if str(item).strip()]
 
 
+def _normalize_domain_list(values):
+    if isinstance(values, str):
+        return [values] if values.strip() else []
+    return _normalize_dc_ip_list(values)
+
+
 def start_proxy(app_dir, host, port, secret, dc_ip_list, log_max_mb=5.0,
                 buf_kb=256, pool_size=4, verbose=False, cfproxy=True,
                 cfproxy_user_domain='', cfproxy_user_domain_enabled=True,
@@ -59,9 +65,10 @@ def start_proxy(app_dir, host, port, secret, dc_ip_list, log_max_mb=5.0,
             'dc_ip': _normalize_dc_ip_list(dc_ip_list),
             'log_max_mb': float(log_max_mb), 'buf_kb': int(buf_kb),
             'pool_size': int(pool_size), 'verbose': bool(verbose),
-            'cfproxy': bool(cfproxy), 'cfproxy_user_domain': cfproxy_user_domain,
+            'cfproxy': bool(cfproxy),
+            'cfproxy_user_domain': _normalize_domain_list(cfproxy_user_domain),
             'cfproxy_user_domain_enabled': bool(cfproxy_user_domain_enabled),
-            'cfproxy_worker_domain': cfproxy_worker_domain or [],
+            'cfproxy_worker_domain': _normalize_domain_list(cfproxy_worker_domain),
             'cfproxy_worker_enabled': bool(cfproxy_worker_enabled),
             'no_secure': bool(no_secure), 'force_test_dc': bool(force_test_dc),
             'fake_tls_domain': fake_tls_domain,

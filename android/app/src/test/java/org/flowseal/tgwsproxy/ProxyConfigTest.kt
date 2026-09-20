@@ -99,13 +99,35 @@ class ProxyConfigTest {
     }
 
     @Test
-    fun validate_rejects_invalid_retained_cfproxy_domain_before_python_boundary() {
+    fun validate_retains_invalid_cfproxy_domain_when_fallback_disabled() {
         val result = validConfig(
             cfproxy = false,
             cfproxyUserDomainText = "https://cdn.example.com/path",
         ).validate()
 
-        assertEquals("CfProxy domain должен быть доменным именем без схемы и пути.", result.errorMessage)
+        assertNull(result.errorMessage)
+        assertEquals("https://cdn.example.com/path", result.normalized?.cfproxyUserDomain)
+    }
+
+    @Test
+    fun validate_retains_invalid_user_and_worker_domains_when_their_flags_are_disabled() {
+        val result = validConfig().copy(
+            cfproxyUserDomainText = "https://legacy.example/path",
+            cfproxyUserDomainEnabled = false,
+            cfproxyWorkerDomainText = "https://worker.example/path",
+            cfproxyWorkerEnabled = false,
+        ).validate()
+
+        assertNull(result.errorMessage)
+        assertEquals(listOf("https://legacy.example/path"), result.normalized?.cfproxyUserDomains)
+        assertEquals(listOf("https://worker.example/path"), result.normalized?.cfproxyWorkerDomains)
+    }
+
+    @Test
+    fun validate_rejects_unicode_fake_tls_domain_before_ascii_link_encoding() {
+        val result = validConfig().copy(fakeTlsDomain = "пример.example").validate()
+
+        assertEquals("Fake TLS domain должен содержать только ASCII-символы.", result.errorMessage)
     }
 
     @Test

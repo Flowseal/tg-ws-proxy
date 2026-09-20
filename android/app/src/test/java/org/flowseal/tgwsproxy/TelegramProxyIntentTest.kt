@@ -3,9 +3,16 @@ package org.flowseal.tgwsproxy
 import android.content.ActivityNotFoundException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class TelegramProxyIntentTest {
+    @Test
+    fun fakeTlsUriRejectsNonAsciiDomainRatherThanReplacingCharacters() {
+        assertThrows(IllegalArgumentException::class.java) {
+            TelegramProxyIntent.proxyUri(config.copy(fakeTlsDomain = "пример.example"))
+        }
+    }
     @Test
     fun fakeTlsUriUsesUpstreamEeSecretWithHexDomain() {
         val fakeTls = config.copy(fakeTlsDomain = "tls.example")

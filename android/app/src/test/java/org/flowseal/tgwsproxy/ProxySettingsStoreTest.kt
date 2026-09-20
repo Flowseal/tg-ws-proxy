@@ -10,6 +10,21 @@ import org.junit.Test
 
 class ProxySettingsStoreTest {
     @Test
+    fun disabledLegacyDomainSurvivesMigrationWithoutBlockingValidation() {
+        val context = TestContext()
+        val preferences = context.getSharedPreferences("proxy_settings", Context.MODE_PRIVATE)
+        preferences.edit()
+            .putBoolean("cfproxy", false)
+            .putString("cfproxy_user_domain", "https://legacy.example/path")
+            .apply()
+        val store = ProxySettingsStore(context)
+
+        val normalized = store.load().validate().normalized!!
+        assertEquals("https://legacy.example/path", normalized.cfproxyUserDomain)
+        store.save(normalized)
+        assertEquals("https://legacy.example/path", store.load().cfproxyUserDomainText)
+    }
+    @Test
     fun legacySingleDomainMigratesAndNewFieldsRoundTrip() {
         val context = TestContext()
         val prefs = context.getSharedPreferences("proxy_settings", Context.MODE_PRIVATE)

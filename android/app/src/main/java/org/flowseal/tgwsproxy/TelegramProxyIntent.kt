@@ -11,6 +11,9 @@ object TelegramProxyIntent {
 
     fun proxyUri(config: NormalizedProxyConfig): String {
         val secret = if (config.fakeTlsDomain.isNotBlank()) {
+            require(config.fakeTlsDomain.all { it.code <= 127 }) {
+                "Fake TLS domain must contain only ASCII characters"
+            }
             val domainHex = config.fakeTlsDomain.toByteArray(Charsets.US_ASCII)
                 .joinToString("") { "%02x".format(it) }
             "ee${config.secret}$domainHex"

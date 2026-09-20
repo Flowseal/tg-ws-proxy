@@ -100,11 +100,16 @@ data class ProxyConfig(
         val cfproxyUserDomainValue = cfproxyUserDomainText.trim()
         val userDomains = splitDomains(cfproxyUserDomainValue)
         val workerDomains = splitDomains(cfproxyWorkerDomainText)
-        if ((userDomains + workerDomains).any { !isHostname(it) } ||
+        val activeUserDomains = if (cfproxy && cfproxyUserDomainEnabled) userDomains else emptyList()
+        val activeWorkerDomains = if (cfproxyWorkerEnabled) workerDomains else emptyList()
+        if ((activeUserDomains + activeWorkerDomains).any { !isHostname(it) } ||
             (fakeTlsDomain.isNotBlank() && !isHostname(fakeTlsDomain.trim()))) {
             return ValidationResult(
                 errorMessage = "CfProxy domain должен быть доменным именем без схемы и пути."
             )
+        }
+        if (fakeTlsDomain.any { it.code > 127 }) {
+            return ValidationResult(errorMessage = "Fake TLS domain должен содержать только ASCII-символы.")
         }
 
         return ValidationResult(
