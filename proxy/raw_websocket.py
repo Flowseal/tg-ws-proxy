@@ -237,12 +237,13 @@ class RawWebSocket:
         try:
             self.writer.write(
                 self._build_frame(self.OP_CLOSE, b'', mask=True))
-            await self.writer.drain()
+            await asyncio.wait_for(self.writer.drain(), timeout=1.0)
         except Exception:
             pass
-        try:
+        finally:
             self.writer.close()
-            await self.writer.wait_closed()
+        try:
+            await asyncio.wait_for(self.writer.wait_closed(), timeout=1.0)
         except Exception:
             pass
 

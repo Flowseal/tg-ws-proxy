@@ -475,6 +475,12 @@ _server_stop_event = None
 _client_tasks: Set[asyncio.Task] = set()
 
 
+async def _quiet_cancel(task):
+    if not task.done():
+        task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
 async def _run(stop_event: Optional[asyncio.Event] = None,
                on_ready: Optional[Callable[[], None]] = None):
     global _server_instance, _server_stop_event
@@ -560,17 +566,6 @@ async def _run(stop_event: Optional[asyncio.Event] = None,
             raise
 
     log_stats_task = asyncio.create_task(log_stats())
-
-    async def _quiet_cancel(t):
-        if not t.done():
-            t.cancel()
-        try:
-            await t
-        except asyncio.CancelledError:
-            if asyncio.current_task().cancelling():
-                raise
-        except Exception:
-            pass
 
     waiters = []
     try:

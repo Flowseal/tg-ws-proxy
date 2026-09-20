@@ -54,6 +54,31 @@ class ConnectCleanupTest(unittest.IsolatedAsyncioTestCase):
                 await task
         self.assertTrue(writer.closed)
 
+    async def test_cancelled_close_still_closes_writer(self):
+        entered = asyncio.Event()
+
+        class Writer(_NullWriter):
+            closed = False
+
+            async def drain(self):
+                entered.set()
+                await asyncio.Future()
+
+            def close(self):
+                self.closed = True
+
+            async def wait_closed(self):
+                pass
+
+        writer = Writer()
+        ws = RawWebSocket(asyncio.StreamReader(), writer)
+        task = asyncio.create_task(ws.close())
+        await entered.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertTrue(writer.closed)
+
 
 def _recv(chunks, cls=RawWebSocket):
     async def _run():

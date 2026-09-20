@@ -8,6 +8,34 @@ from proxy import tg_ws_proxy
 
 
 @pytest.mark.asyncio
+async def test_quiet_cancel_propagates_parent_cancellation():
+    child_started = asyncio.Event()
+    child_cleanup = asyncio.Event()
+    release_child = asyncio.Event()
+
+    async def child():
+        child_started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            child_cleanup.set()
+            await release_child.wait()
+
+    task = asyncio.create_task(child())
+    try:
+        await child_started.wait()
+        cleanup = asyncio.create_task(tg_ws_proxy._quiet_cancel(task))
+        await child_cleanup.wait()
+        cleanup.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cleanup
+    finally:
+        release_child.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_direct_relay_init_failure_closes_websocket(monkeypatch):
     class Writer:
         transport = None
