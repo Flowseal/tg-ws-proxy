@@ -71,28 +71,16 @@ object PythonProxyBridge {
 
     fun runCfProxyTest(
         context: Context,
-        config: NormalizedProxyConfig,
-        worker: Boolean = false,
+        request: CfProxyDiagnosticRequest,
     ): CfProxyTestResult {
         val payload = getModule(context).callAttr(
-            "run_cfproxy_test_json", *diagnosticArguments(config, worker).toTypedArray(),
+            "run_cfproxy_test_json", *diagnosticArguments(request).toTypedArray(),
         ).toString()
         return parseCfProxyTestResult(payload)
     }
 
-    internal fun diagnosticArguments(config: NormalizedProxyConfig, worker: Boolean): List<Any> {
-        val mode = when {
-            worker -> "worker"
-            config.cfproxyUserDomainEnabled && config.cfproxyUserDomains.isNotEmpty() -> "custom"
-            else -> "auto"
-        }
-        val domains = when (mode) {
-            "worker" -> config.cfproxyWorkerDomains
-            "custom" -> config.cfproxyUserDomains
-            else -> emptyList()
-        }
-        return listOf(mode, domains, config.noSecure)
-    }
+    internal fun diagnosticArguments(request: CfProxyDiagnosticRequest): List<Any> =
+        listOf(request.mode, request.domains, request.noSecure)
 
     internal fun parseCfProxyTestResult(payload: String): CfProxyTestResult {
         val json = JSONObject(payload)

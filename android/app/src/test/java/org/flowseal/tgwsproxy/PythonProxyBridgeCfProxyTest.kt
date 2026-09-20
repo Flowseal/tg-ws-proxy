@@ -9,18 +9,21 @@ import org.junit.Test
 class PythonProxyBridgeCfProxyTest {
     @Test
     fun diagnosticArgumentsChooseAutoCustomWorkerAndSecurity() {
-        val auto = ProxyConfig(cfproxyUserDomainText = "saved.example",
-            cfproxyUserDomainEnabled = false, noSecure = true).validate().normalized!!
+        val auto = CfProxyDiagnosticRequest.fromForm(worker = false,
+            customEnabled = false, customText = "saved.example", workerEnabled = false,
+            workerText = "", noSecure = true).request!!
         assertEquals(listOf("auto", emptyList<String>(), true),
-            PythonProxyBridge.diagnosticArguments(auto, worker = false))
-        val custom = ProxyConfig(cfproxyUserDomainText = "one.example\ntwo.example",
-            cfproxyUserDomainEnabled = true).validate().normalized!!
+            PythonProxyBridge.diagnosticArguments(auto))
+        val custom = CfProxyDiagnosticRequest.fromForm(worker = false,
+            customEnabled = true, customText = "one.example\ntwo.example",
+            workerEnabled = false, workerText = "", noSecure = false).request!!
         assertEquals(listOf("custom", listOf("one.example", "two.example"), false),
-            PythonProxyBridge.diagnosticArguments(custom, worker = false))
-        val worker = ProxyConfig(cfproxyWorkerDomainText = "w1.example\nw2.example",
-            cfproxyWorkerEnabled = true, noSecure = true).validate().normalized!!
+            PythonProxyBridge.diagnosticArguments(custom))
+        val worker = CfProxyDiagnosticRequest.fromForm(worker = true,
+            customEnabled = false, customText = "", workerEnabled = true,
+            workerText = "w1.example\nw2.example", noSecure = true).request!!
         assertEquals(listOf("worker", listOf("w1.example", "w2.example"), true),
-            PythonProxyBridge.diagnosticArguments(worker, worker = true))
+            PythonProxyBridge.diagnosticArguments(worker))
     }
     @Test
     fun diagnosticMapKeepsPerDomainPartialFailureDetails() {

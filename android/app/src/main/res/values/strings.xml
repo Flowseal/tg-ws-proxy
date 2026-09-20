@@ -67,6 +67,9 @@
     <string name="cfproxy_test_selected">Selected: %1$s</string>
     <string name="cfproxy_test_worker_required">Enable worker fallback and enter at least one domain.</string>
     <string name="cfproxy_test_custom_required">Enter at least one custom domain or disable custom mode.</string>
+    <string name="cfproxy_test_invalid_domain">Diagnostic domain must be an ASCII hostname without scheme or path.</string>
+    <string name="cfproxy_test_auto_pool">automatic domain pool</string>
+    <string name="cfproxy_tested_inputs">Tested: %1$s · %2$s · %3$s</string>
     <string name="log_max_mb_hint">Max log size before rotation (MB)</string>
     <string name="buffer_kb_hint">Socket buffer size (KB)</string>
     <string name="pool_size_hint">WS pool size per DC</string>

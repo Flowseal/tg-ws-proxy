@@ -67,6 +67,9 @@
     <string name="cfproxy_test_selected">Выбран: %1$s</string>
     <string name="cfproxy_test_worker_required">Включите резерв worker и укажите хотя бы один домен.</string>
     <string name="cfproxy_test_custom_required">Укажите свой домен или отключите режим своих доменов.</string>
+    <string name="cfproxy_test_invalid_domain">Для проверки нужен ASCII-домен без схемы и пути.</string>
+    <string name="cfproxy_test_auto_pool">автоматический пул доменов</string>
+    <string name="cfproxy_tested_inputs">Проверено: %1$s · %2$s · %3$s</string>
     <string name="log_max_mb_hint">Максимальный размер лога (МБ)</string>
     <string name="buffer_kb_hint">Буфер сокета (КБ)</string>
     <string name="pool_size_hint">Размер WS pool для каждого DC</string>

@@ -8,6 +8,7 @@ import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.lifecycle.ViewModelProvider
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import org.junit.Assert.assertEquals
@@ -15,15 +16,51 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 @RunWith(AndroidJUnit4::class)
 class SettingsUiParityTest {
     @Test
+    fun diagnosticResultNamesOriginalInputsAfterFormChangesAndRecreation() {
+        prepare()
+        val release = CountDownLatch(1)
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val request = CfProxyDiagnosticRequest("custom", listOf("original.example"), true)
+                val model = ViewModelProvider(activity)[CfProxyDiagnosticsViewModel::class.java]
+                model.run(request) {
+                    check(release.await(20, TimeUnit.SECONDS))
+                    CfProxyTestResult(mode = "custom", secure = false,
+                        successCount = 1, totalCount = 6,
+                        perDomain = mapOf("original.example" to mapOf("1" to "ok")))
+                }
+                view<EditText>(activity, "cfProxyUserDomainInput").setText("edited.example")
+                view<MaterialSwitch>(activity, "cfProxyCustomDomainSwitch").isChecked = false
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            scenario.onActivity { activity ->
+                assertTrue(view<TextView>(activity, "cfProxyTestResult")
+                    .text.contains("original.example"))
+            }
+            release.countDown()
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            scenario.recreate()
+            scenario.onActivity { activity ->
+                val text = view<TextView>(activity, "cfProxyTestResult").text.toString()
+                assertTrue(text.contains("original.example"))
+                assertFalse(text.contains("edited.example"))
+                assertTrue(text.contains(activity.getString(R.string.cfproxy_test_insecure)))
+            }
+        }
+    }
+
+    @Test
     fun packagedDiagnosticsHelperLoadsWithoutNetwork() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val config = ProxyConfig().validate().normalized!!
         val failure = runCatching {
-            PythonProxyBridge.runCfProxyTest(context, config, worker = true)
+            PythonProxyBridge.runCfProxyTest(context,
+                CfProxyDiagnosticRequest("worker", emptyList(), noSecure = false))
         }.exceptionOrNull()
         assertTrue("Expected empty worker-domain validation", failure != null)
         assertTrue(failure.toString().contains("At least one domain is required"))
@@ -48,6 +85,10 @@ class SettingsUiParityTest {
                 view<MaterialSwitch>(activity, "cfProxySwitch").isChecked = false
                 view<MaterialSwitch>(activity, "cfProxyWorkerSwitch").isChecked = true
                 view<EditText>(activity, "cfProxyWorkerDomainInput").setText("")
+                view<EditText>(activity, "hostInput").setText("invalid host")
+                view<EditText>(activity, "secretInput").setText("invalid secret")
+                view<EditText>(activity, "dcIpInput").setText("invalid dc")
+                view<EditText>(activity, "logMaxMbInput").setText("invalid log")
                 val workerButton = view<View>(activity, "cfProxyWorkerTestButton")
                 assertTrue(workerButton.isShown)
                 assertTrue(workerButton.isEnabled)

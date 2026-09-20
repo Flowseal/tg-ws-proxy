@@ -320,21 +320,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onCfProxyTestClicked(worker: Boolean) {
-        val validation = collectConfigFromForm().validate()
-        val config = validation.normalized
-        if (config == null) {
-            diagnosticsModel.reportValidationError(validation.errorMessage.orEmpty())
+        val validation = CfProxyDiagnosticRequest.fromForm(
+            worker = worker,
+            customEnabled = binding.cfProxyCustomDomainSwitch.isChecked,
+            customText = binding.cfProxyUserDomainInput.text?.toString().orEmpty(),
+            workerEnabled = binding.cfProxyWorkerSwitch.isChecked,
+            workerText = binding.cfProxyWorkerDomainInput.text?.toString().orEmpty(),
+            noSecure = binding.noSecureSwitch.isChecked,
+        )
+        val request = validation.request
+        if (request == null) {
+            val message = when (validation.error) {
+                CfProxyDiagnosticError.CUSTOM_REQUIRED -> R.string.cfproxy_test_custom_required
+                CfProxyDiagnosticError.WORKER_REQUIRED -> R.string.cfproxy_test_worker_required
+                else -> R.string.cfproxy_test_invalid_domain
+            }
+            diagnosticsModel.reportValidationError(getString(message))
             return
         }
-        if (worker && (!config.cfproxyWorkerEnabled || config.cfproxyWorkerDomains.isEmpty())) {
-            diagnosticsModel.reportValidationError(getString(R.string.cfproxy_test_worker_required))
-            return
-        }
-        if (!worker && config.cfproxyUserDomainEnabled && config.cfproxyUserDomains.isEmpty()) {
-            diagnosticsModel.reportValidationError(getString(R.string.cfproxy_test_custom_required))
-            return
-        }
-        diagnosticsModel.run(applicationContext, config, worker)
+        diagnosticsModel.run(applicationContext, request)
     }
 
     private fun renderDiagnosticsState(state: CfProxyDiagnosticsState) {
@@ -380,8 +384,23 @@ class MainActivity : AppCompatActivity() {
             }
             else -> ""
         }
-        binding.cfProxyTestResult.text = text
-        binding.cfProxyTestResult.isVisible = text.isNotEmpty()
+        val testedInputs = state.request?.let { request ->
+            val mode = when (request.mode) {
+                "worker" -> R.string.cfproxy_test_mode_worker
+                "custom" -> R.string.cfproxy_test_mode_custom
+                else -> R.string.cfproxy_test_mode_auto
+            }
+            getString(R.string.cfproxy_tested_inputs,
+                getString(mode),
+                getString(if (request.noSecure) R.string.cfproxy_test_insecure
+                    else R.string.cfproxy_test_secure),
+                if (request.mode == "auto") getString(R.string.cfproxy_test_auto_pool)
+                else request.domains.joinToString(", "))
+        }
+        val visibleText = listOfNotNull(testedInputs, text.takeIf { it.isNotEmpty() })
+            .joinToString("\n")
+        binding.cfProxyTestResult.text = visibleText
+        binding.cfProxyTestResult.isVisible = visibleText.isNotEmpty()
     }
 
     private fun refreshUpdateStatus(checkNow: Boolean) {
