@@ -1,4 +1,5 @@
 import asyncio
+import threading
 
 import proxy.config as core_config
 from proxy.app_runtime import ProxyAppRuntime
@@ -91,4 +92,60 @@ def test_bind_failure_and_stop_event(tmp_path):
     runtime._run_proxy_thread()
     assert 'Порт уже используется' in errors[0]
     assert not runtime.is_proxy_running()
+    runtime.stop_proxy()
+
+
+def test_stop_before_event_publication_is_delivered(tmp_path, monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    observed = threading.Event()
+    original_event = asyncio.Event
+
+    def delayed_event():
+        entered.set()
+        assert release.wait(3)
+        return original_event()
+
+    async def run(stop_event, on_ready=None):
+        await stop_event.wait()
+        observed.set()
+
+    monkeypatch.setattr(asyncio, 'Event', delayed_event)
+    runtime = ProxyAppRuntime(tmp_path, run_proxy=run)
+    assert runtime.start_proxy({'dc_ip': ['2:149.154.167.220']})
+    assert entered.wait(3)
+    runtime.stop_proxy()
+    release.set()
+    runtime._proxy_thread.join(3)
+    assert observed.wait(1)
+    assert not runtime.is_proxy_running()
+
+
+def test_stop_ignores_closed_loop_race(tmp_path):
+    runtime = ProxyAppRuntime(tmp_path)
+    class ClosedLoop:
+        def call_soon_threadsafe(self, callback):
+            raise RuntimeError('Event loop is closed')
+    runtime._async_stop = (ClosedLoop(), asyncio.Event())
+    runtime.stop_proxy()
+
+
+def test_ready_event_requires_core_callback(tmp_path):
+    waiting = threading.Event()
+    release = threading.Event()
+
+    async def slow_bind(stop_event, on_ready=None):
+        waiting.set()
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        if on_ready:
+            on_ready()
+        await stop_event.wait()
+
+    runtime = ProxyAppRuntime(tmp_path, run_proxy=slow_bind)
+    assert runtime.start_proxy({'dc_ip': ['2:149.154.167.220']})
+    assert waiting.wait(3)
+    assert not runtime.wait_until_ready(timeout=0.05)
+    release.set()
+    assert runtime.wait_until_ready(timeout=3)
     runtime.stop_proxy()

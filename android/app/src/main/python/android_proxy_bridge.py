@@ -2,7 +2,6 @@
 import json
 import os
 import threading
-import time
 from pathlib import Path
 
 # Chaquopy cannot rely on desktop cryptography or system libcrypto.
@@ -71,15 +70,13 @@ def start_proxy(app_dir, host, port, secret, dc_ip_list, log_max_mb=5.0,
         if not runtime.start_proxy(cfg):
             raise RuntimeError(_LAST_ERROR or 'Failed to start proxy runtime.')
         _RUNTIME = runtime
-    for _ in range(10):
-        time.sleep(0.1)
-        with _LOCK:
-            if _LAST_ERROR or not runtime.is_proxy_running():
-                runtime.stop_proxy()
-                _RUNTIME = None
-                raise RuntimeError(_LAST_ERROR or 'Proxy runtime stopped during startup.')
-            return str(runtime.log_file)
-    raise RuntimeError('Proxy runtime did not become ready in time.')
+    ready = runtime.wait_until_ready(timeout=10)
+    with _LOCK:
+        if _LAST_ERROR or not ready or not runtime.is_proxy_running():
+            runtime.stop_proxy()
+            _RUNTIME = None
+            raise RuntimeError(_LAST_ERROR or 'Proxy runtime did not bind before timeout.')
+        return str(runtime.log_file)
 
 
 def stop_proxy():

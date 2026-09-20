@@ -11,7 +11,7 @@ import logging
 import logging.handlers
 import socket as _socket
 
-from typing import Dict, Optional, Set, Tuple
+from typing import Callable, Dict, Optional, Set, Tuple
 
 
 if __name__ == '__main__' and (__package__ is None or __package__ == ''):
@@ -470,7 +470,8 @@ _server_stop_event = None
 _client_tasks: Set[asyncio.Task] = set()
 
 
-async def _run(stop_event: Optional[asyncio.Event] = None):
+async def _run(stop_event: Optional[asyncio.Event] = None,
+               on_ready: Optional[Callable[[], None]] = None):
     global _server_instance, _server_stop_event
     _server_stop_event = stop_event
 
@@ -494,8 +495,12 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
         _client_tasks.add(task)
         task.add_done_callback(_client_tasks.discard)
 
+    if stop_event is not None and stop_event.is_set():
+        return
     server = await asyncio.start_server(client_cb, proxy_config.host, proxy_config.port)
     _server_instance = server
+    if on_ready is not None:
+        on_ready()
 
     for sock in server.sockets:
         try:

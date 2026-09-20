@@ -1,6 +1,7 @@
 """Small lifecycle adapter for embedding the upstream proxy in Android."""
 import asyncio
 import json
+import inspect
 import logging
 import logging.handlers
 import os
@@ -42,6 +43,14 @@ class ProxyAppRuntime:
         self.config = {}
         self._proxy_thread = None
         self._async_stop = None
+        self._state_lock = threading.Lock()
+        self._stop_requested = False
+        self._ready = threading.Event()
+        self._finished = threading.Event()
+
+    def wait_until_ready(self, timeout):
+        self._ready.wait(timeout)
+        return self._ready.is_set() and not self._finished.is_set()
 
     def ensure_dirs(self):
         self.app_dir.mkdir(parents=True, exist_ok=True)
@@ -93,9 +102,15 @@ class ProxyAppRuntime:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         stop_event = asyncio.Event()
-        self._async_stop = (loop, stop_event)
+        with self._state_lock:
+            self._async_stop = (loop, stop_event)
+            if self._stop_requested:
+                stop_event.set()
         try:
-            loop.run_until_complete(self.run_proxy(stop_event=stop_event))
+            kwargs = {'stop_event': stop_event}
+            if 'on_ready' in inspect.signature(self.run_proxy).parameters:
+                kwargs['on_ready'] = self._ready.set
+            loop.run_until_complete(self.run_proxy(**kwargs))
         except Exception as exc:
             self.log.error('Proxy thread crashed: %s', exc)
             if 'address already in use' in str(exc).lower() or '10048' in str(exc):
@@ -104,8 +119,11 @@ class ProxyAppRuntime:
             else:
                 self._emit_error(str(exc) or exc.__class__.__name__)
         finally:
-            self._async_stop = None
-            loop.close()
+            with self._state_lock:
+                self._async_stop = None
+                loop.close()
+                self._finished.set()
+                self._ready.set()
 
     def start_proxy(self, cfg=None):
         if self.is_proxy_running():
@@ -146,15 +164,24 @@ class ProxyAppRuntime:
             return False
         self.save_config(active)
         core_config.proxy_config.__dict__.update(next_config.__dict__)
+        with self._state_lock:
+            self._stop_requested = False
+            self._ready.clear()
+            self._finished.clear()
         self._proxy_thread = self.thread_factory(target=self._run_proxy_thread,
                                                  daemon=True, name='proxy')
         self._proxy_thread.start()
         return True
 
     def stop_proxy(self):
-        if self._async_stop:
-            loop, event = self._async_stop
-            loop.call_soon_threadsafe(event.set)
+        with self._state_lock:
+            self._stop_requested = True
+            if self._async_stop:
+                loop, event = self._async_stop
+                try:
+                    loop.call_soon_threadsafe(event.set)
+                except RuntimeError:
+                    pass  # Worker closed the loop between publication and stop.
         if self._proxy_thread:
             self._proxy_thread.join(timeout=2)
             if self._proxy_thread.is_alive():

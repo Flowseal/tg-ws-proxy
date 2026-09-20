@@ -11,8 +11,10 @@ without a Rust toolchain). The public surface mimics the small subset of
 from __future__ import annotations
 
 import os
+import sys
 
-if os.environ.get('TG_WS_PROXY_CRYPTO_BACKEND') == 'python':
+if (os.environ.get('TG_WS_PROXY_CRYPTO_BACKEND') == 'python'
+        or hasattr(sys, 'getandroidapilevel') or sys.platform == 'android'):
     from .crypto_backend import AesCtrStream
 
     class algorithms:

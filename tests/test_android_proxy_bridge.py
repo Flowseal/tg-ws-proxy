@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import threading
 from pathlib import Path
 
 
@@ -26,6 +27,7 @@ def test_bridge_start_stats_stop(tmp_path, monkeypatch):
             self.config = cfg
             self.running = True
             return True
+        def wait_until_ready(self, timeout): return True
         def is_proxy_running(self): return self.running
         def stop_proxy(self): self.running = False
     monkeypatch.setattr(bridge, 'ProxyAppRuntime', Runtime)
@@ -54,3 +56,33 @@ def test_bridge_selects_android_crypto_before_core_import(monkeypatch):
     load_bridge()
     import os
     assert os.environ['TG_WS_PROXY_CRYPTO_BACKEND'] == 'python'
+
+
+def test_bridge_does_not_report_alive_thread_before_bind(tmp_path, monkeypatch):
+    bridge = load_bridge()
+    ready = threading.Event()
+    entered = threading.Event()
+    class SlowRuntime:
+        def __init__(self, app_dir, **kwargs):
+            self.log_file = Path(app_dir) / 'proxy.log'
+            self.running = True
+        def reset_log_file(self): pass
+        def setup_logging(self, **kwargs): pass
+        def start_proxy(self, cfg): return True
+        def is_proxy_running(self): return self.running
+        def wait_until_ready(self, timeout):
+            entered.set()
+            return ready.wait(timeout)
+        def stop_proxy(self): self.running = False
+    monkeypatch.setattr(bridge, 'ProxyAppRuntime', SlowRuntime)
+    result = []
+    thread = threading.Thread(target=lambda: result.append(bridge.start_proxy(
+        str(tmp_path), '127.0.0.1', 1443, '00' * 16, ['2:149.154.167.220'])))
+    thread.start()
+    assert entered.wait(3)
+    assert thread.is_alive()
+    assert not result
+    ready.set()
+    thread.join(3)
+    assert result
+    bridge.stop_proxy()
