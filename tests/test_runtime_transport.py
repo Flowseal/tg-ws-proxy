@@ -57,16 +57,61 @@ async def test_warmup_failure_releases_listener_and_allows_restart(monkeypatch):
         proxy_config.__dict__.update(original)
 
 
-def test_transport_route_follows_successful_transport_counters():
+@pytest.mark.asyncio
+@pytest.mark.parametrize('fail_second', [False, True])
+async def test_warmup_stop_or_second_failure_suppresses_ready_and_shuts_pools(
+        monkeypatch, fail_second):
+    original = dict(proxy_config.__dict__)
+    stop = asyncio.Event()
+    closed = []
+    ready = []
+    class Server:
+        sockets = []
+        def close(self):
+            closed.append(True)
+        async def wait_closed(self):
+            pass
+    monkeypatch.setattr(tg_ws_proxy.asyncio, 'start_server',
+                        lambda *_args: asyncio.sleep(0, result=Server()))
+    proxy_config.secret = '00' * 16
+    proxy_config.cfproxy_user_domains = ['example.com']
+    async def first():
+        if not fail_second:
+            stop.set()
+    async def second():
+        if fail_second:
+            raise RuntimeError('second warmup failed')
+    monkeypatch.setattr(tg_ws_proxy.ws_pool, 'warmup', first)
+    monkeypatch.setattr(tg_ws_proxy.cf_worker_pool, 'warmup', second)
+    shutdowns = []
+    original_shutdown = tg_ws_proxy.ws_pool.shutdown
+    async def shutdown():
+        shutdowns.append(True)
+        await original_shutdown()
+    monkeypatch.setattr(tg_ws_proxy.ws_pool, 'shutdown', shutdown)
+    try:
+        if fail_second:
+            with pytest.raises(RuntimeError, match='second warmup failed'):
+                await tg_ws_proxy._run(stop, on_ready=lambda: ready.append(True))
+        else:
+            await tg_ws_proxy._run(stop, on_ready=lambda: ready.append(True))
+        assert ready == []
+        assert closed
+        assert len(shutdowns) == 2
+    finally:
+        proxy_config.__dict__.update(original)
+
+
+def test_transport_counters_do_not_choose_route():
     old = dict(stats.__dict__)
     try:
         stats.last_transport_route = None
         stats.connections_ws += 1
-        assert stats.last_transport_route == 'telegram_ws_direct'
+        assert stats.last_transport_route is None
         stats.connections_cfproxy += 1
-        assert stats.last_transport_route == 'cfproxy_fallback'
+        assert stats.last_transport_route is None
         stats.connections_tcp_fallback += 1
-        assert stats.last_transport_route == 'tcp_fallback'
+        assert stats.last_transport_route is None
     finally:
         stats.__dict__.clear()
         stats.__dict__.update(old)

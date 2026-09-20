@@ -215,6 +215,7 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
 
     stats.connections_cfproxy += 1
     await ws.send(relay_init)
+    stats.last_transport_route = 'cf_worker_fallback'
     await bridge_ws_reencrypt(reader, writer, ws, label, ctx,
                               dc=dc, is_media=is_media,
                               splitter=None)
@@ -251,6 +252,7 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
 
     stats.connections_cfproxy += 1
     await ws.send(relay_init)
+    stats.last_transport_route = 'cfproxy_fallback'
     await bridge_ws_reencrypt(reader, writer, ws, label, ctx,
                                dc=dc, is_media=is_media,
                                splitter=splitter)
@@ -269,6 +271,7 @@ async def _tcp_fallback(reader, writer, dst, port, relay_init, label, ctx: Crypt
     stats.connections_tcp_fallback += 1
     rw.write(relay_init)
     await rw.drain()
+    stats.last_transport_route = 'tcp_fallback'
     await _bridge_tcp_reencrypt(reader, writer, rr, rw, label, ctx)
     return True
 

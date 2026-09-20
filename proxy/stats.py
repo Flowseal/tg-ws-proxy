@@ -1,16 +1,6 @@
 from .utils import human_bytes
 
 class _Stats:
-    def __setattr__(self, name, value):
-        old = self.__dict__.get(name, 0)
-        self.__dict__[name] = value
-        if name == 'connections_ws' and value > old:
-            self.__dict__['last_transport_route'] = 'telegram_ws_direct'
-        elif name == 'connections_cfproxy' and value > old:
-            self.__dict__['last_transport_route'] = 'cfproxy_fallback'
-        elif name == 'connections_tcp_fallback' and value > old:
-            self.__dict__['last_transport_route'] = 'tcp_fallback'
-
     def __init__(self):
         self.last_transport_route = None
         self.connections_total = 0

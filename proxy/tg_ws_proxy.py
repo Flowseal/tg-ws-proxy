@@ -436,6 +436,7 @@ async def _handle_client(reader, writer, secret: bytes):
             pass
 
         await ws.send(relay_init)
+        stats.last_transport_route = 'telegram_ws_direct'
 
         await bridge_ws_reencrypt(clt_reader, clt_writer, ws, label, ctx,
                                    dc=dc, is_media=is_media,
@@ -475,8 +476,8 @@ async def _run(stop_event: Optional[asyncio.Event] = None,
     global _server_instance, _server_stop_event
     _server_stop_event = stop_event
 
-    ws_pool.reset()
-    cf_worker_pool.reset()
+    await ws_pool.shutdown()
+    await cf_worker_pool.shutdown()
     stats.last_transport_route = None
     ws_blacklist.clear()
     dc_fail_until.clear()
@@ -567,6 +568,8 @@ async def _run(stop_event: Optional[asyncio.Event] = None,
     try:
         await ws_pool.warmup()
         await cf_worker_pool.warmup()
+        if stop_event is not None and stop_event.is_set():
+            return
         if on_ready is not None:
             on_ready()
         while True:
@@ -586,8 +589,13 @@ async def _run(stop_event: Optional[asyncio.Event] = None,
             if stop_task is not None:
                 waiters.append(stop_task)
 
-            done, _ = await asyncio.wait(
-                waiters, return_when=asyncio.FIRST_COMPLETED)
+            try:
+                done, _ = await asyncio.wait(
+                    waiters, return_when=asyncio.FIRST_COMPLETED)
+            except asyncio.CancelledError:
+                for task in waiters:
+                    await _quiet_cancel(task)
+                raise
 
             if stop_task is not None and stop_task in done:
                 for task in list(_client_tasks):
@@ -603,6 +611,8 @@ async def _run(stop_event: Optional[asyncio.Event] = None,
 
             await _quiet_cancel(watchdog_task)
             await _quiet_cancel(serve_task)
+            if stop_task is not None:
+                await _quiet_cancel(stop_task)
             log.warning(
                 "Listening socket died, restarting server")
             server.close()
@@ -641,8 +651,8 @@ async def _run(stop_event: Optional[asyncio.Event] = None,
             await server.wait_closed()
         except Exception:
             pass
-        ws_pool.reset()
-        cf_worker_pool.reset()
+        await ws_pool.shutdown()
+        await cf_worker_pool.shutdown()
         _server_instance = None
         _server_stop_event = None
 
