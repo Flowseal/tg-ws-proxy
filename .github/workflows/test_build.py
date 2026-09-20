@@ -37,7 +37,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("!cancelled()", release_if)
         for job_name in ("build-windows-x64", "build-windows-arm64", "build-win7", "build-macos", "build-linux"):
             self.assertIn(f"needs.{job_name}.result == 'success'", release_if)
-        self.assertNotIn("needs.build-android-release.result == 'success'", release_if)
+        self.assertIn("needs.build-android-release.result == 'success'", release_if)
         self.assertIn("needs.validate-android.result == 'success'", release_if)
         self.assertIn("dist/tg-ws-proxy-android-*.apk", jobs["release"]["steps"][-1]["with"]["files"])
 

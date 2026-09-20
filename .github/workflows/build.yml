@@ -698,6 +698,7 @@ jobs:
           && needs.build-win7.result == 'success'
           && needs.build-macos.result == 'success'
           && needs.build-linux.result == 'success'
+          && needs.build-android-release.result == 'success'
           && needs.validate-android.result == 'success' }}
     permissions:
       contents: write

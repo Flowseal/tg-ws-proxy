@@ -16,6 +16,19 @@ fun loadProxyVersionName(): String {
     return match.groupValues[1]
 }
 
+fun proxyVersionCode(version: String): Int {
+    val match = Regex("""^(\d+)\.(\d+)\.(\d+)$""").matchEntire(version)
+        ?: throw GradleException("Android release version must be MAJOR.MINOR.PATCH: $version")
+    val (major, minor, patch) = match.destructured
+    val parts = listOf(major, minor, patch).map { it.toIntOrNull() }
+    if (parts.any { it == null } || parts[0] !in 0..2099 ||
+        parts[1] !in 0..999 || parts[2] !in 0..999
+    ) {
+        throw GradleException("Android release version is outside supported versionCode range: $version")
+    }
+    return parts[0]!! * 1_000_000 + parts[1]!! * 1_000 + parts[2]!!
+}
+
 data class ReleaseSigningEnv(
     val keystoreFile: File,
     val storePassword: String,
@@ -78,7 +91,7 @@ android {
         applicationId = "org.flowseal.tgwsproxy"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
+        versionCode = proxyVersionCode(appVersionName)
         versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
