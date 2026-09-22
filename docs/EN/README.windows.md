@@ -22,6 +22,12 @@ On first launch, a window will open with instructions for connecting Telegram De
 
 On first launch after startup, you may be prompted to open the release page if a new version is available on GitHub (this check can be disabled in settings).
 
+## If the Settings Window Does Not Open
+
+If GUI initialization fails, the error message shows the log path. Open it through **Open Logs** in the tray and look for `CTk root initialization failed` with the exception details, or an initialization timeout message.
+
+A Tcl/Tk error (for example, `Can't find a usable init.tcl`) does not mean `customtkinter` is missing. The prebuilt `.exe` bundles its libraries; installing packages with the system `pip` does not change them. Before sharing the log, remove the secret, connection links, and personal paths.
+
 ## Configuring Telegram Desktop
 
 ### Automatic Setup

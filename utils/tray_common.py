@@ -506,20 +506,37 @@ def ensure_ctk_thread(ctk: Any, mode: str = "auto") -> bool:
     if _ctk_root_ready.is_set():
         return True
 
+    initialized = threading.Event()
+
     def _run():
         global _ctk_root
-        from ui.ctk_theme import apply_ctk_appearance, install_tkinter_variable_del_guard
+        root = None
+        try:
+            from ui.ctk_theme import apply_ctk_appearance, install_tkinter_variable_del_guard
 
-        install_tkinter_variable_del_guard()
-        apply_ctk_appearance(ctk, mode)
-        _ctk_root = ctk.CTk()
-        _ctk_root.withdraw()
-        _ctk_root_ready.set()
+            install_tkinter_variable_del_guard()
+            apply_ctk_appearance(ctk, mode)
+            root = ctk.CTk()
+            root.withdraw()
+            _ctk_root = root
+            _ctk_root_ready.set()
+        except Exception:
+            log.exception("CTk root initialization failed")
+            if root is not None:
+                try:
+                    root.destroy()
+                except Exception:
+                    log.exception("Failed to destroy uninitialized CTk root")
+            return
+        finally:
+            initialized.set()
         _ctk_root.mainloop()
 
     threading.Thread(target=_run, daemon=True, name="ctk-root").start()
-    _ctk_root_ready.wait(timeout=5.0)
-    return _ctk_root is not None
+    if not initialized.wait(timeout=5.0):
+        log.error("CTk root initialization timed out after 5 seconds")
+        return False
+    return _ctk_root_ready.is_set()
 
 
 def ctk_run_dialog(build_fn: Callable[[threading.Event], None]) -> None:

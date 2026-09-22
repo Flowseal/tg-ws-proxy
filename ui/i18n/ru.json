@@ -123,6 +123,7 @@
   "dialog.already_running": "Приложение уже запущено, проверьте трей.",
   "dialog.log_not_found": "Файл логов ещё не создан.",
   "dialog.ctk_missing": "customtkinter не установлен.",
+  "dialog.ctk_init_failed": "Не удалось запустить графический интерфейс. Подробности в журнале:\n{path}",
   "dialog.copy_ok": "Ссылка скопирована в буфер обмена, отправьте её в Telegram и нажмите по ней ЛКМ:\n{url}",
   "dialog.copy_fail": "Не удалось скопировать ссылку:\n{error}",
   "dialog.open_tg_fail": "Не удалось открыть Telegram автоматически.\n\n{detail}",

@@ -123,6 +123,7 @@
   "dialog.already_running": "Application is already running, check the tray",
   "dialog.log_not_found": "Log file has not been created yet.",
   "dialog.ctk_missing": "customtkinter is not installed.",
+  "dialog.ctk_init_failed": "Could not initialize the graphical interface. See the log for details:\n{path}",
   "dialog.copy_ok": "Link copied to clipboard, send it in Telegram and click it:\n{url}",
   "dialog.copy_fail": "Failed to copy link:\n{error}",
   "dialog.open_tg_fail": "Could not open Telegram automatically.\n\n{detail}",
