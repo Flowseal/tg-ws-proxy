@@ -25,3 +25,11 @@ Desktop.ini
 .DS_Store
 
 /icon.icns
+
+# Android local build artifacts
+/android/.gradle/
+/android/.gradle-local/
+/android/.m2-chaquopy/
+/android/app/build/
+/android/build/
+/android/local.properties

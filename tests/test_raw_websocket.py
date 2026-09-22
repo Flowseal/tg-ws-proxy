@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from unittest.mock import patch
 
 from proxy.raw_websocket import RawWebSocket, WsHandshakeError, _xor_mask
 
@@ -20,6 +21,63 @@ class _NullWriter:
 
     async def drain(self):
         pass
+
+
+class ConnectCleanupTest(unittest.IsolatedAsyncioTestCase):
+    async def test_cancelled_handshake_closes_established_writer(self):
+        entered = asyncio.Event()
+        reader = asyncio.StreamReader()
+
+        class Writer(_NullWriter):
+            closed = False
+            transport = None
+
+            def close(self):
+                self.closed = True
+
+        writer = Writer()
+        original_readline = reader.readline
+
+        async def blocked_readline():
+            entered.set()
+            return await original_readline()
+
+        reader.readline = blocked_readline
+        with patch('proxy.raw_websocket.asyncio.open_connection',
+                   return_value=(reader, writer)), patch(
+                       'proxy.raw_websocket.set_sock_opts'):
+            task = asyncio.create_task(RawWebSocket.connect(
+                'example.com', 'example.com', secure=False))
+            await entered.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertTrue(writer.closed)
+
+    async def test_cancelled_close_still_closes_writer(self):
+        entered = asyncio.Event()
+
+        class Writer(_NullWriter):
+            closed = False
+
+            async def drain(self):
+                entered.set()
+                await asyncio.Future()
+
+            def close(self):
+                self.closed = True
+
+            async def wait_closed(self):
+                pass
+
+        writer = Writer()
+        ws = RawWebSocket(asyncio.StreamReader(), writer)
+        task = asyncio.create_task(ws.close())
+        await entered.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertTrue(writer.closed)
 
 
 def _recv(chunks, cls=RawWebSocket):

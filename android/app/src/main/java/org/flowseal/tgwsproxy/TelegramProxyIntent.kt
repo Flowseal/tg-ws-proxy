@@ -1,0 +1,41 @@
+package org.flowseal.tgwsproxy
+
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import java.net.URLEncoder
+
+object TelegramProxyIntent {
+    private fun encode(value: String) = URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
+    fun proxyUri(config: NormalizedProxyConfig): String {
+        val secret = if (config.fakeTlsDomain.isNotBlank()) {
+            require(config.fakeTlsDomain.all { it.code <= 127 }) {
+                "Fake TLS domain must contain only ASCII characters"
+            }
+            val domainHex = config.fakeTlsDomain.toByteArray(Charsets.US_ASCII)
+                .joinToString("") { "%02x".format(it) }
+            "ee${config.secret}$domainHex"
+        } else {
+            "dd${config.secret}"
+        }
+        return "tg://proxy?server=${encode(config.host)}&port=${config.port}&secret=${encode(secret)}"
+    }
+
+    fun open(context: Context, config: NormalizedProxyConfig): Boolean {
+        return open(config) { uri ->
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    }
+
+    internal fun open(config: NormalizedProxyConfig, launch: (String) -> Unit): Boolean {
+        return try {
+            launch(proxyUri(config))
+            true
+        } catch (_: ActivityNotFoundException) {
+            false
+        }
+    }
+}

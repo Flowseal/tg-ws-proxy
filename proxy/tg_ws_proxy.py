@@ -11,7 +11,7 @@ import logging
 import logging.handlers
 import socket as _socket
 
-from typing import Dict, Optional, Set, Tuple
+from typing import Callable, Dict, Optional, Set, Tuple
 
 
 if __name__ == '__main__' and (__package__ is None or __package__ == ''):
@@ -435,7 +435,12 @@ async def _handle_client(reader, writer, secret: bytes):
         except Exception:
             pass
 
-        await ws.send(relay_init)
+        try:
+            await ws.send(relay_init)
+        except BaseException:
+            await ws.close()
+            raise
+        stats.last_transport_route = 'telegram_ws_direct'
 
         await bridge_ws_reencrypt(clt_reader, clt_writer, ws, label, ctx,
                                    dc=dc, is_media=is_media,
@@ -470,12 +475,20 @@ _server_stop_event = None
 _client_tasks: Set[asyncio.Task] = set()
 
 
-async def _run(stop_event: Optional[asyncio.Event] = None):
+async def _quiet_cancel(task):
+    if not task.done():
+        task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
+async def _run(stop_event: Optional[asyncio.Event] = None,
+               on_ready: Optional[Callable[[], None]] = None):
     global _server_instance, _server_stop_event
     _server_stop_event = stop_event
 
-    ws_pool.reset()
-    cf_worker_pool.reset()
+    await ws_pool.shutdown()
+    await cf_worker_pool.shutdown()
+    stats.last_transport_route = None
     ws_blacklist.clear()
     dc_fail_until.clear()
     ip_fail_until.clear()
@@ -494,6 +507,8 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
         _client_tasks.add(task)
         task.add_done_callback(_client_tasks.discard)
 
+    if stop_event is not None and stop_event.is_set():
+        return
     server = await asyncio.start_server(client_cb, proxy_config.host, proxy_config.port)
     _server_instance = server
 
@@ -552,18 +567,14 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
 
     log_stats_task = asyncio.create_task(log_stats())
 
-    await ws_pool.warmup()
-    await cf_worker_pool.warmup()
-
-    async def _quiet_cancel(t):
-        if not t.done():
-            t.cancel()
-        try:
-            await t
-        except (asyncio.CancelledError, Exception):
-            pass
-
+    waiters = []
     try:
+        await ws_pool.warmup()
+        await cf_worker_pool.warmup()
+        if stop_event is not None and stop_event.is_set():
+            return
+        if on_ready is not None:
+            on_ready()
         while True:
             serve_task = asyncio.create_task(server.serve_forever())
             stop_task = (asyncio.create_task(stop_event.wait())
@@ -581,8 +592,13 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
             if stop_task is not None:
                 waiters.append(stop_task)
 
-            done, _ = await asyncio.wait(
-                waiters, return_when=asyncio.FIRST_COMPLETED)
+            try:
+                done, _ = await asyncio.wait(
+                    waiters, return_when=asyncio.FIRST_COMPLETED)
+            except asyncio.CancelledError:
+                for task in waiters:
+                    await _quiet_cancel(task)
+                raise
 
             if stop_task is not None and stop_task in done:
                 for task in list(_client_tasks):
@@ -598,6 +614,8 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
 
             await _quiet_cancel(watchdog_task)
             await _quiet_cancel(serve_task)
+            if stop_task is not None:
+                await _quiet_cancel(stop_task)
             log.warning(
                 "Listening socket died, restarting server")
             server.close()
@@ -622,6 +640,14 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
             log.warning("Server restored, listening on %s:%d",
                         proxy_config.host, proxy_config.port)
     finally:
+        for task in waiters:
+            task.cancel()
+        if waiters:
+            await asyncio.gather(*waiters, return_exceptions=True)
+        for task in list(_client_tasks):
+            task.cancel()
+        if _client_tasks:
+            await asyncio.gather(*_client_tasks, return_exceptions=True)
         log_stats_task.cancel()
         try:
             await log_stats_task
@@ -632,7 +658,10 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
             await server.wait_closed()
         except Exception:
             pass
-    _server_instance = None
+        await ws_pool.shutdown()
+        await cf_worker_pool.shutdown()
+        _server_instance = None
+        _server_stop_event = None
 
 
 def run_proxy(stop_event: Optional[asyncio.Event] = None):

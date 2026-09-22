@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="proxy_blue">#64B5F6</color>
+    <color name="proxy_navy">#081522</color>
+    <color name="proxy_surface">#13212E</color>
+    <color name="proxy_white">#081522</color>
+</resources>

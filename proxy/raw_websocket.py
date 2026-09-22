@@ -104,6 +104,15 @@ class RawWebSocket:
             timeout=min(timeout, 10),
         )
         
+        try:
+            return await RawWebSocket._finish_connect(
+                reader, writer, domain, path, timeout)
+        except BaseException:
+            writer.close()
+            raise
+
+    @staticmethod
+    async def _finish_connect(reader, writer, domain, path, timeout):
         set_sock_opts(writer.transport, proxy_config.buffer_size)
 
         ws_key = base64.b64encode(os.urandom(16)).decode()
@@ -226,12 +235,13 @@ class RawWebSocket:
         try:
             self.writer.write(
                 self._build_frame(self.OP_CLOSE, b'', mask=True))
-            await self.writer.drain()
+            await asyncio.wait_for(self.writer.drain(), timeout=1.0)
         except Exception:
             pass
-        try:
+        finally:
             self.writer.close()
-            await self.writer.wait_closed()
+        try:
+            await asyncio.wait_for(self.writer.wait_closed(), timeout=1.0)
         except Exception:
             pass
 

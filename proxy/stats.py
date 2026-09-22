@@ -2,6 +2,7 @@ from .utils import human_bytes
 
 class _Stats:
     def __init__(self):
+        self.last_transport_route = None
         self.connections_total = 0
         self.connections_active = 0
         self.connections_ws = 0

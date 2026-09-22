@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from proxy.config import proxy_config
-from proxy.pool import _WsPool
+from proxy.pool import _WsPool, _CfWorkerPool
 
 
 class _StopRotation(Exception):
@@ -20,6 +20,28 @@ def _open_ws():
 
 
 class WsPoolRotationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_shutdown_cancels_refill_and_closes_idle(self):
+        for pool, key, schedule_args, idle_entry in (
+                (_WsPool(), (2, False), ((2, False), 'ip', ['domain']),
+                 lambda ws: (ws, time.monotonic())),
+                (_CfWorkerPool(), 2, (2, 'ip', ['domain']),
+                 lambda ws: (ws, time.monotonic(), 'domain'))):
+            closed = []
+            ws = _open_ws()
+            ws.close = lambda: _close(closed)
+            pool._idle[key] = deque([idle_entry(ws)])
+            started = __import__('asyncio').Event()
+            async def blocked(*_args):
+                started.set()
+                await __import__('asyncio').Future()
+            with mock.patch.object(pool, '_refill', blocked):
+                pool._schedule_refill(*schedule_args)
+                await started.wait()
+                await pool.shutdown()
+            self.assertEqual(closed, [True])
+            self.assertFalse(pool._idle)
+            self.assertFalse(pool._refilling)
+
     async def test_refills_partially_populated_bucket(self):
         pool = _WsPool()
         key = (2, False)
@@ -51,3 +73,7 @@ class WsPoolRotationTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+async def _close(closed):
+    closed.append(True)

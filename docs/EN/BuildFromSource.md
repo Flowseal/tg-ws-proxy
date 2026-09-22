@@ -34,6 +34,18 @@ pip install -e .
 tg-ws-proxy-tray-linux
 ```
 
+## Android
+
+Local builds require JDK 17, Android SDK platform 34 and build-tools 34.0.0, Python 3.12 for `standard`, Python 3.11 for `legacy32`, and access to Gradle/Chaquopy dependencies. From the repository root:
+
+```bash
+cd android
+./gradlew testStandardDebugUnitTest testLegacy32DebugUnitTest \
+  assembleStandardDebug assembleLegacy32Debug
+```
+
+Debug APKs are under `android/app/build/outputs/apk/{standard,legacy32}/debug/`. Use `standard` on arm64-v8a/x86_64 devices and `legacy32` on armeabi-v7a devices. Signed APKs appear in [Flowseal releases](https://github.com/Flowseal/tg-ws-proxy/releases/latest) only when Android release signing succeeds; if a release has no APK, build a debug APK locally. Release builds need `ANDROID_KEYSTORE_FILE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`; debug builds need no signing secrets. Install the matching APK, configure and start the proxy in the app, then open its connection link in Telegram on the same device.
+
 ## Console Mode from Source
 
 ```bash
