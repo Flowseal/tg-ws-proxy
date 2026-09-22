@@ -108,6 +108,51 @@ class RecvTest(unittest.TestCase):
             ], cls=_Capped)
 
 
+class CloseTest(unittest.IsolatedAsyncioTestCase):
+    async def check_close(self, remote_close):
+        eof = asyncio.Event()
+        writers = []
+        tasks = []
+
+        async def peer(reader, writer):
+            writers.append(writer)
+            tasks.append(asyncio.current_task())
+            if remote_close:
+                writer.write(_raw_frame(RawWebSocket.OP_CLOSE, b'\x03\xe8'))
+                await writer.drain()
+            while await reader.read(1024):
+                pass
+            eof.set()
+
+        server = await asyncio.start_server(peer, '127.0.0.1', 0)
+        reader, writer = await asyncio.open_connection(
+            '127.0.0.1', server.sockets[0].getsockname()[1])
+        ws = RawWebSocket(reader, writer)
+        try:
+            if remote_close:
+                self.assertIsNone(await ws.recv())
+            await ws.close()
+            self.assertTrue(writer.is_closing())
+            await asyncio.wait_for(eof.wait(), 1)
+            await ws.close()
+            self.assertTrue(writer.is_closing())
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            for peer_writer in writers:
+                peer_writer.close()
+                await peer_writer.wait_closed()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            server.close()
+            await server.wait_closed()
+
+    async def test_peer_close_then_cleanup_closes_transport(self):
+        await self.check_close(remote_close=True)
+
+    async def test_local_close_and_repeated_cleanup_close_transport(self):
+        await self.check_close(remote_close=False)
+
+
 class ParseCloseTest(unittest.TestCase):
     def test_known_code_gets_name(self):
         code, reason = RawWebSocket._parse_close(b'\x03\xe8bye')

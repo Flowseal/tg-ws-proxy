@@ -220,15 +220,14 @@ class RawWebSocket:
         return None
 
     async def close(self):
-        if self._closed:
-            return
-        self._closed = True
-        try:
-            self.writer.write(
-                self._build_frame(self.OP_CLOSE, b'', mask=True))
-            await self.writer.drain()
-        except Exception:
-            pass
+        if not self._closed:
+            self._closed = True
+            try:
+                self.writer.write(
+                    self._build_frame(self.OP_CLOSE, b'', mask=True))
+                await self.writer.drain()
+            except Exception:
+                pass
         try:
             self.writer.close()
             await self.writer.wait_closed()

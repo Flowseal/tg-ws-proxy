@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import webbrowser
 from dataclasses import dataclass
@@ -401,7 +402,6 @@ def install_tray_config_form(
     def _on_appearance_change(choice: str) -> None:
         cfg_val = _appearance_to_cfg(choice)
         ctk.set_appearance_mode(_APPEARANCE_TO_CTK[cfg_val])
-        cfg["appearance"] = cfg_val
 
     ctk.CTkButton(
         header, text="Donate ♥", width=90, height=28,
@@ -856,6 +856,10 @@ def merge_adv_from_form(
         entry = col_frame.winfo_children()[1]
         try:
             val = float(entry.get().strip())
+            if not math.isfinite(val):
+                raise ValueError
+            if key == "log_max_mb" and not math.isfinite(val * 1024 * 1024):
+                raise ValueError
             if key in ("buf_kb", "pool_size"):
                 val = int(val)
             base[key] = val
@@ -908,7 +912,8 @@ def validate_config_form(
     if len(secret_val) != 32:
         return t("validation.bad_secret_len")
     try:
-        bytes.fromhex(secret_val)
+        if len(bytes.fromhex(secret_val)) != 16:
+            raise ValueError
     except ValueError:
         return t("validation.bad_secret_hex")
 

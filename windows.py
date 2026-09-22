@@ -252,13 +252,24 @@ def _perform_update(download_url: str, set_status=None) -> None:
         tmp_path = Path(tmp_name)
         log.info("Downloading update from %s", download_url)
         opener = build_github_opener()
-        with opener.open(download_url) as _resp:
+        with opener.open(download_url, timeout=30) as _resp:
+            content_length = _resp.headers.get("Content-Length")
+            expected_size = int(content_length) if content_length is not None else None
+            downloaded_size = 0
             with open(str(tmp_path), "wb") as _fout:
                 while True:
                     _chunk = _resp.read(65536)
                     if not _chunk:
                         break
                     _fout.write(_chunk)
+                    downloaded_size += len(_chunk)
+            if downloaded_size == 0:
+                raise OSError("Downloaded update is empty")
+            if expected_size is not None and downloaded_size != expected_size:
+                raise OSError(
+                    f"Incomplete update download: expected {expected_size} bytes, "
+                    f"received {downloaded_size}"
+                )
     except Exception as exc:
         _err(t("update.download_fail", error=exc))
         if tmp_path:

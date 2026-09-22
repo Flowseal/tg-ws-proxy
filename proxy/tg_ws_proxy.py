@@ -711,7 +711,8 @@ def main():
             log.error("Secret must be exactly 32 hex characters")
             sys.exit(1)
         try:
-            bytes.fromhex(secret_hex)
+            if len(bytes.fromhex(secret_hex)) != 16:
+                raise ValueError
         except ValueError:
             log.error("Secret must be valid hex")
             sys.exit(1)
