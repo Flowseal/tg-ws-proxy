@@ -458,39 +458,55 @@ def check_ipv6_warning(show_info: Callable[[str, str], None]) -> None:
 
 # update check
 
-def maybe_notify_update(
+def check_update_async(
     cfg: dict,
     is_exiting: Callable[[], bool],
-    ask_open: Callable[[str, str], bool],
+    on_update: Callable[[str, str], None],
 ) -> None:
+    """Check the latest release in the background.
+
+    on_update(version, release_page_url) is called from the worker thread
+    when a newer version is available.
+    """
     if not cfg.get("check_updates", True):
         return
 
-    def _work():
+    def _work() -> None:
         time.sleep(1.5)
         if is_exiting():
             return
         try:
             from utils.update_check import RELEASES_PAGE_URL, get_status, run_check
-            import webbrowser
 
             run_check(__version__)
             st = get_status()
-            if not st.get("has_update"):
+            if not st.get("has_update") or is_exiting():
                 return
-            url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
-            ver = st.get("latest") or "?"
-            from ui.i18n import t
-
-            if ask_open(
-                t("update.ask_open", version=ver),
-                t("app.update_title"),
-            ):
-                webbrowser.open(url)
+            on_update(
+                st.get("latest") or "?",
+                (st.get("html_url") or "").strip() or RELEASES_PAGE_URL,
+            )
         except Exception as exc:
             log.warning("Update check failed: %s", repr(exc))
 
     threading.Thread(target=_work, daemon=True, name="update-check").start()
+
+
+def maybe_notify_update(
+    cfg: dict,
+    is_exiting: Callable[[], bool],
+    ask_open: Callable[[str, str], bool],
+) -> None:
+    """Check for updates and offer to open the release page."""
+    def _on_update(version: str, url: str) -> None:
+        import webbrowser
+
+        from ui.i18n import t
+
+        if ask_open(t("update.ask_open", version=version), t("app.update_title")):
+            webbrowser.open(url)
+
+    check_update_async(cfg, is_exiting, _on_update)
 
 
 # ctk thread (windows / linux)

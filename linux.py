@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import errno
 import os
+import socket
 import subprocess
 import sys
 import threading
 import time
-from typing import Optional
+import webbrowser
+from typing import Callable, Optional
 
 import customtkinter as ctk
 import pyperclip
@@ -15,10 +18,10 @@ from PIL import Image, ImageTk
 from proxy import get_link_host
 
 from utils.tray_common import (
-    APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, LOG_FILE,
-    acquire_lock, bootstrap, check_ipv6_warning, ctk_run_dialog,
-    ensure_ctk_thread, ensure_dirs, load_config, load_icon, log,
-    maybe_notify_update, quit_ctk, release_lock, restart_proxy,
+    APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, IS_FROZEN, LOG_FILE,
+    acquire_lock, bootstrap, check_ipv6_warning, check_update_async,
+    ctk_run_dialog, ensure_ctk_thread, ensure_dirs, load_config, load_icon,
+    log, quit_ctk, release_lock, restart_proxy,
     save_config, start_proxy, stop_proxy, tg_proxy_url,
 )
 from ui.ctk_tray_ui import (
@@ -259,6 +262,87 @@ def _show_first_run() -> None:
     ctk_run_dialog(_build)
 
 
+# update
+
+
+def _wait_port_free(host: str, port: int, timeout: float = 5.0) -> bool:
+    # the successor binds the same port, so don't hand it over too early
+    deadline = time.monotonic() + timeout
+    while True:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+            return True
+        except OSError as exc:
+            if exc.errno != errno.EADDRINUSE:
+                return True  # some other error: waiting will not help
+        finally:
+            sock.close()
+        if time.monotonic() >= deadline:
+            log.warning("Port %s:%s still busy before restart", host, port)
+            return False
+        time.sleep(0.2)
+
+
+def _restart_after_update() -> None:
+    # the old process must release the lock and the port before the new one starts
+    from utils.linux_update import exe_path, relaunch_env
+
+    release_lock()
+    stop_proxy()
+    _wait_port_free(
+        _config.get("host", DEFAULT_CONFIG["host"]),
+        int(_config.get("port", DEFAULT_CONFIG["port"])),
+    )
+    try:
+        subprocess.Popen(
+            [str(exe_path())], env=relaunch_env(),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, start_new_session=True,
+        )
+    except OSError as exc:
+        log.error("Failed to launch updated binary: %s", exc)
+    time.sleep(0.5)
+    os._exit(0)
+
+
+def _maybe_do_update(cfg: dict, is_exiting: Callable[[], bool]) -> None:
+    def _on_update(version: str, page_url: str) -> None:
+        from utils.linux_update import asset_name, detect_install_kind
+        from utils.update_check import find_asset
+
+        kind = detect_install_kind() if IS_FROZEN else None
+        asset = find_asset(asset_name(kind)) if kind else None
+        if not asset:
+            log.info("In-place update unavailable (kind=%s)", kind)
+            if _ask_yes_no(t("update.ask_open", version=version), t("app.update_title")):
+                webbrowser.open(page_url)
+            return
+
+        if not _ask_yes_no(t("update.ask_install", version=version), t("app.update_title")):
+            return
+        _install_update(kind, asset, page_url)
+
+    check_update_async(cfg, is_exiting, _on_update)
+
+
+def _install_update(kind: str, asset: dict, page_url: str) -> None:
+    from utils.linux_update import apply_update
+
+    err = apply_update(
+        kind, asset["url"], digest=asset.get("digest", ""), log=log,
+    )
+    if err is None:
+        log.info("Update installed, restarting")
+        _restart_after_update()
+        return
+
+    log.error("Update failed: %s", err)
+    if _ask_yes_no(t("update.install_fail", error=err), t("app.update_title")):
+        webbrowser.open(page_url)
+
+
 # tray menu
 
 
@@ -298,7 +382,7 @@ def run_tray() -> None:
         return
 
     start_proxy(_config, _show_error)
-    maybe_notify_update(_config, lambda: _exiting, _ask_yes_no)
+    _maybe_do_update(_config, lambda: _exiting)
     _show_first_run()
     check_ipv6_warning(_show_info)
 

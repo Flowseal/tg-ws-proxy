@@ -134,6 +134,8 @@
 
   "update.available": "Доступна новая версия: {version}",
   "update.ask_open": "Доступна новая версия: {version}\n\nОткрыть страницу релиза в браузере?",
+  "update.ask_install": "Доступна новая версия: {version}\n\nОбновить сейчас? Приложение будет перезапущено.",
+  "update.install_fail": "Не удалось установить обновление:\n{error}\n\nОткрыть страницу релиза в браузере?",
   "update.downloading": "Скачивание...",
   "update.replacing": "Замена файла...",
   "update.restarting": "Перезапуск...",
