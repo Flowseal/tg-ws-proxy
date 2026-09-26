@@ -546,17 +546,41 @@ def _show_update_dialog() -> None:
                        t("app.update_title")):
         return
     _update_busy = True
-    window = ctk.CTkToplevel(_ctk_root)
-    window.title(t("app.update_title"))
-    window.geometry("420x140")
+    theme = ctk_theme_for_platform()
+    window = create_ctk_toplevel(
+        ctk,
+        title=t("app.update_title"),
+        width=400,
+        height=150,
+        theme=theme,
+        topmost=False,
+    )
     window.protocol("WM_DELETE_WINDOW", lambda: None)
-    label = ctk.CTkLabel(window, text=t("update.downloading"))
-    label.pack(padx=20, pady=35)
+    frame = main_content_frame(ctk, window, theme, padx=24, pady=20)
+    ctk.CTkLabel(
+        frame,
+        text=t("app.update_title"),
+        anchor="w",
+        font=(theme.ui_font_family, 16, "bold"),
+        text_color=theme.text_primary,
+    ).pack(fill="x")
+    label = ctk.CTkLabel(
+        frame,
+        text=t("update.downloading"),
+        anchor="w",
+        font=(theme.ui_font_family, 12),
+        text_color=theme.text_secondary,
+    )
+    label.pack(fill="x", pady=(4, 12))
+    progress = ctk.CTkProgressBar(frame, mode="indeterminate")
+    progress.pack(fill="x")
+    progress.start()
     _activate_app()
 
     def finish(error=None, work=None):
         global _update_busy
         _update_busy = False
+        progress.stop()
         window.destroy()
         if error:
             _show_error(t("update.error", msg=error))
