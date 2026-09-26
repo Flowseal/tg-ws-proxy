@@ -319,8 +319,6 @@ def tray_settings_scroll_and_footer(
         scroll._parent_canvas.configure(yscrollincrement=4)
     except Exception:
         pass
-    from ui.macos_scroll import install_touchpad_scroll
-    install_touchpad_scroll(scroll)
     return scroll, footer
 
 
