@@ -462,6 +462,8 @@ def maybe_notify_update(
     cfg: dict,
     is_exiting: Callable[[], bool],
     ask_open: Callable[[str, str], bool],
+    on_checked: Optional[Callable[[], None]] = None,
+    on_update_available: Optional[Callable[[], None]] = None,
 ) -> None:
     if not cfg.get("check_updates", True):
         return
@@ -475,8 +477,15 @@ def maybe_notify_update(
             import webbrowser
 
             run_check(__version__)
+            if is_exiting():
+                return
+            if on_checked is not None:
+                on_checked()
             st = get_status()
             if not st.get("has_update"):
+                return
+            if on_update_available is not None:
+                on_update_available()
                 return
             url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
             ver = st.get("latest") or "?"

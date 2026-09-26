@@ -148,5 +148,11 @@
   "diagnostics.permission": "Failed to start proxy:\nAccess to address/port denied (firewall, antivirus, or permissions).\n\nChange the port to a random value in 10000–50000 in settings, check firewall/antivirus, and restart.",
   "diagnostics.bad_address": "Failed to start proxy:\nInvalid or unavailable listen address.\n\nCheck the solution at the link opened in your browser.\nVerify host and port in proxy settings and restart.",
 
-  "ipv6.warning": "IPv6 connectivity is enabled on your computer.\n\nTelegram may try to connect over IPv6, which is not supported and may cause errors.\n\nIf the proxy does not work or logs show IPv6 connection attempts, try disabling IPv6 connection attempts in Telegram proxy settings. If that does not help, try disabling IPv6 system-wide.\n\nThis warning is shown only once."
+  "ipv6.warning": "IPv6 connectivity is enabled on your computer.\n\nTelegram may try to connect over IPv6, which is not supported and may cause errors.\n\nIf the proxy does not work or logs show IPv6 connection attempts, try disabling IPv6 connection attempts in Telegram proxy settings. If that does not help, try disabling IPv6 system-wide.\n\nThis warning is shown only once.",
+  "section.macos_startup": "macOS login",
+  "tip.mac_autostart": "Start TG WS Proxy at macOS login. Enable startup again after moving the application.",
+  "dialog.mac_autostart_fail": "Could not change login startup: {error}",
+  "update.mac_confirm": "Install version {version}? The proxy will restart. The previous application will be kept for recovery.",
+  "update.mac_preparing": "Verifying and preparing application…",
+  "update.mac_busy": "Please wait until update preparation completes."
 }

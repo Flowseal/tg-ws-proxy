@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import faulthandler
 import queue
+from pathlib import Path
 import subprocess
 import sys
 import threading
@@ -10,37 +11,40 @@ import webbrowser
 from typing import Any, Callable, Optional
 
 try:
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageChops
 except ImportError:
-    Image = ImageDraw = ImageFont = None
+    Image = ImageChops = None
 
 
 def render_app_icon(size: int):
-    scale = size / 1024
-    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    outer = tuple(round(value * scale) for value in (92, 92, 932, 932))
-    draw.ellipse(outer, fill=(0, 151, 221, 255))
-    try:
-        font = ImageFont.truetype(
-            "/System/Library/Fonts/Helvetica.ttc",
-            round(430 * scale),
-        )
-    except OSError:
-        font = ImageFont.load_default()
-    box = draw.textbbox((0, 0), "T", font=font)
-    width = box[2] - box[0]
-    height = box[3] - box[1]
-    draw.text(
-        (
-            (size - width) / 2 - box[0],
-            (size - height) / 2 - box[1] - round(10 * scale),
-        ),
-        "T",
-        font=font,
-        fill=(255, 255, 255, 255),
-    )
-    return image
+    # Use the same artwork as Windows, including when generating the ICNS in CI.
+    with Image.open(Path(__file__).resolve().parent / "icon.ico") as source:
+        return source.convert("RGBA").resize((size, size), Image.Resampling.LANCZOS)
+
+
+def render_tray_icon(size: int = 64):
+    """Use the Windows circle with its white T cut out for AppKit tinting."""
+    with Image.open(Path(__file__).resolve().parent / "icon.ico") as source:
+        source = source.convert("RGBA")
+    # The artwork has a blue circle and a white T. Saturation retains the
+    # circle and removes the letter, including its antialiased edge pixels.
+    red, green, blue, alpha = source.split()
+    maximum = ImageChops.lighter(ImageChops.lighter(red, green), blue)
+    minimum = ImageChops.darker(ImageChops.darker(red, green), blue)
+    saturation = ImageChops.subtract(maximum, minimum)
+    peak = saturation.getpixel((source.width // 2, source.height // 8))
+    if peak:
+        saturation = saturation.point(lambda value: min(255, round(value * 255 / peak)))
+    mask = ImageChops.multiply(alpha, saturation)
+    image = Image.new("RGBA", source.size, (0, 0, 0, 0))
+    image.putalpha(mask)
+    # Keep the status-item canvas unchanged, with artwork 1.5 times smaller.
+    artwork_size = round(size / 1.5)
+    artwork = image.resize((artwork_size, artwork_size), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    offset = (size - artwork_size) // 2
+    canvas.paste(artwork, (offset, offset))
+    return canvas
 
 
 if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--render-app-icon":
@@ -65,13 +69,24 @@ try:
 except ImportError:
     pystray = None
 
+
+if pystray is not None:
+    class MacTemplateIcon(pystray.Icon):
+        def _assert_image(self):
+            # pystray 0.19.5 recreates NSImage here without setting template mode.
+            super()._assert_image()
+            self._icon_image.setTemplate_(True)
+
 try:
     from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
 except ImportError:
     NSApplication = None
     NSApplicationActivationPolicyAccessory = None
 
-from proxy import get_link_host
+from proxy import __version__, get_link_host
+from utils.update_check import RELEASES_PAGE_URL, get_status
+from utils import macos_integration as mac_integration
+from proxy.utils import build_github_opener
 from ui.ctk_theme import (
     CONFIG_DIALOG_FRAME_PAD,
     CONFIG_DIALOG_SIZE,
@@ -101,7 +116,6 @@ from utils.tray_common import (
     check_ipv6_warning,
     ensure_dirs,
     load_config,
-    load_icon,
     log,
     maybe_notify_update,
     release_lock,
@@ -118,6 +132,7 @@ _settings_window: Optional[Any] = None
 _ns_app: Optional[Any] = None
 _config: dict = {}
 _exiting = False
+_update_busy = False
 _crash_log: Optional[Any] = None
 _ui_queue: queue.Queue = queue.Queue()
 
@@ -308,6 +323,9 @@ def _on_open_logs(icon=None, item=None) -> None:
 
 def _finish_exit() -> None:
     global _exiting
+    if _update_busy:
+        _show_info(t("update.mac_busy"))
+        return
     if _exiting:
         return
     _exiting = True
@@ -340,6 +358,8 @@ def _edit_config_dialog() -> None:
 
     log.info("Creating settings window")
     cfg = dict(_config)
+    bundle = mac_integration.app_bundle()
+    cfg["autostart"] = bool(bundle and mac_integration.startup_enabled(bundle))
     theme = ctk_theme_for_platform()
     width, height = CONFIG_DIALOG_SIZE
     root = create_ctk_toplevel(
@@ -370,8 +390,11 @@ def _edit_config_dialog() -> None:
         theme,
         cfg,
         DEFAULT_CONFIG,
-        show_autostart=False,
+        show_autostart=bundle is not None,
+        autostart_value=cfg["autostart"],
+        startup_platform="macos",
         on_language_change=_refresh_tray_menu,
+        on_update_click=_on_update,
     )
     log.info("Settings form built")
     original_appearance = ctk.get_appearance_mode()
@@ -397,7 +420,7 @@ def _edit_config_dialog() -> None:
         merged = validate_config_form(
             widgets,
             DEFAULT_CONFIG,
-            include_autostart=False,
+            include_autostart=bundle is not None,
         )
         if isinstance(merged, str):
             messagebox.showerror(t("app.error_title"), merged, parent=root)
@@ -407,7 +430,14 @@ def _edit_config_dialog() -> None:
             "force_test_dc",
             DEFAULT_CONFIG["force_test_dc"],
         )
-        ui_only_keys = {"appearance", "check_updates", "language"}
+        if bundle is not None:
+            try:
+                mac_integration.set_startup(bundle, bool(merged.get("autostart")))
+            except (OSError, ValueError) as exc:
+                messagebox.showerror(t("app.error_title"),
+                                     t("dialog.mac_autostart_fail", error=exc), parent=root)
+                return
+        ui_only_keys = {"appearance", "check_updates", "language", "autostart"}
         config_changed = any(merged.get(key) != _config.get(key) for key in merged)
         proxy_changed = any(
             merged.get(key) != _config.get(key)
@@ -497,13 +527,93 @@ def _show_first_run() -> None:
     _activate_app()
 
 
+def _on_update(icon=None, item=None) -> None:
+    _dispatch(_show_update_dialog, delay_ms=300)
+
+
+def _show_update_dialog() -> None:
+    global _update_busy
+    if _exiting or _update_busy:
+        return
+    status = get_status()
+    if not status.get("has_update"):
+        return
+    bundle = mac_integration.app_bundle()
+    if bundle is None:
+        webbrowser.open((status.get("html_url") or "").strip() or RELEASES_PAGE_URL)
+        return
+    if not _ask_yes_no(t("update.mac_confirm", version=status.get("latest") or "?"),
+                       t("app.update_title")):
+        return
+    _update_busy = True
+    theme = ctk_theme_for_platform()
+    window = create_ctk_toplevel(
+        ctk,
+        title=t("app.update_title"),
+        width=400,
+        height=150,
+        theme=theme,
+        topmost=False,
+    )
+    window.protocol("WM_DELETE_WINDOW", lambda: None)
+    frame = main_content_frame(ctk, window, theme, padx=24, pady=20)
+    ctk.CTkLabel(
+        frame,
+        text=t("app.update_title"),
+        anchor="w",
+        font=(theme.ui_font_family, 16, "bold"),
+        text_color=theme.text_primary,
+    ).pack(fill="x")
+    label = ctk.CTkLabel(
+        frame,
+        text=t("update.downloading"),
+        anchor="w",
+        font=(theme.ui_font_family, 12),
+        text_color=theme.text_secondary,
+    )
+    label.pack(fill="x", pady=(4, 12))
+    progress = ctk.CTkProgressBar(frame, mode="indeterminate")
+    progress.pack(fill="x")
+    progress.start()
+    _activate_app()
+
+    def finish(error=None, work=None):
+        global _update_busy
+        _update_busy = False
+        progress.stop()
+        window.destroy()
+        if error:
+            _show_error(t("update.error", msg=error))
+        elif work is not None:
+            try:
+                mac_integration.launch_installer(bundle, work)
+            except OSError as exc:
+                _show_error(t("update.error", msg=exc))
+                return
+            _finish_exit()
+
+    def download():
+        try:
+            work = mac_integration.prepare_update(
+                bundle, status, build_github_opener(),
+                progress=lambda key: _dispatch(lambda: label.configure(text=t(key))),
+            )
+        except Exception as exc:
+            log.exception("macOS update preparation failed")
+            _dispatch(lambda error=str(exc): finish(error=error))
+        else:
+            _dispatch(lambda: finish(work=work))
+
+    threading.Thread(target=download, daemon=True, name="macos-update").start()
+
+
 def _build_menu():
     if pystray is None:
         return None
     host = _config.get("host", DEFAULT_CONFIG["host"])
     port = _config.get("port", DEFAULT_CONFIG["port"])
     link_host = get_link_host(host)
-    return pystray.Menu(
+    items = [
         pystray.MenuItem(
             t("tray.open_telegram", host=link_host, port=port),
             _on_open_in_telegram,
@@ -516,7 +626,17 @@ def _build_menu():
         pystray.MenuItem(t("tray.logs"), _on_open_logs),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(t("tray.exit"), _on_exit),
-    )
+    ]
+    status = get_status()
+    if status.get("has_update"):
+        items[-2:-2] = [
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                t("tray.update", current=__version__, new=status.get("latest") or "?"),
+                _on_update,
+            ),
+        ]
+    return pystray.Menu(*items)
 
 
 def _initialize_gui() -> bool:
@@ -555,6 +675,12 @@ def run_tray() -> None:
     _config = load_config()
     bootstrap(_config)
     _enable_crash_log()
+    bundle = mac_integration.app_bundle()
+    if bundle is not None:
+        try:
+            mac_integration.cleanup_old_updates(bundle)
+        except OSError as exc:
+            log.warning("Failed to clean old macOS updates: %s", repr(exc))
 
     if not _initialize_gui():
         log.error("pystray, Pillow, customtkinter or AppKit not installed; running in console mode")
@@ -567,15 +693,21 @@ def run_tray() -> None:
         return
 
     start_proxy(_config, _show_error)
-    _tray_icon = pystray.Icon(
+    _tray_icon = MacTemplateIcon(
         APP_NAME,
-        load_icon(),
+        render_tray_icon(),
         t("app.name"),
         menu=_build_menu(),
         darwin_nsapplication=_ns_app,
     )
     _tray_icon.run_detached()
-    maybe_notify_update(_config, lambda: _exiting, _ask_yes_no)
+    maybe_notify_update(
+        _config, lambda: _exiting, _ask_yes_no,
+        on_checked=lambda: _dispatch(_refresh_tray_menu),
+        on_update_available=(
+            (lambda: _dispatch(_show_update_dialog)) if bundle is not None else None
+        ),
+    )
     _ctk_root.after(0, _show_first_run)
     log.info("Tray icon running")
     _ctk_root.mainloop()
