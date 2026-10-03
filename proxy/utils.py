@@ -3,6 +3,7 @@ import urllib.request
 import http.client
 import ssl
 import logging
+import os
 import re
 
 import certifi
@@ -140,8 +141,26 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
             return super().https_open(req)
 
 
+_DISTRO_CA_CANDIDATES = (
+    '/etc/ssl/certs/ca-certificates.crt',
+    '/etc/ssl/cert.pem',
+    '/etc/pki/tls/certs/ca-bundle.crt',
+    '/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem',
+    '/etc/ssl/ca-bundle.pem',
+    '/var/lib/ca-certificates/ca-bundle.pem',
+)
+
+
 def create_ssl_context(*, check_hostname: bool = True) -> ssl.SSLContext:
-    context = ssl.create_default_context(cafile=certifi.where())
+    cafile = None
+    for path in (certifi.where(),) + _DISTRO_CA_CANDIDATES:
+        if os.path.isfile(path):
+            cafile = path
+            break
+    if cafile is None:
+        context = ssl.create_default_context()
+    else:
+        context = ssl.create_default_context(cafile=cafile)
     context.load_default_certs()
     context.check_hostname = check_hostname
     return context

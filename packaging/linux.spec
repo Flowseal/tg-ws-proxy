@@ -2,6 +2,8 @@
 
 import os
 import glob
+import shutil
+import tempfile
 
 from PyInstaller.utils.hooks import collect_data_files
 
@@ -11,6 +13,18 @@ block_cipher = None
 import customtkinter
 ctk_path = os.path.dirname(customtkinter.__file__)
 certifi_datas = collect_data_files('certifi')
+# Debian's python3-certifi replaces cacert.pem with a symlink. A onefile
+# extract keeps that symlink, which dangles on OpenSUSE. Ship the PEM bytes.
+resolved_certifi_datas = []
+for source, dest in certifi_datas:
+    if os.path.islink(source):
+        bundle_dir = tempfile.mkdtemp()
+        regular = os.path.join(bundle_dir, 'cacert.pem')
+        shutil.copyfile(os.path.realpath(source), regular)
+        resolved_certifi_datas.append((regular, 'certifi'))
+    else:
+        resolved_certifi_datas.append((source, dest))
+certifi_datas = resolved_certifi_datas
 
 _i18n_path = os.path.join(os.path.dirname(SPEC), os.pardir, 'ui', 'i18n')
 
