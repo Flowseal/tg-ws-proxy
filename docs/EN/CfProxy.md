@@ -16,10 +16,15 @@ Cloudflare limits the number of simultaneous WebSocket (WS) connections. The def
 
 3. In `DNS` → `Records`, add the following `A` records via `+ Add Record`:
 - Name=`kws1`   IPv4=`149.154.175.50`
+- Name=`kws1-1`   IPv4=`149.154.175.50`
 - Name=`kws2`   IPv4=`149.154.167.51`
+- Name=`kws2-1`   IPv4=`149.154.167.51`
 - Name=`kws3`   IPv4=`149.154.175.100`
+- Name=`kws3-1`   IPv4=`149.154.175.100`
 - Name=`kws4`   IPv4=`149.154.167.91`
+- Name=`kws4-1`   IPv4=`149.154.167.91`
 - Name=`kws5`   IPv4=`149.154.171.5`
+- Name=`kws5-1`   IPv4=`149.154.171.5`
 - Name=`kws203` IPv4=`91.105.192.100`
 
 4. **Add your domain to [zapret](https://github.com/Flowseal/zapret-discord-youtube/) or any other DPI bypass software, as the Cloudflare subnet may be blocked (e.g., in Russia).**
