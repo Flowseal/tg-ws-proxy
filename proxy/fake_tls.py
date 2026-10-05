@@ -69,13 +69,13 @@ def verify_client_hello(data: bytes, secret: bytes) -> Optional[Tuple[bytes, byt
     zeroed = bytearray(data)
     zeroed[CLIENT_RANDOM_OFFSET:CLIENT_RANDOM_OFFSET + CLIENT_RANDOM_LEN] = b'\x00' * CLIENT_RANDOM_LEN
 
-    expected = hmac.new(secret, bytes(zeroed), hashlib.sha256).digest()
+    expected = hmac.new(secret, zeroed, hashlib.sha256).digest()
 
     if not hmac.compare_digest(expected[:28], client_random[:28]):
         return None
 
-    ts_xor = bytes(client_random[28 + i] ^ expected[28 + i] for i in range(4))
-    timestamp = struct.unpack('<I', ts_xor)[0]
+    timestamp = (int.from_bytes(client_random[28:], 'little')
+                 ^ int.from_bytes(expected[28:], 'little'))
 
     now = int(time.time())
     if abs(now - timestamp) > TIMESTAMP_TOLERANCE:

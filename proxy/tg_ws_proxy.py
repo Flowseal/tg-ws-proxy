@@ -46,11 +46,7 @@ def _try_handshake(handshake: bytes, secret: bytes) -> Optional[Tuple[int, bool,
 
     dec_key = hashlib.sha256(dec_prekey + secret).digest()
 
-    dec_iv_int = int.from_bytes(dec_iv, 'big')
-    decryptor = Cipher(
-        algorithms.AES(dec_key), modes.CTR(dec_iv_int.to_bytes(16, 'big'))
-    ).encryptor()
-    decrypted = decryptor.update(handshake)
+    decrypted = Cipher(algorithms.AES(dec_key), modes.CTR(dec_iv)).encryptor().update(handshake)
 
     proto_tag = decrypted[PROTO_TAG_POS:PROTO_TAG_POS + 4]
     if proto_tag not in (PROTO_TAG_ABRIDGED, PROTO_TAG_INTERMEDIATE,
@@ -68,39 +64,16 @@ def _try_handshake(handshake: bytes, secret: bytes) -> Optional[Tuple[int, bool,
 
 def _generate_relay_init(proto_tag: bytes, dc_idx: int) -> bytes:
     while True:
-        rnd = bytearray(os.urandom(HANDSHAKE_LEN))
-        if rnd[0] in RESERVED_FIRST_BYTES:
-            continue
-        if bytes(rnd[:4]) in RESERVED_STARTS:
-            continue
-        if rnd[4:8] == RESERVED_CONTINUE:
-            continue
-        break
-
-    rnd_bytes = bytes(rnd)
-
-    enc_key = rnd_bytes[SKIP_LEN:SKIP_LEN + PREKEY_LEN]
-    enc_iv = rnd_bytes[SKIP_LEN + PREKEY_LEN:SKIP_LEN + PREKEY_LEN + IV_LEN]
-
-    encryptor = Cipher(
-        algorithms.AES(enc_key), modes.CTR(enc_iv)
-    ).encryptor()
-
-    dc_bytes = struct.pack('<h', dc_idx)
-    tail_plain = proto_tag + dc_bytes + os.urandom(2)
-
-    encrypted_full = encryptor.update(rnd_bytes)
-    keystream_tail = bytes(
-        encrypted_full[i] ^ rnd_bytes[i] for i in range(56, 64))
-    encrypted_tail = bytes(
-        tail_plain[i] ^ keystream_tail[i] for i in range(8))
-
-    result = bytearray(rnd_bytes)
-    result[PROTO_TAG_POS:HANDSHAKE_LEN] = encrypted_tail
-    return bytes(result)
-
-
-
+        rnd = os.urandom(HANDSHAKE_LEN)
+        if (rnd[0] not in RESERVED_FIRST_BYTES and rnd[:4] not in RESERVED_STARTS
+                and rnd[4:8] != RESERVED_CONTINUE):
+            break
+    keystream = Cipher(
+        algorithms.AES(rnd[SKIP_LEN:SKIP_LEN + PREKEY_LEN]),
+        modes.CTR(rnd[SKIP_LEN + PREKEY_LEN:SKIP_LEN + PREKEY_LEN + IV_LEN])
+    ).encryptor().update(ZERO_64)
+    tail = proto_tag + struct.pack('<h', dc_idx) + os.urandom(2)
+    return rnd[:PROTO_TAG_POS] + bytes(a ^ b for a, b in zip(tail, keystream[PROTO_TAG_POS:]))
 
 
 async def _read_client_init(reader, writer, secret, label, masking):
