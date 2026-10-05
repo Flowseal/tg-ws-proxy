@@ -18,15 +18,22 @@ The tray application stores data in:
   "verbose": false,
   "buf_kb": 0,
   "pool_size": 4,
-  "log_max_mb": 5.0,
+  "log_max_mb": 5,
   "check_updates": true,
   "cfproxy": true,
-  "cfproxy_user_domain": "",
-  "cfproxy_worker_domain": "",
+  "h2": true,
+  "cfproxy_user_domain_enabled": false,
+  "cfproxy_user_domain": [],
+  "cfproxy_worker_enabled": false,
+  "cfproxy_worker_domain": [],
   "force_test_dc": false,
-  "appearance": "auto"
+  "no_secure": false,
+  "appearance": "auto",
+  "language": "en",
+  "config_version": 2
 }
 ```
 
 The `check_updates` key: when `true`, performs a request to GitHub and compares the current version with the latest release (notification and link to download page only).  
-On Windows, the config may contain `autostart` (auto-start on system login).
+On Windows, the config may contain `autostart` (auto-start on system login).  
+`config_version` is a service field used to migrate old configs, do not change it manually.
