@@ -29,7 +29,7 @@ PROTO_INTERMEDIATE_INT = 0xEEEEEEEE
 PROTO_PADDED_INTERMEDIATE_INT = 0xDDDDDDDD
 
 RESERVED_FIRST_BYTES = {0xEF}
-RESERVED_STARTS = {b'\x48\x45\x41\x44', b'\x50\x4F\x53\x54',
+RESERVED_STARTS = {b'OPTI', b'\x48\x45\x41\x44', b'\x50\x4F\x53\x54',
                     b'\x47\x45\x54\x20', b'\xee\xee\xee\xee',
                     b'\xdd\xdd\xdd\xdd', b'\x16\x03\x01\x02'}
 RESERVED_CONTINUE = b'\x00\x00\x00\x00'

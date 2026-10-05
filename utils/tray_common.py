@@ -232,6 +232,15 @@ _LOG_FMT_FILE = "%(asctime)s  %(levelname)-5s  %(name)s  %(message)s"
 _LOG_FMT_CONSOLE = "%(asctime)s  %(levelname)-5s  %(message)s"
 
 
+class _SecretFilter(logging.Filter):
+    def filter(self, record):
+        secret = proxy_config.secret
+        msg = record.getMessage()
+        if secret and secret in msg:
+            record.msg, record.args = msg.replace(secret, secret[:4] + "…"), ()
+        return True
+
+
 def setup_logging(verbose: bool = False, log_max_mb: float = 5) -> None:
     ensure_dirs()
     level = logging.DEBUG if verbose else logging.INFO
@@ -243,6 +252,7 @@ def setup_logging(verbose: bool = False, log_max_mb: float = 5) -> None:
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(logging.Formatter(_LOG_FMT_FILE, datefmt="%Y-%m-%d %H:%M:%S"))
     fh.addFilter(DomainCensorFilter())
+    fh.addFilter(_SecretFilter())
     root.addHandler(fh)
 
     if not IS_FROZEN:
@@ -250,6 +260,7 @@ def setup_logging(verbose: bool = False, log_max_mb: float = 5) -> None:
         ch.setLevel(level)
         ch.setFormatter(logging.Formatter(_LOG_FMT_CONSOLE, datefmt="%H:%M:%S"))
         ch.addFilter(DomainCensorFilter())
+        ch.addFilter(_SecretFilter())
         root.addHandler(ch)
 
 
@@ -568,5 +579,5 @@ def bootstrap(cfg: dict) -> None:
         log_max_mb=cfg.get("log_max_mb", DEFAULT_CONFIG["log_max_mb"]),
     )
     log.info("TG WS Proxy версия %s starting", __version__)
-    log.info("Config: %s", cfg)
+    log.info("Config: %s", {**cfg, "secret": cfg.get("secret", "")[:4] + "…"})
     log.info("Log file: %s", LOG_FILE)

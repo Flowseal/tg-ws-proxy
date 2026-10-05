@@ -29,6 +29,8 @@ SESSION_ID_OFFSET = 44
 SESSION_ID_LEN = 32
 
 TIMESTAMP_TOLERANCE = 120
+REPLAY_CACHE_SOFT_LIMIT = 4096
+_seen_randoms: dict = {}
 
 TLS_APPDATA_MAX = 16384
 
@@ -80,6 +82,13 @@ def verify_client_hello(data: bytes, secret: bytes) -> Optional[Tuple[bytes, byt
     now = int(time.time())
     if abs(now - timestamp) > TIMESTAMP_TOLERANCE:
         return None
+    if client_random in _seen_randoms:
+        return None
+    if len(_seen_randoms) >= REPLAY_CACHE_SOFT_LIMIT:
+        cutoff = now - 2 * TIMESTAMP_TOLERANCE
+        for key in [k for k, seen in _seen_randoms.items() if seen < cutoff]:
+            del _seen_randoms[key]
+    _seen_randoms[client_random] = now
 
     session_id = b'\x00' * SESSION_ID_LEN
     if n >= SESSION_ID_OFFSET + SESSION_ID_LEN and data[43] == 0x20:

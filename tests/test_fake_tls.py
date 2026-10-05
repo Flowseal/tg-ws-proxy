@@ -57,6 +57,11 @@ class VerifyClientHelloTest(unittest.TestCase):
         self.assertEqual(got_session_id, session_id)
         self.assertEqual(ts, now)
 
+    def test_rejects_replayed_hello(self):
+        hello = _client_hello()
+        self.assertIsNotNone(verify_client_hello(hello, SECRET))
+        self.assertIsNone(verify_client_hello(hello, SECRET))
+
     def test_rejects_wrong_secret(self):
         other = bytes.fromhex('ffeeddccbbaa99887766554433221100')
         self.assertIsNone(verify_client_hello(_client_hello(), other))
