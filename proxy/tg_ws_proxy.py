@@ -8,7 +8,6 @@ import asyncio
 import hashlib
 import argparse
 import logging
-import socket as _socket
 
 from typing import Optional, Set, Tuple
 
@@ -350,12 +349,6 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     server = await asyncio.start_server(client_cb, proxy_config.host, proxy_config.port)
     _server_instance = server
 
-    for sock in server.sockets:
-        try:
-            sock.setsockopt(_socket.IPPROTO_TCP, _socket.TCP_NODELAY, 1)
-        except (OSError, AttributeError):
-            pass
-
     link_host = get_link_host(proxy_config.host)
     ftls = proxy_config.fake_tls_domain
     dd_link = (f"tg://proxy?server={link_host}"
@@ -399,25 +392,22 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     async def log_stats():
         next_stats = time.monotonic() + 60
         next_tick = time.monotonic() + 5
-        try:
-            while True:
-                await asyncio.sleep(5)
-                now = time.monotonic()
-                if log.isEnabledFor(logging.DEBUG):
-                    if now - next_tick >= .25:
-                        log.debug('NET LOOP late_ms=%.0f', (now - next_tick) * 1000)
-                    log_ws_flow(now)
-                    if cf_h2_pool is not None:
-                        cf_h2_pool.log_flow(now)
-                next_tick = time.monotonic() + 5
-                if now < next_stats:
-                    continue
-                next_stats = now + 60
-                log.info("stats: %s", stats.summary())
+        while True:
+            await asyncio.sleep(5)
+            now = time.monotonic()
+            if log.isEnabledFor(logging.DEBUG):
+                if now - next_tick >= .25:
+                    log.debug('NET LOOP late_ms=%.0f', (now - next_tick) * 1000)
+                log_ws_flow(now)
                 if cf_h2_pool is not None:
-                    cf_h2_pool.log_stats()
-        except asyncio.CancelledError:
-            raise
+                    cf_h2_pool.log_flow(now)
+            next_tick = time.monotonic() + 5
+            if now < next_stats:
+                continue
+            next_stats = now + 60
+            log.info("stats: %s", stats.summary())
+            if cf_h2_pool is not None:
+                cf_h2_pool.log_stats()
 
     log_stats_task = asyncio.create_task(log_stats())
 
@@ -476,12 +466,6 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
                 log.error("Failed to restart server: %s", repr(exc))
                 break
             _server_instance = server
-            for sock in server.sockets:
-                try:
-                    sock.setsockopt(
-                        _socket.IPPROTO_TCP, _socket.TCP_NODELAY, 1)
-                except (OSError, AttributeError):
-                    pass
             log.warning("Server restored, listening on %s:%d",
                         proxy_config.host, proxy_config.port)
     finally:
@@ -506,12 +490,6 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
             await log_stats_task
         except asyncio.CancelledError:
             pass
-        try:
-            server.close()
-            await server.wait_closed()
-        except Exception:
-            pass
-    _server_instance = None
 
 
 def run_proxy(stop_event: Optional[asyncio.Event] = None):
