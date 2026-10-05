@@ -64,6 +64,8 @@ def set_sock_opts(transport, buffer_size):
     except (OSError, AttributeError):
         pass
     
+    if not buffer_size:
+        return
     try:
         sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_RCVBUF, buffer_size)
         sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_SNDBUF, buffer_size)

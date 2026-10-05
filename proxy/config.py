@@ -65,7 +65,7 @@ class ProxyConfig:
     host: str = '127.0.0.1'
     secret: str = field(default_factory=lambda: os.urandom(16).hex())
     dc_redirects: Dict[int, str] = field(default_factory=lambda: {2: '149.154.167.220', 4: '149.154.167.220'})
-    buffer_size: int = 256 * 1024
+    buffer_size: int = 0
     pool_size: int = 4
     fallback_cfproxy: bool = True
     cfproxy_user_domains: List[str] = field(default_factory=list)

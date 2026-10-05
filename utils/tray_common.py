@@ -206,6 +206,9 @@ def load_config() -> dict:
                 data["cfproxy_worker_enabled"] = bool(
                     coerce_domain_list(data.get("cfproxy_worker_domain"))
                 )
+            if data.get("config_version", 1) < 2 and data.get("buf_kb") == 256:
+                data["buf_kb"] = 0
+            data["config_version"] = DEFAULT_CONFIG["config_version"]
             for k, v in DEFAULT_CONFIG.items():
                 data.setdefault(k, v)
             cfg = data
@@ -355,7 +358,8 @@ def apply_proxy_config(cfg: dict) -> bool:
     pc.host = cfg.get("host", DEFAULT_CONFIG["host"])
     pc.secret = cfg.get("secret", DEFAULT_CONFIG["secret"])
     pc.dc_redirects = dc_redirects
-    pc.buffer_size = max(4, cfg.get("buf_kb", DEFAULT_CONFIG["buf_kb"])) * 1024
+    buf_kb = cfg.get("buf_kb", DEFAULT_CONFIG["buf_kb"])
+    pc.buffer_size = max(4, buf_kb) * 1024 if buf_kb > 0 else 0
     pc.pool_size = max(0, cfg.get("pool_size", DEFAULT_CONFIG["pool_size"]))
     pc.fallback_cfproxy = cfg.get("cfproxy", DEFAULT_CONFIG["cfproxy"])
     pc.cfproxy_h2_media = cfg.get("h2", DEFAULT_CONFIG["h2"])

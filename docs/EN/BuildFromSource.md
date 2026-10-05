@@ -55,7 +55,7 @@ tg-ws-proxy [--port PORT] [--host HOST] [--dc-ip DC:IP ...] [-v]
 | `--no-secure` | `false` | Use 80 port for CF-proxy and CF-worker connections |
 | `--fake-tls-domain` | | Enable Fake TLS masquerading (ee-secret) with specified SNI domain |
 | `--proxy-protocol` | disabled | Accept HAProxy PROXY protocol v1 (for use behind nginx/haproxy with `proxy_protocol on`) |
-| `--buf-kb` | `256` | Buffer size in KB |
+| `--buf-kb` | `0` | Buffer size in KB (0 = OS auto-tuning) |
 | `--pool-size` | `4` | Number of ready WS connections per DC. `0` disables the direct DC→IP WS route |
 | `--log-file` | disabled | Path to file for saving logs |
 | `--log-max-mb` | `5` | Maximum log file size in MB (afterwards overwrites) |

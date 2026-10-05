@@ -16,7 +16,7 @@ Tray-приложение хранит данные в:
     "4:149.154.167.220"
   ],
   "verbose": false,
-  "buf_kb": 256,
+  "buf_kb": 0,
   "pool_size": 4,
   "log_max_mb": 5.0,
   "check_updates": true,

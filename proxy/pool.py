@@ -20,8 +20,10 @@ class _WsPool:
     WS_POOL_CHECK_INTERVAL = 5.0
     REFILL_BACKOFF_INITIAL = 1.0
     REFILL_BACKOFF_MAX = 3600.0
-    
+    IDLE_AFTER = 300.0
+
     def __init__(self):
+        self._last_used: Dict[Tuple[int, bool, bool], float] = {}
         self._idle: Dict[Tuple[int, bool, bool], deque] = {}
         self._refilling: Dict[Tuple[int, bool, bool], asyncio.Task] = {}
         self._rotating: Dict[Tuple[int, bool, bool], asyncio.Task] = {}
@@ -37,6 +39,7 @@ class _WsPool:
         key = (dc, is_media, is_test_dc)
         domains = ws_domains(dc, is_media)
         now = time.monotonic()
+        self._last_used[key] = now
 
         bucket = self._idle.get(key)
         if bucket is None:
@@ -57,6 +60,12 @@ class _WsPool:
         stats.pool_misses += 1
         self._schedule_refill(key, target_ip, domains)
         return None
+
+    def _target(self, key):
+        now = time.monotonic()
+        if now - self._last_used.get(key, now) < self.IDLE_AFTER:
+            return proxy_config.pool_size
+        return min(1, proxy_config.pool_size)
 
     def _is_stale(self, ws, created, now):
         return (now - created >= self.WS_POOL_MAX_AGE or ws._closed
@@ -79,7 +88,7 @@ class _WsPool:
         adopted = set()
         try:
             bucket = self._idle.setdefault(key, deque())
-            needed = proxy_config.pool_size - len(bucket)
+            needed = self._target(key) - len(bucket)
             if needed <= 0:
                 return
             connected = 0
@@ -156,7 +165,7 @@ class _WsPool:
                         dc, 't' if is_test_dc else '', 'm' if is_media else '',
                         len(expired), len(bucket))
 
-                if len(bucket) < proxy_config.pool_size:
+                if len(bucket) < self._target(key):
                     self._schedule_refill(key, target_ip, domains)
 
                 wake_at = now + self.WS_POOL_CHECK_INTERVAL
@@ -204,6 +213,7 @@ class _WsPool:
             for is_media in (False, True):
                 domains = ws_domains(dc, is_media)
                 key = (dc, is_media, proxy_config.force_test_dc)
+                self._last_used[key] = time.monotonic()
                 self._schedule_refill(key, target_ip, domains)
         log.info("WS pool warmup started for %d DC(s)", len(proxy_config.dc_redirects))
 
@@ -219,6 +229,7 @@ class _WsPool:
                 except Exception as exc:
                     log.debug("WS pool close failed: %r", exc)
         self._idle.clear()
+        self._last_used.clear()
         self._refilling.clear()
         self._rotating.clear()
         self._refill_failures.clear()

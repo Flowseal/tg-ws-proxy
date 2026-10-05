@@ -535,8 +535,8 @@ def main():
     ap.add_argument('--log-backups', type=int, default=1, metavar='N',
                     help='Number of rotated log files to keep (min 1; '
                          'rotation needs at least one backup to bound size)')
-    ap.add_argument('--buf-kb', type=int, default=256, metavar='KB',
-                    help='Socket send/recv buffer size in KB (default 256)')
+    ap.add_argument('--buf-kb', type=int, default=0, metavar='KB',
+                    help='Socket send/recv buffer size in KB (default 0 = OS auto-tuning)')
     ap.add_argument('--pool-size', type=int, default=4, metavar='N',
                     help='WS connection pool size per DC (default 4, 0 disables direct WS)')
     ap.add_argument('--cfproxy-domain', action='append', default=None,
@@ -602,7 +602,7 @@ def main():
     proxy_config.host = args.host
     proxy_config.secret = secret_hex
     proxy_config.dc_redirects = dc_redirects
-    proxy_config.buffer_size = max(4, args.buf_kb) * 1024
+    proxy_config.buffer_size = max(4, args.buf_kb) * 1024 if args.buf_kb > 0 else 0
     proxy_config.pool_size = max(0, args.pool_size)
     proxy_config.fallback_cfproxy = not args.no_cfproxy
     proxy_config.cfproxy_user_domains = coerce_domain_list(args.cfproxy_domain)

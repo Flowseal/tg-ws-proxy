@@ -18,7 +18,7 @@ _TRAY_DEFAULTS_COMMON: Dict[str, Any] = {
     "verbose": False,
     "check_updates": True,
     "log_max_mb": 5,
-    "buf_kb": 256,
+    "buf_kb": 0,
     "pool_size": 4,
     "cfproxy": True,
     "h2": True,
@@ -29,6 +29,7 @@ _TRAY_DEFAULTS_COMMON: Dict[str, Any] = {
     "force_test_dc": False,
     "no_secure": False,
     "appearance": "auto",
+    "config_version": 2,
 }
 
 
