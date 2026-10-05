@@ -4,14 +4,13 @@ import struct
 import time
 
 from typing import Dict, List, Optional, Set, Tuple
-from urllib.parse import urlencode
 
 from .utils import *
 from .stats import stats
 from .balancer import balancer
 from .config import proxy_config
 from .raw_websocket import RawWebSocket
-from .pool import cf_worker_pool
+from .pool import cf_worker_pool, worker_path
 from .network_debug import WsActivity
 from .cf_h2 import bridge_h2
 
@@ -197,12 +196,7 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
         log.info("[%s] DC%d%s -> CF worker pool hit via %s for %s",
                  label, dc, media_tag, worker_domain, fallback_dst)
     else:
-        query = urlencode({
-            'dst': fallback_dst,
-            'dc': str(dc),
-        })
-        path = f'/apiws?{query}'
-
+        path = worker_path(dc, fallback_dst)
         ws = None
         for worker_domain in cf_worker_pool.available_domains(worker_domains):
             log.info("[%s] DC%d%s -> trying CF worker %s for %s",

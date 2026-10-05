@@ -13,6 +13,24 @@ from .config import proxy_config
 from .utils import ws_domains, DC_DEFAULT_IPS, WS_PATH, WS_PATH_TEST
 
 log = logging.getLogger('tg-mtproto-proxy')
+_background: Set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+
+
+async def _quiet_close(ws) -> None:
+    try:
+        await ws.close()
+    except Exception:
+        pass
+
+
+def worker_path(dc: int, dst: str) -> str:
+    return '/apiws?' + urlencode({'dst': dst, 'dc': str(dc)})
 
 
 class _WsPool:
@@ -49,7 +67,7 @@ class _WsPool:
             ws, created = bucket.popleft()
             age = now - created
             if self._is_stale(ws, created, now):
-                asyncio.create_task(self._quiet_close(ws))
+                _spawn(_quiet_close(ws))
                 continue
             stats.pool_hits += 1
             log.debug("WS pool hit DC%d%s%s (age=%.1fs, left=%d)",
@@ -131,7 +149,7 @@ class _WsPool:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for ws in results:
                 if ws is not None and not isinstance(ws, BaseException) and ws not in adopted:
-                    await self._quiet_close(ws)
+                    await _quiet_close(ws)
             if self._refilling.get(key) is asyncio.current_task():
                 self._refilling.pop(key, None)
 
@@ -159,7 +177,7 @@ class _WsPool:
 
                 if expired:
                     for ws in expired:
-                        asyncio.create_task(self._quiet_close(ws))
+                        _spawn(_quiet_close(ws))
                     log.debug(
                         "WS pool rotated DC%d%s%s: %d stale, %d ready",
                         dc, 't' if is_test_dc else '', 'm' if is_media else '',
@@ -199,12 +217,6 @@ class _WsPool:
                           domain, path, target_ip, fronted)
                 return ws
         return None
-
-    async def _quiet_close(self, ws):
-        try:
-            await ws.close()
-        except Exception:
-            pass
 
     async def warmup(self):
         for dc, target_ip in proxy_config.dc_redirects.items():
@@ -265,7 +277,7 @@ class _CfWorkerPool:
             age = now - created
             if (age > self.WS_POOL_MAX_AGE or ws._closed
                     or ws.writer.transport.is_closing()):
-                asyncio.create_task(self._quiet_close(ws))
+                _spawn(_quiet_close(ws))
                 continue
             stats.cf_pool_hits += 1
             log.debug(
@@ -281,8 +293,7 @@ class _CfWorkerPool:
         if dc in self._refilling:
             return
         self._refilling.add(dc)
-        asyncio.create_task(self._refill(
-            dc, fallback_dst, list(worker_domains)))
+        _spawn(self._refill(dc, fallback_dst, list(worker_domains)))
 
     async def _refill(self, dc, fallback_dst, worker_domains):
         try:
@@ -305,11 +316,7 @@ class _CfWorkerPool:
             self._refilling.discard(dc)
 
     async def _connect_one(self, worker_domains, fallback_dst, dc):
-        query = urlencode({
-            'dst': fallback_dst,
-            'dc': str(dc),
-        })
-        path = f'/apiws?{query}'
+        path = worker_path(dc, fallback_dst)
         for worker_domain in self.available_domains(worker_domains):
             try:
                 ws = await RawWebSocket.connect(
@@ -348,12 +355,6 @@ class _CfWorkerPool:
         log.warning(
             "CF worker %s reached its request limit, disabled for %d seconds", worker_domain, int(exhausted_until - now))
 
-    async def _quiet_close(self, ws):
-        try:
-            await ws.close()
-        except Exception:
-            pass
-
     async def warmup(self):
         cf_fallbacks = {
             dc: ip for dc, ip in DC_DEFAULT_IPS.items()
@@ -370,6 +371,12 @@ class _CfWorkerPool:
         log.info("CF worker pool warmup started for %d DC(s)", len(cf_fallbacks))
 
     def reset(self):
+        for bucket in self._idle.values():
+            for ws, _, _ in bucket:
+                try:
+                    ws.writer.close()
+                except Exception as exc:
+                    log.debug("CF worker pool close failed: %r", exc)
         self._idle.clear()
         self._refilling.clear()
         self._exhausted_until.clear()

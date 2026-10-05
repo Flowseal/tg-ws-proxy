@@ -36,6 +36,7 @@ log = logging.getLogger('tg-mtproto-proxy')
 
 LISTENER_CHECK_INTERVAL = 5.0
 LISTENER_RESTART_DELAY = 1.0
+BAD_CLIENT_DRAIN_TIMEOUT = 30.0
 cf_h2_pool: Optional[CfH2Pool] = None
 
 
@@ -236,9 +237,11 @@ async def _handle_client(reader, writer, secret: bytes):
         if result is None:
             stats.connections_bad += 1
             log.warning("[%s] bad handshake (wrong secret or proto)", label)
-            try:
+            async def drain():
                 while await clt_reader.read(4096):
                     pass
+            try:
+                await asyncio.wait_for(drain(), BAD_CLIENT_DRAIN_TIMEOUT)
             except Exception:
                 pass
             return
@@ -493,6 +496,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
                 await _quiet_cancel(task)
         await server.wait_closed()
         await ws_pool.close()
+        cf_worker_pool.reset()
         if cf_h2_pool is not None:
             await cf_h2_pool.close()
             cf_h2_pool = None
