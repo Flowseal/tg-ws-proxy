@@ -665,7 +665,7 @@ class _HttpLane:
             self.capacity.notify_all()
 
     async def _post(self, body: bytes, channel_id: int, replay: bool = False,
-                    channel: Optional[_HttpChannel] = None) -> bytes:
+                    channel: Optional[_HttpChannel] = None) -> bytearray:
         self.requests += 1
         self.replays += int(replay)
         stats.h2_requests += 1
@@ -776,7 +776,7 @@ class _HttpLane:
                               self.lane_id, channel_id, request_id, received, replay,
                               (headers_at - started) * 1000, body_seconds * 1000,
                               trace.summary(finished) if trace is not None else '-')
-                return bytes(content)
+                return content
         except _MTProtoTransportError:
             self.errors += 1
             raise
