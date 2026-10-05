@@ -46,22 +46,20 @@ class MsgSplitterTest(unittest.TestCase):
         plain = b''.join(packets)
         stream = enc.update(plain)
 
-        chunks = []
+        bounds = []
         if chunk_sizes is None:
-            chunks = [stream]
+            bounds = [(0, len(stream))]
         else:
             offset = 0
             for size in chunk_sizes:
-                chunks.append(stream[offset:offset + size])
+                bounds.append((offset, offset + size))
                 offset += size
             if offset < len(stream):
-                chunks.append(stream[offset:])
+                bounds.append((offset, len(stream)))
 
         parts = []
-        offset = 0
-        for chunk in chunks:
-            parts.extend(splitter.split(chunk, plain[offset:offset + len(chunk)]))
-            offset += len(chunk)
+        for a, b in bounds:
+            parts.extend(splitter.split(stream[a:b], plain[a:b]))
         return splitter, stream, parts
 
     def test_abridged_stream_splits_into_packets(self):

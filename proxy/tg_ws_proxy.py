@@ -297,15 +297,10 @@ async def _handle_client(reader, writer, secret: bytes):
         if ws is None:
             log.info("[%s] DC%d%s WS pool unavailable -> fallback",
                      label, dc, media_tag)
-            splitter_fb = None
-            try:
-                splitter_fb = MsgSplitter(proto_int)
-            except Exception:
-                pass
             ok = await do_fallback(
                 clt_reader, clt_writer, relay_init, label,
                 dc, is_test_dc, is_media, media_tag,
-                ctx, splitter=splitter_fb, h2_pool=cf_h2_pool, proto_tag=proto_tag)
+                ctx, splitter=MsgSplitter(proto_int), h2_pool=cf_h2_pool, proto_tag=proto_tag)
             if ok:
                 log.info("[%s] DC%d%s fallback closed", label, dc, media_tag)
             else:
@@ -315,19 +310,10 @@ async def _handle_client(reader, writer, secret: bytes):
         log.info("[%s] DC%d%s -> WS pool hit", label, dc, media_tag)
         stats.connections_ws += 1
 
-        splitter = None
-        try:
-            splitter = MsgSplitter(proto_int)
-            log.debug("[%s] MsgSplitter activated for proto 0x%08X",
-                      label, proto_int)
-        except Exception:
-            pass
-
         await ws.send(relay_init)
-
         await bridge_ws_reencrypt(clt_reader, clt_writer, ws, label, ctx,
                                    dc=dc, is_media=is_media,
-                                   splitter=splitter)
+                                   splitter=MsgSplitter(proto_int))
 
     except asyncio.TimeoutError:
         log.warning("[%s] timeout during handshake", label)
