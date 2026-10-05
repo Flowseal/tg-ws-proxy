@@ -9,7 +9,7 @@ from unittest import mock
 from proxy.config import proxy_config
 from proxy.pool import _WsPool
 from proxy.raw_websocket import RawWebSocket, WsHandshakeError
-from proxy.utils import ws_domains
+from proxy.utils import WS_DC_NAMES, ws_domains
 
 
 class _StopRotation(Exception):
@@ -91,7 +91,8 @@ class WsPoolTest(unittest.IsolatedAsyncioTestCase):
                     side_effect=WsHandshakeError(302, 'redirect')) as connect:
                 self.assertIsNone(await self.pool._connect_one('192.0.2.1', ws_domains(dc, False)))
                 self.assertEqual([call.args[1] for call in connect.call_args_list],
-                                 [f'kws{dc}.web.telegram.org'] * 2)
+                                 [f'kws{dc}.web.telegram.org'] * 2
+                                 + [f'{WS_DC_NAMES[dc]}.web.telegram.org'] * 2)
 
     async def test_media_tries_regular_domain_after_both_modes_fail(self):
         for error in (asyncio.TimeoutError(), ConnectionResetError(),
@@ -211,7 +212,7 @@ class WsPoolTest(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await self.pool.get(2, False, is_test_dc=True))
             test_key = (2, False, True)
             await self.wait_for(lambda: bool(self.pool._idle.get(test_key)))
-            dial.assert_awaited_once_with('192.0.2.1', ['kws2.web.telegram.org'], '/apiws_test')
+            dial.assert_awaited_once_with('192.0.2.1', ws_domains(2, False), '/apiws_test')
             self.assertIs(self.pool._idle[self.key][0][0], prod)
             await self.pool.close()
 

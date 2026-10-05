@@ -56,14 +56,18 @@ DC_TEST_IPS: Dict[int, str] = {
 
 WS_PATH = '/apiws'
 WS_PATH_TEST = WS_PATH + '_test'
+WS_DC_NAMES = {1: 'pluto', 2: 'venus', 3: 'aurora', 4: 'vesta', 5: 'flora'}
 
 
 def ws_domains(dc: int, is_media: bool) -> List[str]:
     if dc == 203:
         dc = 2
-    if not is_media:
-        return [f'kws{dc}.web.telegram.org']
-    return [f'kws{dc}-1.web.telegram.org', f'kws{dc}.web.telegram.org']
+    domains = [f'kws{dc}.web.telegram.org']
+    if dc in WS_DC_NAMES:
+        domains.append(f'{WS_DC_NAMES[dc]}.web.telegram.org')
+    if is_media:
+        domains.insert(0, f'kws{dc}-1.web.telegram.org')
+    return domains
 
 
 def human_bytes(n: int) -> str:
