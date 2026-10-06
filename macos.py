@@ -86,6 +86,7 @@ from ui.ctk_tray_ui import (
     install_tray_config_buttons,
     install_tray_config_form,
     populate_first_run_window,
+    show_relink_dialog,
     tray_settings_scroll_and_footer,
 )
 from ui.i18n import t
@@ -384,6 +385,10 @@ def _edit_config_dialog() -> None:
         defaults=DEFAULT_CONFIG, persist=save_config,
         refresh_menu=_refresh_tray_menu, finish=finish,
         restart=lambda config: restart_proxy(config, _show_error),
+        on_link_changed=lambda config: show_relink_dialog(
+            ctk, theme, tg_proxy_url(config), on_open=_on_open_in_telegram,
+            after_create=lambda window: _activate_app(),
+        ),
     )
 
     root.protocol("WM_DELETE_WINDOW", dialog.cancel)

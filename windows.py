@@ -37,12 +37,11 @@ except ImportError:
 from proxy import __version__, get_link_host
 
 from utils.win32_theme import (
-    is_windows_dark_theme, 
     apply_windows_dark_theme,
 )
 from utils.tray_common import (
     APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, IS_FROZEN, LOG_FILE,
-    acquire_lock, bootstrap, check_ipv6_warning, ctk_run_dialog,
+    acquire_lock, bootstrap, check_ipv6_warning, ctk_call, ctk_run_dialog,
     ensure_ctk_thread, ensure_dirs, load_config, load_icon, log,
     quit_ctk, release_lock, restart_proxy,
     save_config, start_proxy, stop_proxy, tg_proxy_url,
@@ -50,13 +49,15 @@ from utils.tray_common import (
 from utils.update_check import (
     get_status, get_update_asset, run_check, RELEASES_PAGE_URL, 
 )
+from ui.ctk_controls import create_button
+from ui.ctk_dialogs import show_message
 from ui.ctk_tray_ui import (
     install_tray_config_buttons, install_tray_config_form,
-    populate_first_run_window, tray_settings_scroll_and_footer,
+    populate_first_run_window, show_relink_dialog, tray_settings_scroll_and_footer,
 )
 from ui.ctk_theme import (
     CONFIG_DIALOG_FRAME_PAD, CONFIG_DIALOG_SIZE, FIRST_RUN_SIZE,
-    create_ctk_toplevel, ctk_theme_for_platform, main_content_frame,
+    create_ctk_toplevel, ctk_theme_for_platform, fade_destroy, main_content_frame,
 )
 from ui.i18n import t
 from ui.settings_dialog import SettingsDialog
@@ -115,16 +116,22 @@ _IDYES = 6
 _IDNO = 7
 
 
+def _dialog(kind: str, text: str, title: str, flags: int, buttons=("button.ok",)) -> bool:
+    if ctk is not None and ensure_ctk_thread(ctk, _config.get("appearance", "auto")):
+        return ctk_call(lambda root: show_message(text, title=title, kind=kind, buttons=buttons, icon=ICON_PATH)) == 0
+    return _u32.MessageBoxW(None, text, title, flags) in (1, _IDYES)
+
+
 def _show_error(text: str, title: Optional[str] = None) -> None:
-    _u32.MessageBoxW(None, text, title or t("app.error_title"), _MB_OK_ERR)
+    _dialog("error", text, title or t("app.error_title"), _MB_OK_ERR)
 
 
 def _show_info(text: str, title: Optional[str] = None) -> None:
-    _u32.MessageBoxW(None, text, title or t("app.name"), _MB_OK_INFO)
+    _dialog("info", text, title or t("app.name"), _MB_OK_INFO)
 
 
 def _ask_yes_no(text: str, title: Optional[str] = None) -> bool:
-    return _u32.MessageBoxW(None, text, title or t("app.name"), _MB_YESNO_Q) == _IDYES
+    return _dialog("question", text, title or t("app.name"), _MB_YESNO_Q, ("button.yes", "button.no"))
 
 
 def update_ctk_form(
@@ -142,16 +149,12 @@ def update_ctk_form(
 
     result = {"value": "close"}
 
-    def _build(done: threading.Event) -> None:
+    def _build(done: threading.Event):
         theme = ctk_theme_for_platform()
+        width = 340 if IS_FROZEN else 250
         root = create_ctk_toplevel(
-            ctk,
-            title=title,
-            width=310 if IS_FROZEN else 210,
-            height=130 if IS_FROZEN else 100,
-            theme=theme,
-            topmost=False,
-            after_create=lambda r: r.iconbitmap(ICON_PATH),
+            ctk, title=title, width=width, height=140 if IS_FROZEN else 110,
+            theme=theme, icon=ICON_PATH,
         )
         frame = main_content_frame(ctk, root, theme, padx=16, pady=14)
 
@@ -160,8 +163,8 @@ def update_ctk_form(
             text=text,
             justify="left",
             anchor="w",
-            wraplength=270,
-            font=(theme.ui_font_family, 12),
+            wraplength=width - 32,
+            font=(theme.ui_font_family, 13),
             text_color=theme.text_primary,
         ).pack(fill="x", pady=(0, 10))
 
@@ -169,7 +172,7 @@ def update_ctk_form(
         row.pack(fill="x")
 
         status_label = ctk.CTkLabel(
-            frame, text="", justify="left", anchor="w", wraplength=270,
+            frame, text="", justify="left", anchor="w", wraplength=width - 32,
             font=(theme.ui_font_family, 11), text_color=theme.text_secondary,
         )
         status_label.pack(fill="x", pady=(6, 0))
@@ -181,7 +184,7 @@ def update_ctk_form(
 
         def _close_with(value: str) -> None:
             result["value"] = value
-            root.destroy()
+            fade_destroy(root)
             done.set()
 
         def _on_update() -> None:
@@ -200,31 +203,21 @@ def update_ctk_form(
             threading.Thread(target=_run, daemon=True).start()
 
         if IS_FROZEN:
-            btn_upd = ctk.CTkButton(
-                row, text=t("button.update"), width=88, height=34,
-                font=(theme.ui_font_family, 13), command=_on_update,
-            )
-            btn_upd.pack(side="left", padx=(0, 6))
-            btns.append(btn_upd)
-        btn_pg = ctk.CTkButton(
-            row, text=t("button.page"), width=88, height=34,
-            font=(theme.ui_font_family, 13), command=lambda: webbrowser.open(release_url or RELEASES_PAGE_URL),
-        )
-        btn_pg.pack(side="left", padx=(0, 6))
-        btns.append(btn_pg)
-        btn_cl = ctk.CTkButton(
-            row, text=t("button.close"), width=88, height=34,
-            font=(theme.ui_font_family, 13),
-            fg_color=theme.field_bg, hover_color=theme.field_border,
-            text_color=theme.text_primary, border_width=1, border_color=theme.field_border,
-            command=lambda: _close_with("close"),
-        )
-        btn_cl.pack(side="left")
-        btns.append(btn_cl)
+            btns.append(create_button(ctk, row, theme, "button.update", width=96, command=_on_update))
+        btns.append(create_button(
+            ctk, row, theme, "button.page", "secondary", width=96,
+            command=lambda: webbrowser.open(release_url or RELEASES_PAGE_URL),
+        ))
+        btns.append(create_button(
+            ctk, row, theme, "button.close", "secondary", width=96, command=lambda: _close_with("close"),
+        ))
+        for b in btns:
+            b.pack(side="left", padx=(0, 6))
 
         root.protocol("WM_DELETE_WINDOW", lambda: _close_with("close"))
+        return root
 
-    ctk_run_dialog(_build)
+    ctk_run_dialog(_build, key="update")
     return result["value"]
 
 
@@ -508,8 +501,7 @@ def _edit_config_dialog() -> None:
             h += 100
 
         root = create_ctk_toplevel(
-            ctk, title=t("app.settings_title"), width=w, height=h, theme=theme,
-            topmost=False, after_create=lambda r: r.iconbitmap(ICON_PATH),
+            ctk, title=t("app.settings_title"), width=w, height=h, theme=theme, icon=ICON_PATH,
         )
         fpx, fpy = CONFIG_DIALOG_FRAME_PAD
         frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)
@@ -527,7 +519,7 @@ def _edit_config_dialog() -> None:
         )
 
         def _finish() -> None:
-            root.destroy()
+            fade_destroy(root)
             done.set()
 
         dialog = SettingsDialog(
@@ -537,12 +529,17 @@ def _edit_config_dialog() -> None:
             restart=lambda config: restart_proxy(config, _show_error),
             include_autostart=_supports_autostart(),
             apply_autostart=set_autostart_enabled if _supports_autostart() else None,
+            on_link_changed=lambda config: show_relink_dialog(
+                ctk, theme, tg_proxy_url(config), icon_path=ICON_PATH,
+                on_open=lambda: threading.Thread(target=_on_open_in_telegram, daemon=True).start(),
+            ),
         )
 
         root.protocol("WM_DELETE_WINDOW", dialog.cancel)
         install_tray_config_buttons(ctk, footer, theme, on_save=dialog.save, on_cancel=dialog.cancel)
+        return root
 
-    ctk_run_dialog(_build)
+    ctk_run_dialog(_build, key="settings")
 
 
 # first run
@@ -559,24 +556,24 @@ def _show_first_run() -> None:
     port = _config.get("port", DEFAULT_CONFIG["port"])
     secret = _config.get("secret", DEFAULT_CONFIG["secret"])
 
-    def _build(done: threading.Event) -> None:
+    def _build(done: threading.Event):
         theme = ctk_theme_for_platform()
         w, h = FIRST_RUN_SIZE
         root = create_ctk_toplevel(
-            ctk, title=t("app.name"), width=w, height=h, theme=theme,
-            topmost=False, after_create=lambda r: r.iconbitmap(ICON_PATH),
+            ctk, title=t("app.name"), width=w, height=h, theme=theme, icon=ICON_PATH,
         )
 
         def on_done(open_tg: bool) -> None:
             FIRST_RUN_MARKER.touch()
-            root.destroy()
+            fade_destroy(root)
             done.set()
             if open_tg:
                 _on_open_in_telegram()
 
         populate_first_run_window(ctk, root, theme, host=host, port=port, secret=secret, on_done=on_done)
+        return root
 
-    ctk_run_dialog(_build)
+    ctk_run_dialog(_build, key="first_run")
 
 
 # tray menu
@@ -617,8 +614,7 @@ def run_tray() -> None:
 
     _config = load_config()
 
-    if is_windows_dark_theme():
-        apply_windows_dark_theme()
+    apply_windows_dark_theme()
 
     bootstrap(_config)
 
@@ -646,6 +642,10 @@ def run_tray() -> None:
 
 
 def main() -> None:
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        pass
     if (mutex_result := _acquire_win_mutex()) is False or mutex_result is None and not acquire_lock():
         _show_info(t("dialog.already_running"), os.path.basename(sys.argv[0]))
         return

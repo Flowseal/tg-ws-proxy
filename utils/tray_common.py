@@ -539,14 +539,27 @@ def ensure_ctk_thread(ctk: Any, mode: str = "auto") -> bool:
     return _ctk_root is not None
 
 
-def ctk_run_dialog(build_fn: Callable[[threading.Event], None]) -> None:
+_ctk_windows: Dict[str, Any] = {}
+
+
+def ctk_run_dialog(build_fn: Callable[[threading.Event], Any], key: Optional[str] = None) -> None:
     if _ctk_root is None:
         return
     done = threading.Event()
 
     def _invoke():
+        window = _ctk_windows.get(key) if key else None
+        if window is not None and window.winfo_exists():
+            from ui.ctk_theme import present
+
+            present(window)
+            done.set()
+            return
         try:
-            build_fn(done)
+            window = build_fn(done)
+            if key and window is not None:
+                _ctk_windows[key] = window
+                window.bind("<Destroy>", lambda e: e.widget is window and _ctk_windows.pop(key, None), add="+")
         except Exception:
             log.exception("CTk dialog failed")
             done.set()
@@ -555,6 +568,27 @@ def ctk_run_dialog(build_fn: Callable[[threading.Event], None]) -> None:
     done.wait()
     import gc
     gc.collect()
+
+
+def ctk_call(fn: Callable[[Any], Any]) -> Any:
+    if _ctk_root is None:
+        return None
+    if threading.current_thread().name == "ctk-root":
+        return fn(_ctk_root)
+    result: Dict[str, Any] = {}
+    done = threading.Event()
+
+    def _invoke():
+        try:
+            result["value"] = fn(_ctk_root)
+        except Exception:
+            log.exception("CTk call failed")
+        finally:
+            done.set()
+
+    _ctk_root.after(0, _invoke)
+    done.wait()
+    return result.get("value")
 
 
 def quit_ctk() -> None:
