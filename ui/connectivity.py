@@ -4,10 +4,9 @@ import base64
 import os
 import socket as _socket
 from contextlib import nullcontext
-from tkinter import messagebox
-from typing import Any
 
 from proxy.utils import create_ssl_context
+from ui.ctk_dialogs import show_message
 from ui.i18n import t
 
 _CFPROXY_TEST_DCS = [1, 2, 3, 4, 5, 203]
@@ -109,10 +108,11 @@ def run_cfproxy_auto_test(domains: list, *, secure: bool = True) -> tuple:
 def show_connectivity_results(title_base: str, results: dict,
                                domain: str = '', label_prefix: str = 'DC',
                                auto_mode: bool = False,
-                               unavailable_message: str = '', *, parent: Any) -> None:
+                               unavailable_message: str = '') -> None:
     ok = [dc for dc, v in results.items() if v is True]
     total = len(_CFPROXY_TEST_DCS)
     if auto_mode:
+        kind = "ok" if domain else "error"
         if domain:
             title = t("connectivity.available", title=title_base)
             msg = t("connectivity.auto_ok", title=title_base, ok=len(ok), total=total)
@@ -121,6 +121,7 @@ def show_connectivity_results(title_base: str, results: dict,
             msg = unavailable_message
     else:
         fail = [(dc, v) for dc, v in results.items() if v is not True]
+        kind = "ok" if len(ok) == total else "warning" if ok else "error"
         if len(ok) == total:
             title = t("connectivity.all_ok", title=title_base)
             msg = t("connectivity.all_ok_domain", total=total, domain=domain)
@@ -140,11 +141,11 @@ def show_connectivity_results(title_base: str, results: dict,
             )
             msg = t("connectivity.partial_detail", domain=domain, ok_list=ok_list, fail_list=fail_list)
 
-    messagebox.showinfo(title, msg, parent=parent)
+    show_message(msg, title=title, kind=kind)
 
 
 def show_multi_connectivity_results(title_base: str, per_domain: dict,
-                                     label_prefix: str = 'DC', *, parent: Any) -> None:
+                                     label_prefix: str = 'DC') -> None:
     total = len(_CFPROXY_TEST_DCS)
     all_ok = True
     any_ok = False
@@ -167,12 +168,7 @@ def show_multi_connectivity_results(title_base: str, per_domain: dict,
                 t("connectivity.multi_partial", domain=domain, ok_list=ok_list, fail_list=fail_list)
             )
 
-    if all_ok:
-        title = t("connectivity.all_ok", title=title_base)
-    elif any_ok:
-        title = t("connectivity.partial", title=title_base)
-    else:
-        title = t("connectivity.unavailable", title=title_base)
-    msg = "\n\n".join(blocks)
-
-    messagebox.showinfo(title, msg, parent=parent)
+    kind = "ok" if all_ok else "warning" if any_ok else "error"
+    title = t({"ok": "connectivity.all_ok", "warning": "connectivity.partial",
+               "error": "connectivity.unavailable"}[kind], title=title_base)
+    show_message("\n\n".join(blocks), title=title, kind=kind)

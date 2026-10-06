@@ -26,6 +26,7 @@ _MIN_FETCH_INTERVAL_SEC = 3600.0
 
 _state: Dict[str, Any] = {
     "checked": False,
+    "checking": False,
     "has_update": False,
     "ahead_of_release": False,
     "latest": None,
@@ -144,10 +145,18 @@ def fetch_latest_release(
         raise
 
 
-def run_check(current_version: str) -> None:
+def run_check(current_version: str, force: bool = False) -> None:
     """Запрашивает последний релиз и обновляет внутреннее состояние."""
+    _state["checking"] = True
+    try:
+        _run_check(current_version, force)
+    finally:
+        _state["checking"] = False
+        _state["checked"] = True
+
+
+def _run_check(current_version: str, force: bool) -> None:
     global _state
-    _state["checked"] = True
     _state["error"] = None
 
     cache_path = _cache_file()
@@ -155,7 +164,7 @@ def run_check(current_version: str) -> None:
     now = time.time()
     last_attempt = float(cache.get("last_attempt_at") or 0)
 
-    if last_attempt and (now - last_attempt) < _MIN_FETCH_INTERVAL_SEC:
+    if not force and last_attempt and (now - last_attempt) < _MIN_FETCH_INTERVAL_SEC:
         tag = (cache.get("tag_name") or "").strip()
         if tag:
             _apply_release_tag(tag, cache.get("html_url") or "", current_version)
