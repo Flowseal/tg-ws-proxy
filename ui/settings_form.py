@@ -490,7 +490,7 @@ def _create_updates(ctk, frame, theme, cfg, default_config, on_update_click):
             color, image = theme.text_secondary, None
         else:
             text, color, image = t("updates.status_latest"), theme.text_secondary, icon("check", 14, theme.ok)
-        status.configure(text=(" " if image else "") + text, text_color=color, image=image)
+        status.configure(text=(" " if image else "") + text, text_color=color, image=image or "")
         if has_update:
             action.pack(fill="x", pady=(8, 0))
         else:

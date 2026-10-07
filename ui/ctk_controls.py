@@ -108,7 +108,8 @@ def spin(btn: Any, theme: CtkTheme, busy: Callable[[], bool], done: Callable[[],
             btn.configure(image=spinner(int((time.perf_counter() - t0) / 0.75 * SPIN_STEPS) % SPIN_STEPS, theme))
             btn.after(16, step)
         else:
-            btn.configure(image="")
+            btn.configure(image=None)
+            btn._draw()
             done()
 
     step()
