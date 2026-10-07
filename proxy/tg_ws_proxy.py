@@ -534,6 +534,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
                 await _quiet_cancel(task)
         await server.wait_closed()
         await ws_pool.close()
+        await cf_worker_pool.close()
         if cf_h2_pool is not None:
             await cf_h2_pool.close()
             cf_h2_pool = None
