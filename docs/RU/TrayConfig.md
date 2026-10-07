@@ -18,13 +18,18 @@ Tray-приложение хранит данные в:
   "verbose": false,
   "buf_kb": 256,
   "pool_size": 4,
-  "log_max_mb": 5.0,
+  "log_max_mb": 5,
   "check_updates": true,
   "cfproxy": true,
-  "cfproxy_user_domain": "",
-  "cfproxy_worker_domain": "",
+  "h2": true,
+  "cfproxy_user_domain_enabled": false,
+  "cfproxy_user_domain": [],
+  "cfproxy_worker_enabled": false,
+  "cfproxy_worker_domain": [],
   "force_test_dc": false,
-  "appearance": "auto"
+  "no_secure": false,
+  "appearance": "auto",
+  "language": "ru"
 }
 ```
 
