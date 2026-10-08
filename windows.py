@@ -66,6 +66,9 @@ _config: dict = {}
 _exiting = False
 _win_mutex_handle = None
 _update_flow_lock = threading.Lock()
+_settings_window: Optional[object] = None
+_settings_dialog_lock = threading.Lock()
+_settings_open = False
 
 _ERROR_ALREADY_EXISTS = 183
 
@@ -493,7 +496,45 @@ def _on_exit(icon=None, item=None) -> None:
 
 # settings dialog
 
+def _focus_settings_window() -> None:
+    """Bring the already-open settings window to the front.
+
+    Runs on the CTk thread (scheduled via ``after``).
+    """
+    global _settings_window
+    try:
+        if _settings_window is not None and _settings_window.winfo_exists():
+            _settings_window.lift()
+            _settings_window.focus_force()
+    except Exception as exc:
+        log.warning("Failed to focus settings window: %s", repr(exc))
+        _settings_window = None
+
+
 def _edit_config_dialog() -> None:
+    global _settings_window, _settings_open
+    with _settings_dialog_lock:
+        if _settings_open:
+            try:
+                from utils import tray_common as _tray_common
+
+                _ctk_root = _tray_common._ctk_root
+                if _ctk_root is not None:
+                    _ctk_root.after(0, _focus_settings_window)
+            except Exception as exc:
+                log.warning("Failed to schedule settings focus: %s", repr(exc))
+            return
+        _settings_open = True
+    try:
+        _edit_config_dialog_impl()
+    finally:
+        with _settings_dialog_lock:
+            _settings_open = False
+            _settings_window = None
+
+
+def _edit_config_dialog_impl() -> None:
+    global _settings_window
     if not ensure_ctk_thread(ctk, _config.get("appearance", "auto")):
         _show_error(t("dialog.ctk_missing"))
         return
@@ -502,6 +543,7 @@ def _edit_config_dialog() -> None:
     cfg["autostart"] = is_autostart_enabled()
 
     def _build(done: threading.Event) -> None:
+        global _settings_window
         theme = ctk_theme_for_platform()
         w, h = CONFIG_DIALOG_SIZE
         if _supports_autostart():
@@ -511,6 +553,7 @@ def _edit_config_dialog() -> None:
             ctk, title=t("app.settings_title"), width=w, height=h, theme=theme,
             topmost=False, after_create=lambda r: r.iconbitmap(ICON_PATH),
         )
+        _settings_window = root
         fpx, fpy = CONFIG_DIALOG_FRAME_PAD
         frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)
         scroll, footer = tray_settings_scroll_and_footer(ctk, frame, theme)
@@ -527,6 +570,8 @@ def _edit_config_dialog() -> None:
         )
 
         def _finish() -> None:
+            global _settings_window
+            _settings_window = None
             root.destroy()
             done.set()
 
