@@ -32,6 +32,17 @@ chmod +x TgWsProxy_linux_amd64
 
 On first launch, a window will open with instructions. The application runs in the system tray (AppIndicator required).
 
+## Updating
+
+When update checks are enabled in settings, the app offers to update itself on startup and installs the new version:
+
+- installed from `.deb`/`.rpm` — the new package is downloaded and installed by the package manager (via `pkexec`, password confirmation required);
+- standalone binary — replaced in place if its directory is writable, otherwise also via `pkexec`.
+
+The downloaded file is checked against the response length and the SHA-256 digest from the release; a corrupted download is never installed. The app restarts automatically after the update.
+
+For AUR packages, `pip` installs, and non-x86_64 architectures the previous behaviour applies — the release page is opened.
+
 ## Configuring Telegram Desktop
 
 1. Telegram → **Settings** → **Advanced** → **Connection type** → **Proxy**

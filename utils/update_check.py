@@ -6,8 +6,11 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import sys
+import tempfile
 import time
 from itertools import zip_longest
 from pathlib import Path
@@ -259,6 +262,65 @@ def _extract_assets(data: Optional[dict]) -> list:
     ]
 
 
+def _expected_length(resp: Any) -> Optional[int]:
+    try:
+        return int(resp.headers.get("Content-Length"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def download_asset(
+    url: str, dest_dir: Path, suffix: str = ".tmp", digest: str = "",
+) -> Path:
+    """Download a release asset into a temporary file inside dest_dir.
+
+    The size is checked against Content-Length and, when the GitHub API
+    provides a "sha256:..." digest, the checksum too. A truncated or
+    corrupted file is removed instead of being returned.
+
+    Raises:
+        OSError: network error, truncated download or checksum mismatch.
+    """
+    fd, name = tempfile.mkstemp(dir=str(dest_dir), suffix=suffix)
+    os.close(fd)
+    path = Path(name)
+    try:
+        sha = hashlib.sha256()
+        written = 0
+        with build_github_opener().open(url) as resp:
+            expected = _expected_length(resp)
+            with open(str(path), "wb") as out:
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    sha.update(chunk)
+                    written += len(chunk)
+        if expected is not None and written != expected:
+            raise OSError(
+                "incomplete download: {0} of {1} bytes".format(written, expected)
+            )
+        want = (digest or "").lower()
+        if want.startswith("sha256:") and sha.hexdigest() != want[7:]:
+            raise OSError("checksum does not match the release asset")
+        return path
+    except BaseException:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def find_asset(name: str) -> Optional[Dict[str, str]]:
+    """Asset of the latest release by name (after run_check)."""
+    for a in _state.get("assets") or []:
+        if a.get("name") == name and a.get("url"):
+            return a
+    return None
+
+
 def get_status() -> Dict[str, Any]:
     """Снимок состояния после run_check (для подписей в настройках)."""
     return dict(_state)
@@ -273,7 +335,6 @@ def get_update_asset(exe_path: Path, current_version: str) -> Optional[Tuple[str
 
     # SHA256 match
     try:
-        import hashlib
         data, code = fetch_release_by_tag(f"v{current_version}")
         if code == 200 and data:
             cur_assets = _extract_assets(data)
