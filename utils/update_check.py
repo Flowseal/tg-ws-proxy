@@ -271,12 +271,14 @@ def _expected_length(resp: Any) -> Optional[int]:
 
 def download_asset(
     url: str, dest_dir: Path, suffix: str = ".tmp", digest: str = "",
+    timeout: float = 30.0,
 ) -> Path:
     """Download a release asset into a temporary file inside dest_dir.
 
     The size is checked against Content-Length and, when the GitHub API
     provides a "sha256:..." digest, the checksum too. A truncated or
     corrupted file is removed instead of being returned.
+    timeout limits blocking network operations, including response reads.
 
     Raises:
         OSError: network error, truncated download or checksum mismatch.
@@ -287,7 +289,7 @@ def download_asset(
     try:
         sha = hashlib.sha256()
         written = 0
-        with build_github_opener().open(url) as resp:
+        with build_github_opener().open(url, timeout=timeout) as resp:
             expected = _expected_length(resp)
             with open(str(path), "wb") as out:
                 while True:

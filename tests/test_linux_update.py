@@ -1,4 +1,6 @@
 import os
+import stat
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -71,29 +73,31 @@ class DetectInstallKindTest(unittest.TestCase):
 
 
 class InstallCmdTest(unittest.TestCase):
+    package_path = Path(tempfile.gettempdir()) / 'pkg'
+
     def _cmd(self, kind, tools):
         with mock.patch.object(
             linux_update.shutil, 'which',
             side_effect=lambda n: '/usr/bin/' + n if n in tools else None,
         ), mock.patch.object(linux_update, '_is_root', return_value=False):
-            return linux_update.install_cmd(kind, Path('/tmp/pkg'))
+            return linux_update.install_cmd(kind, self.package_path)
 
     def test_deb_prefers_apt_get_and_elevates(self):
         cmd = self._cmd('deb', ('apt-get',))
         self.assertEqual(cmd[:3], ['pkexec', 'apt-get', 'install'])
-        self.assertEqual(cmd[-1], '/tmp/pkg')
+        self.assertEqual(cmd[-1], str(self.package_path))
 
     def test_deb_falls_back_to_dpkg(self):
-        self.assertEqual(self._cmd('deb', ()), ['pkexec', 'dpkg', '-i', '/tmp/pkg'])
+        self.assertEqual(self._cmd('deb', ()), ['pkexec', 'dpkg', '-i', str(self.package_path)])
 
     def test_rpm_prefers_dnf_without_removing_packages(self):
         cmd = self._cmd('rpm', ('dnf',))
-        self.assertEqual(cmd, ['pkexec', 'dnf', 'install', '-y', '/tmp/pkg'])
+        self.assertEqual(cmd, ['pkexec', 'dnf', 'install', '-y', str(self.package_path)])
         self.assertNotIn('--allowerasing', cmd)
 
     def test_rpm_falls_back_to_rpm_binary(self):
         self.assertEqual(
-            self._cmd('rpm', ()), ['pkexec', 'rpm', '-U', '--force', '/tmp/pkg'],
+            self._cmd('rpm', ()), ['pkexec', 'rpm', '-U', '--force', str(self.package_path)],
         )
 
     def test_unknown_kind_is_rejected(self):
@@ -104,8 +108,8 @@ class InstallCmdTest(unittest.TestCase):
         with mock.patch.object(linux_update.shutil, 'which', return_value=None), \
                 mock.patch.object(linux_update, '_is_root', return_value=True):
             self.assertEqual(
-                linux_update.install_cmd('deb', Path('/tmp/pkg')),
-                ['dpkg', '-i', '/tmp/pkg'],
+                linux_update.install_cmd('deb', self.package_path),
+                ['dpkg', '-i', str(self.package_path)],
             )
 
 
@@ -127,8 +131,17 @@ class ApplyUpdateTest(unittest.TestCase):
                 self.assertIsNone(linux_update.apply_update('binary', 'https://x.invalid/a'))
 
             self.assertEqual(exe.read_bytes(), b'new')
-            self.assertTrue(os.access(str(exe), os.X_OK))
             self.assertEqual(list(Path(tmp).iterdir()), [exe])
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux executable permissions')
+    def test_replaced_binary_has_executable_permissions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / 'TgWsProxy'
+            exe.write_bytes(b'old')
+            with mock.patch.object(linux_update, 'exe_path', return_value=exe), \
+                    mock.patch('utils.update_check.download_asset', self._download()):
+                self.assertIsNone(linux_update.apply_update('binary', 'https://x.invalid/a'))
+            self.assertEqual(stat.S_IMODE(exe.stat().st_mode), 0o755)
 
     def test_read_only_dir_binary_is_installed_with_elevation(self):
         exe = Path('/usr/local/bin/TgWsProxy')
@@ -205,6 +218,32 @@ class ApplyUpdateTest(unittest.TestCase):
             self.assertEqual(linux_update.apply_update('binary', 'https://x.invalid/a'), 'boom')
 
 
+class ExternalCommandsEnvTest(unittest.TestCase):
+    def test_commands_use_system_libraries_without_changing_parent_environment(self):
+        bundle = str(Path(tempfile.gettempdir()) / '_MEItest')
+        probe = (
+            'import os, sys; '
+            'assert os.environ.get("LD_LIBRARY_PATH", "") == sys.argv[1]; '
+            'assert "_PYI_APPLICATION_HOME_DIR" not in os.environ'
+        )
+        for original in ('/usr/lib', None):
+            for runner, expected in ((linux_update._run_quiet, True),
+                                     (linux_update._run_install, None)):
+                with self.subTest(original=original, runner=runner.__name__):
+                    env = dict(os.environ)
+                    env.update(LD_LIBRARY_PATH=bundle, _PYI_APPLICATION_HOME_DIR=bundle)
+                    env.pop('LD_LIBRARY_PATH_ORIG', None)
+                    if original is not None:
+                        env['LD_LIBRARY_PATH_ORIG'] = original
+                    with mock.patch.dict(os.environ, env, clear=True), \
+                            mock.patch.object(sys, '_MEIPASS', bundle, create=True):
+                        self.assertEqual(
+                            runner([sys.executable, '-c', probe, original or '']), expected,
+                        )
+                        self.assertEqual(os.environ['LD_LIBRARY_PATH'], bundle)
+                        self.assertEqual(os.environ['_PYI_APPLICATION_HOME_DIR'], bundle)
+
+
 class RelaunchEnvTest(unittest.TestCase):
     def _env(self, env, meipass='/tmp/_MEI1'):
         with mock.patch.dict(linux_update.os.environ, env, clear=True), \
@@ -218,7 +257,7 @@ class RelaunchEnvTest(unittest.TestCase):
             'LD_LIBRARY_PATH': '/tmp/_MEI1',
             'LD_LIBRARY_PATH_ORIG': '/usr/lib',
             'GI_TYPELIB_PATH': '/tmp/_MEI1',
-            'PATH': '/tmp/_MEI1:/usr/bin',
+            'PATH': os.pathsep.join(('/tmp/_MEI1', '/usr/bin')),
             'HOME': '/home/u',
         })
 

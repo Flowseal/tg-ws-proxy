@@ -34,6 +34,7 @@ def _run_quiet(cmd: List[str]) -> bool:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=15,
+            env=relaunch_env(),
         ).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
@@ -107,6 +108,7 @@ def _run_install(cmd: List[str], log: Optional[logging.Logger] = None) -> Option
     proc = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         timeout=_INSTALL_TIMEOUT_SEC,
+        env=relaunch_env(),
     )
     if proc.returncode == 0:
         return None
