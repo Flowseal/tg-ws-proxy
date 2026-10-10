@@ -135,7 +135,7 @@ def _create_header(ctk, frame, theme):
     ).pack(side="right", padx=(4, 0))
 
     ctk.CTkButton(
-        header, text="Donate ♥", width=90, height=28,
+        header, text=t("button.donate"), width=90, height=28,
         font=(theme.ui_font_family, 13, "bold"), corner_radius=8,
         fg_color="#22c55e", hover_color="#16a34a",
         text_color="#ffffff", border_width=0,

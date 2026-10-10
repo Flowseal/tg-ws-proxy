@@ -17,7 +17,7 @@ class SettingsDialog:
     def __init__(
         self, *, ctk, root, widgets, config, defaults, persist,
         refresh_menu, finish, restart, include_autostart=False,
-        apply_autostart=None,
+        apply_autostart=None, read_autostart=None,
     ):
         self.ctk = ctk
         self.root = root
@@ -30,6 +30,7 @@ class SettingsDialog:
         self.restart = restart
         self.include_autostart = include_autostart
         self.apply_autostart = apply_autostart
+        self.read_autostart = read_autostart
         self.closed = False
 
     def cancel(self):
@@ -55,7 +56,12 @@ class SettingsDialog:
             messagebox.showerror(t("app.error_title"), values, parent=self.root)
             return
         change = prepare_settings(self.config, values, self.defaults)
-        if not change.changed_keys:
+        autostart_changed = (
+            self.include_autostart
+            and self.read_autostart is not None
+            and bool(values["autostart"]) != self.read_autostart()
+        )
+        if not change.changed_keys and not autostart_changed:
             self._finish()
             return
         try:
@@ -66,7 +72,8 @@ class SettingsDialog:
             return
         self.config.update(deepcopy(change.config))
         set_language(change.config["language"])
-        log.info("Settings saved: %s", ", ".join(sorted(change.changed_keys)))
+        changed_keys = change.changed_keys | ({"autostart"} if autostart_changed else set())
+        log.info("Settings saved: %s", ", ".join(sorted(changed_keys)))
         if self.apply_autostart is not None:
             self.apply_autostart(bool(change.config.get("autostart", False)))
         self.refresh_menu()

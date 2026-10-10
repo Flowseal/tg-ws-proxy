@@ -56,6 +56,47 @@ class NativeFramingTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(decoded, body, padding)
             self.assertFalse(quick)
 
+    async def test_plaintext_accepts_extended_padding_used_by_apple_and_android(self):
+        body = b'\x00' * 8 + b'm' * 8 + struct.pack('<I', 20) + b'p' * 20
+        # MTProtoKit appends 0..236 bytes outside message_data_length, then
+        # the TCP transport adds 0..15 more. Android uses 0..256 directly.
+        for padding in range(257):
+            with self.subTest(padding=padding):
+                wire = body + b'z' * padding
+                reader = asyncio.StreamReader()
+                reader.feed_data(struct.pack('<I', len(wire) | 0x80000000) + wire)
+                decoded, quick = await _read_packet(reader, _IdentityCipher(), PROTO_TAG_SECURE)
+                self.assertEqual(decoded, body)
+                self.assertTrue(quick)
+
+    async def test_padded_plaintext_preserves_padding_included_in_message_length(self):
+        body = b'\x00' * 8 + b'm' * 8 + struct.pack('<I', 272) + b'p' * 20 + b'd' * 252
+        decoded, _ = await self._packet(struct.pack('<I', len(body) + 15) + body + b'z' * 15,
+                                       PROTO_TAG_SECURE)
+        self.assertEqual(decoded, body)
+
+    async def test_extended_padding_preserves_packet_size_limit(self):
+        body = b'\x00' * 8 + b'm' * 8 + struct.pack('<I', 20) + b'p' * 20
+        wire = body + b'z' * 256
+        with patch('proxy.cf_h2.MAX_PACKET', len(body)):
+            decoded, _ = await self._packet(struct.pack('<I', len(wire)) + wire, PROTO_TAG_SECURE)
+            self.assertEqual(decoded, body)
+            oversized = body[:16] + struct.pack('<I', 24) + b'p' * 24
+            with self.assertRaisesRegex(ValueError, 'size'):
+                await self._packet(struct.pack('<I', len(oversized)) + oversized, PROTO_TAG_SECURE)
+            encrypted = b'k' * 8 + b'm' * 16 + b'c' * 32
+            with self.assertRaisesRegex(ValueError, 'size'):
+                await self._packet(struct.pack('<I', len(encrypted)) + encrypted, PROTO_TAG_SECURE)
+
+    async def test_invalid_plaintext_lengths_and_excess_padding_are_rejected(self):
+        for declared, payload, padding in ((0, 20, 0), (24, 20, 0), (21, 21, 0),
+                                           (20, 20, 257), (0xffffffff, 20, 0)):
+            with self.subTest(declared=declared, padding=padding):
+                body = b'\x00' * 8 + b'm' * 8 + struct.pack('<I', declared) + b'p' * payload
+                wire = body + b'z' * padding
+                with self.assertRaises(ValueError):
+                    await self._packet(struct.pack('<I', len(wire)) + wire, PROTO_TAG_SECURE)
+
     async def test_padded_ciphertext_removes_full_padding_blocks(self):
         body = b'k' * 8 + b'm' * 16 + b'c' * 32
         for padding in range(16):
@@ -580,6 +621,29 @@ class HttpMultiplexTest(unittest.IsolatedAsyncioTestCase):
         await healthy.send(b'h' * 40, False)
         self.assertEqual(await asyncio.wait_for(healthy.receive(), 1), b'r' * 65536)
 
+    async def test_recovery_cancellation_is_not_lost_when_wakeup_completes(self):
+        channel = self._channel()
+        wait = channel.recovery_wakeup.wait
+        calls = 0
+
+        async def wake_and_cancel():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                recovery.cancel()
+                return True
+            return await wait()
+
+        with patch.object(channel.recovery_wakeup, 'wait', side_effect=wake_and_cancel):
+            recovery = asyncio.create_task(channel._recover())
+            try:
+                done, _ = await asyncio.wait((recovery,), timeout=.2)
+                self.assertIn(recovery, done)
+                self.assertTrue(recovery.cancelled())
+            finally:
+                recovery.cancel()
+                await asyncio.gather(recovery, return_exceptions=True)
+
     async def test_slow_receiver_queue_overflow_does_not_break_other_channels(self):
         async def handler(request):
             return httpx.Response(200, content=request.content, extensions={'http_version': b'HTTP/2'})
@@ -752,6 +816,68 @@ class HttpMultiplexTest(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(channel.pending)
                 self.assertFalse(channel.replay_pending)
                 self.assertEqual(self.lane.inflight, 0)
+            finally:
+                recovery.cancel()
+                await asyncio.gather(recovery, return_exceptions=True)
+
+    async def test_new_replies_refresh_idle_receiver_budget_without_native_upload(self):
+        replies = [b'samekey!' + bytes([index]) * 32 for index in range(6)]
+        calls = []
+        exhausted = asyncio.Event()
+
+        def handler(request):
+            calls.append(request.content)
+            count = len(calls)
+            if count == len(replies) + 3:
+                exhausted.set()
+            return httpx.Response(200, content=replies[count - 1] if count <= len(replies) else b'',
+                                  extensions={'http_version': b'HTTP/2'})
+
+        self._transport(handler)
+        channel = self._channel()
+        body = b'samekey!' + b'a' * 32
+        with patch('proxy.cf_h2.REPLAY_IDLE_SECONDS', .005), \
+                patch('proxy.cf_h2.REPLAY_CHECK_SECONDS', .002), \
+                patch('proxy.cf_h2.REPLAY_RETRY_SECONDS', .01):
+            await channel.send(body, False)
+            recovery = asyncio.create_task(channel._recover())
+            try:
+                # The native client is waiting for a batch of replies and
+                # sends no new packet between them. Three successful polls
+                # must not use up the budget while more responses arrive.
+                for reply in replies:
+                    self.assertEqual(await asyncio.wait_for(channel.receive(), 1), reply)
+                await asyncio.wait_for(exhausted.wait(), 1)
+                await asyncio.sleep(.05)
+                self.assertEqual(calls, [body] * (len(replies) + 3))
+                self.assertFalse(channel.pending)
+                self.assertFalse(channel.replay_pending)
+            finally:
+                recovery.cancel()
+                await asyncio.gather(recovery, return_exceptions=True)
+
+    async def test_duplicate_reply_does_not_refresh_idle_receiver_budget(self):
+        calls = []
+        reply = b'r' * 40
+
+        def handler(request):
+            calls.append(request.content)
+            return httpx.Response(200, content=reply, extensions={'http_version': b'HTTP/2'})
+
+        self._transport(handler)
+        channel = self._channel()
+        with patch('proxy.cf_h2.REPLAY_IDLE_SECONDS', .005), \
+                patch('proxy.cf_h2.REPLAY_CHECK_SECONDS', .002), \
+                patch('proxy.cf_h2.REPLAY_RETRY_SECONDS', .01):
+            await channel.send(b'samekey!' + b'a' * 32, False)
+            recovery = asyncio.create_task(channel._recover())
+            try:
+                for _ in range(4):
+                    self.assertEqual(await asyncio.wait_for(channel.receive(), 1), reply)
+                await asyncio.sleep(.05)
+                self.assertEqual(len(calls), 4)
+                self.assertFalse(channel.pending)
+                self.assertFalse(channel.replay_pending)
             finally:
                 recovery.cancel()
                 await asyncio.gather(recovery, return_exceptions=True)

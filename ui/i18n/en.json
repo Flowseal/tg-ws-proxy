@@ -69,6 +69,7 @@
   "button.update": "Update",
   "button.page": "Page",
   "button.close": "Close",
+  "button.donate": "Donate ♥",
 
   "validation.bad_host": "Invalid IP address.",
   "validation.bad_port": "Port must be a number between 1 and 65535",
@@ -136,6 +137,8 @@
 
   "update.available": "New version available: {version}",
   "update.ask_open": "New version available: {version}\n\nOpen the release page in the browser?",
+  "update.ask_install": "New version available: {version}\n\nUpdate now? The app will restart.",
+  "update.install_fail": "Failed to install the update:\n{error}\n\nOpen the release page in the browser?",
   "update.downloading": "Downloading...",
   "update.replacing": "Replacing file...",
   "update.restarting": "Restarting...",

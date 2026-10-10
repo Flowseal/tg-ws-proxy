@@ -2,15 +2,14 @@
 
 import os
 import glob
-
-from PyInstaller.utils.hooks import collect_data_files
+import certifi
 
 block_cipher = None
 
 # customtkinter ships JSON themes + assets that must be bundled
 import customtkinter
 ctk_path = os.path.dirname(customtkinter.__file__)
-certifi_datas = collect_data_files('certifi')
+certifi_cafile = certifi.where()
 
 _i18n_path = os.path.join(os.path.dirname(SPEC), os.pardir, 'ui', 'i18n')
 
@@ -25,7 +24,7 @@ a = Analysis(
     [os.path.join(os.path.dirname(SPEC), os.pardir, 'linux.py')],
     pathex=[],
     binaries=appindicator_binaries,
-    datas=[(os.path.join(ctk_path, 'assets'), 'customtkinter/assets'), (_i18n_path, 'ui/i18n')] + certifi_datas,
+    datas=[(os.path.join(ctk_path, 'assets'), 'customtkinter/assets'), (_i18n_path, 'ui/i18n')],
     hiddenimports=[
         'httpx',
         'h2',
@@ -62,6 +61,8 @@ a = Analysis(
     noarchive=False,
     cipher=block_cipher,
 )
+
+a.datas += [('certifi/cacert.pem', certifi_cafile, 'DATA')]
 
 _required_libraries = {
     'libglib-2.0.so.0', 'libgobject-2.0.so.0', 'libgio-2.0.so.0',
