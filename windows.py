@@ -537,6 +537,7 @@ def _edit_config_dialog() -> None:
             restart=lambda config: restart_proxy(config, _show_error),
             include_autostart=_supports_autostart(),
             apply_autostart=set_autostart_enabled if _supports_autostart() else None,
+            read_autostart=is_autostart_enabled if _supports_autostart() else None,
         )
 
         root.protocol("WM_DELETE_WINDOW", dialog.cancel)
