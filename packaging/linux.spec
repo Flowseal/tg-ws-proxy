@@ -24,7 +24,7 @@ a = Analysis(
     [os.path.join(os.path.dirname(SPEC), os.pardir, 'linux.py')],
     pathex=[],
     binaries=appindicator_binaries,
-    datas=[(ctk_path, 'customtkinter/'), (_i18n_path, 'ui/i18n')],
+    datas=[(os.path.join(ctk_path, 'assets'), 'customtkinter/assets'), (_i18n_path, 'ui/i18n')],
     hiddenimports=[
         'httpx',
         'h2',
