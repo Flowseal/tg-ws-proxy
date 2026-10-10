@@ -28,7 +28,7 @@
 
   "label.host": "IP-адрес",
   "label.port": "Порт",
-  "label.secret": "Secret",
+  "label.secret": "Ключ",
   "label.dc_hint": "По одному правилу на строку, формат: номер:IP",
   "label.cf_enable": "Включить CF-прокси",
   "label.cf_custom_domain": "Свой домен",
@@ -69,11 +69,12 @@
   "button.update": "Обновить",
   "button.page": "Страница",
   "button.close": "Закрыть",
+  "button.donate": "Поддержать ♥",
 
   "validation.bad_host": "Некорректный IP-адрес.",
   "validation.bad_port": "Порт должен быть числом 1-65535",
-  "validation.bad_secret_len": "Secret должен содержать ровно 32 hex-символа (16 байт).",
-  "validation.bad_secret_hex": "Secret должен состоять только из hex-символов (0-9, a-f).",
+  "validation.bad_secret_len": "Ключ должен содержать ровно 32 hex-символа (16 байт).",
+  "validation.bad_secret_hex": "Ключ должен состоять только из hex-символов (0-9, a-f).",
   "validation.dc_format": "Неверный формат DC:IP: {entry}",
   "validation.dc_invalid": "Неверная запись DC:IP: {entry}",
 
@@ -109,7 +110,7 @@
   "first_run.manual": "  Вручную:",
   "first_run.manual_path": "  Настройки → Продвинутые → Тип подключения → Прокси",
   "first_run.manual_mtproto": "  MTProto → {host} : {port}",
-  "first_run.manual_secret": "  Secret: dd{secret}",
+  "first_run.manual_secret": "  Ключ: dd{secret}",
   "first_run.open_now": "Открыть прокси в Telegram сейчас",
 
   "tray.open_telegram": "Открыть в Telegram ({host}:{port})",

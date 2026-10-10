@@ -69,6 +69,7 @@
   "button.update": "Update",
   "button.page": "Page",
   "button.close": "Close",
+  "button.donate": "Donate ♥",
 
   "validation.bad_host": "Invalid IP address.",
   "validation.bad_port": "Port must be a number between 1 and 65535",
