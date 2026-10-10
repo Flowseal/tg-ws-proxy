@@ -21,6 +21,7 @@ from .utils import (
 
 log = logging.getLogger('tg-mtproto-proxy')
 MAX_PACKET = 4 * 1024 * 1024
+MAX_PLAIN_PADDING = 256
 MAX_CHANNEL_REQUESTS = 8
 MAX_CHANNEL_BYTES = 8 * 1024 * 1024
 MAX_LANE_REQUESTS = 64
@@ -116,16 +117,20 @@ async def _read_packet(reader, decryptor, tag: bytes) -> Tuple[bytes, bool]:
     else:
         value, = struct.unpack('<I', await plaintext(4))
         quick, length = bool(value & 0x80000000), value & 0x7fffffff
-    if not 24 <= length <= MAX_PACKET + (15 if tag == PROTO_TAG_SECURE else 0):
+    if not 24 <= length <= MAX_PACKET + (MAX_PLAIN_PADDING if tag == PROTO_TAG_SECURE else 0):
         raise ValueError('native packet length outside supported range: %d' % length)
     body = await plaintext(length)
     if tag == PROTO_TAG_SECURE:
         if body[:8] == b'\x00' * 8:
             packet_length = 20 + int.from_bytes(body[16:20], 'little')
+            max_padding = MAX_PLAIN_PADDING
         else:
             packet_length = 24 + ((length - 24) // 16) * 16
-        if not 24 <= packet_length <= length or length - packet_length > 15:
-            raise ValueError('invalid padded native packet')
+            max_padding = 15
+        padding = length - packet_length
+        if not 24 <= packet_length <= length or padding > max_padding:
+            raise ValueError('invalid padded native packet: frame=%d packet=%d padding=%d limit=%d' % (
+                length, packet_length, padding, max_padding))
         body = body[:packet_length]
     if len(body) % 4 or len(body) > MAX_PACKET:
         raise ValueError('invalid native packet alignment or size')

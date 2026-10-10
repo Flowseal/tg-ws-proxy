@@ -607,8 +607,12 @@ class H2WireTest(unittest.IsolatedAsyncioTestCase):
                             peers.append(peer)
                             bodies = [b'\x00' * 8 + os.urandom(8) + struct.pack('<I', 20) + os.urandom(20)]
                             bodies += [b'samekey!' + os.urandom(size - 8) for size in (40, 131112, 56)]
+                            # Maximum extended plaintext padding: MTProtoKit
+                            # (236 + 15) and Android (256), not just TCP's 15.
+                            plain_padding = (251, 256)[index]
                             wire = init + up.update(b''.join(
-                                frame(body, tag, padding) for body, padding in zip(bodies, (15, 1, 7, 0))))
+                                frame(body, tag, padding)
+                                for body, padding in zip(bodies, (plain_padding, 1, 7, 0))))
                             for start, end in ((0, 13), (13, 57), (57, 65), (65, 78), (78, len(wire))):
                                 writer.write(wire[start:end])
                                 await writer.drain()

@@ -56,6 +56,47 @@ class NativeFramingTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(decoded, body, padding)
             self.assertFalse(quick)
 
+    async def test_plaintext_accepts_extended_padding_used_by_apple_and_android(self):
+        body = b'\x00' * 8 + b'm' * 8 + struct.pack('<I', 20) + b'p' * 20
+        # MTProtoKit appends 0..236 bytes outside message_data_length, then
+        # the TCP transport adds 0..15 more. Android uses 0..256 directly.
+        for padding in range(257):
+            with self.subTest(padding=padding):
+                wire = body + b'z' * padding
+                reader = asyncio.StreamReader()
+                reader.feed_data(struct.pack('<I', len(wire) | 0x80000000) + wire)
+                decoded, quick = await _read_packet(reader, _IdentityCipher(), PROTO_TAG_SECURE)
+                self.assertEqual(decoded, body)
+                self.assertTrue(quick)
+
+    async def test_padded_plaintext_preserves_padding_included_in_message_length(self):
+        body = b'\x00' * 8 + b'm' * 8 + struct.pack('<I', 272) + b'p' * 20 + b'd' * 252
+        decoded, _ = await self._packet(struct.pack('<I', len(body) + 15) + body + b'z' * 15,
+                                       PROTO_TAG_SECURE)
+        self.assertEqual(decoded, body)
+
+    async def test_extended_padding_preserves_packet_size_limit(self):
+        body = b'\x00' * 8 + b'm' * 8 + struct.pack('<I', 20) + b'p' * 20
+        wire = body + b'z' * 256
+        with patch('proxy.cf_h2.MAX_PACKET', len(body)):
+            decoded, _ = await self._packet(struct.pack('<I', len(wire)) + wire, PROTO_TAG_SECURE)
+            self.assertEqual(decoded, body)
+            oversized = body[:16] + struct.pack('<I', 24) + b'p' * 24
+            with self.assertRaisesRegex(ValueError, 'size'):
+                await self._packet(struct.pack('<I', len(oversized)) + oversized, PROTO_TAG_SECURE)
+            encrypted = b'k' * 8 + b'm' * 16 + b'c' * 32
+            with self.assertRaisesRegex(ValueError, 'size'):
+                await self._packet(struct.pack('<I', len(encrypted)) + encrypted, PROTO_TAG_SECURE)
+
+    async def test_invalid_plaintext_lengths_and_excess_padding_are_rejected(self):
+        for declared, payload, padding in ((0, 20, 0), (24, 20, 0), (21, 21, 0),
+                                           (20, 20, 257), (0xffffffff, 20, 0)):
+            with self.subTest(declared=declared, padding=padding):
+                body = b'\x00' * 8 + b'm' * 8 + struct.pack('<I', declared) + b'p' * payload
+                wire = body + b'z' * padding
+                with self.assertRaises(ValueError):
+                    await self._packet(struct.pack('<I', len(wire)) + wire, PROTO_TAG_SECURE)
+
     async def test_padded_ciphertext_removes_full_padding_blocks(self):
         body = b'k' * 8 + b'm' * 16 + b'c' * 32
         for padding in range(16):
