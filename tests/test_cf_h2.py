@@ -820,6 +820,68 @@ class HttpMultiplexTest(unittest.IsolatedAsyncioTestCase):
                 recovery.cancel()
                 await asyncio.gather(recovery, return_exceptions=True)
 
+    async def test_new_replies_refresh_idle_receiver_budget_without_native_upload(self):
+        replies = [b'samekey!' + bytes([index]) * 32 for index in range(6)]
+        calls = []
+        exhausted = asyncio.Event()
+
+        def handler(request):
+            calls.append(request.content)
+            count = len(calls)
+            if count == len(replies) + 3:
+                exhausted.set()
+            return httpx.Response(200, content=replies[count - 1] if count <= len(replies) else b'',
+                                  extensions={'http_version': b'HTTP/2'})
+
+        self._transport(handler)
+        channel = self._channel()
+        body = b'samekey!' + b'a' * 32
+        with patch('proxy.cf_h2.REPLAY_IDLE_SECONDS', .005), \
+                patch('proxy.cf_h2.REPLAY_CHECK_SECONDS', .002), \
+                patch('proxy.cf_h2.REPLAY_RETRY_SECONDS', .01):
+            await channel.send(body, False)
+            recovery = asyncio.create_task(channel._recover())
+            try:
+                # The native client is waiting for a batch of replies and
+                # sends no new packet between them. Three successful polls
+                # must not use up the budget while more responses arrive.
+                for reply in replies:
+                    self.assertEqual(await asyncio.wait_for(channel.receive(), 1), reply)
+                await asyncio.wait_for(exhausted.wait(), 1)
+                await asyncio.sleep(.05)
+                self.assertEqual(calls, [body] * (len(replies) + 3))
+                self.assertFalse(channel.pending)
+                self.assertFalse(channel.replay_pending)
+            finally:
+                recovery.cancel()
+                await asyncio.gather(recovery, return_exceptions=True)
+
+    async def test_duplicate_reply_does_not_refresh_idle_receiver_budget(self):
+        calls = []
+        reply = b'r' * 40
+
+        def handler(request):
+            calls.append(request.content)
+            return httpx.Response(200, content=reply, extensions={'http_version': b'HTTP/2'})
+
+        self._transport(handler)
+        channel = self._channel()
+        with patch('proxy.cf_h2.REPLAY_IDLE_SECONDS', .005), \
+                patch('proxy.cf_h2.REPLAY_CHECK_SECONDS', .002), \
+                patch('proxy.cf_h2.REPLAY_RETRY_SECONDS', .01):
+            await channel.send(b'samekey!' + b'a' * 32, False)
+            recovery = asyncio.create_task(channel._recover())
+            try:
+                for _ in range(4):
+                    self.assertEqual(await asyncio.wait_for(channel.receive(), 1), reply)
+                await asyncio.sleep(.05)
+                self.assertEqual(len(calls), 4)
+                self.assertFalse(channel.pending)
+                self.assertFalse(channel.replay_pending)
+            finally:
+                recovery.cancel()
+                await asyncio.gather(recovery, return_exceptions=True)
+
     async def test_old_pending_request_has_bounded_retries_after_newer_requests(self):
         body = b'samekey!' + b't' * 32
         original_started = asyncio.Event()

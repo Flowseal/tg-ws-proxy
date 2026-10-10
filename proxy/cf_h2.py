@@ -98,10 +98,11 @@ class _ReplayPacket:
     pending: Optional[asyncio.Task] = None
     originals: Set[asyncio.Task] = field(default_factory=set, repr=False)
     retired: bool = False
+    reply_id: Optional[bytes] = None
 
     @property
     def replayed(self) -> bool:
-        return self.attempts > 0
+        return self.last_attempt_at > 0 or self.attempts > 0
 
 
 async def _read_packet(reader, decryptor, tag: bytes) -> Tuple[bytes, bool]:
@@ -466,6 +467,9 @@ class _HttpChannel:
             reply = await self.lane._post(body, self.channel_id, replay=replay, channel=self)
             self.last_progress = time.monotonic()
             if reply and not self.closed:
+                if packet is not None and reply[:24] != packet.reply_id:
+                    packet.reply_id = reply[:24]
+                    packet.attempts = 0
                 if self.queue.full() or self.reply_bytes + len(reply) > MAX_CHANNEL_BYTES:
                     raise BufferError('H2 client response queue exceeded bound')
                 self.reply_bytes += len(reply)

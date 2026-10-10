@@ -1030,13 +1030,31 @@ class H2WireTest(unittest.IsolatedAsyncioTestCase):
     async def test_read_timeout_resets_only_its_stream(self):
         self.lane.client.timeout = httpx.Timeout(2, read=.15)
         stalled, request = await self.post()
+        self.lane.client.timeout = httpx.Timeout(2, read=1)
         healthy, healthy_request = await self.post()
-        self.respond(healthy_request)
-        self.assertEqual(await healthy, b'r' * 40)
         with self.assertRaises(httpx.ReadTimeout):
             await stalled
         self.assertEqual(await asyncio.wait_for(self.resets.get(), .5), (request[1], 8))
         self.assertIsNone(self.transport.connection.error)
+        self.respond(healthy_request)
+        self.assertEqual(await healthy, b'r' * 40)
+        self.assertEqual(len(self.connections), 1)
+
+    async def test_last_stream_timeout_reconnects_instead_of_reusing_silent_connection(self):
+        self.lane.client.timeout = httpx.Timeout(2, read=.05)
+        stalled, _ = await self.post()
+        old_connection = self.transport.connection
+        with self.assertRaises(httpx.ReadTimeout):
+            await stalled
+        self.assertIsNotNone(old_connection.error)
+        self.assertTrue(old_connection.writer.is_closing())
+        self.assertFalse(old_connection.streams)
+        self.lane.client.timeout = httpx.Timeout(2, read=1)
+        recovered, request = await self.post()
+        self.respond(request)
+        self.assertEqual(await recovered, b'r' * 40)
+        self.assertIsNot(self.transport.connection, old_connection)
+        self.assertEqual(len(self.connections), 2)
 
     async def test_peer_reset_does_not_break_other_streams(self):
         bad, request = await self.post()

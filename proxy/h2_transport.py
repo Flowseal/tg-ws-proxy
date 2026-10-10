@@ -49,7 +49,14 @@ class _ResponseStream(httpx.AsyncByteStream):
         try:
             await asyncio.wait_for(self.changed.wait(), self.read_timeout)
         except asyncio.TimeoutError as exc:
-            raise httpx.ReadTimeout('Timed out waiting for H2 stream %d' % self.stream_id) from exc
+            error = httpx.ReadTimeout('Timed out waiting for H2 stream %d' % self.stream_id)
+            # An idle socket can remain established after the path stops
+            # delivering data. Reconnect once its last active request times
+            # out, while preserving unrelated requests and buffered replies.
+            if not any(stream is not self and not stream.ended
+                       for stream in self.connection.streams.values()):
+                self.connection.fail(error)
+            raise error from exc
 
     def check_error(self):
         if self.error is not None:
