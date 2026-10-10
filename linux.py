@@ -16,18 +16,19 @@ from proxy import get_link_host
 
 from utils.tray_common import (
     APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, LOG_FILE,
-    acquire_lock, bootstrap, check_ipv6_warning, ctk_run_dialog,
+    acquire_lock, bootstrap, check_ipv6_warning, ctk_call, ctk_run_dialog,
     ensure_ctk_thread, ensure_dirs, load_config, load_icon, log,
     maybe_notify_update, quit_ctk, release_lock, restart_proxy,
     save_config, start_proxy, stop_proxy, tg_proxy_url,
 )
+from ui.ctk_dialogs import show_message
 from ui.ctk_tray_ui import (
     install_tray_config_buttons, install_tray_config_form,
-    populate_first_run_window, tray_settings_scroll_and_footer,
+    populate_first_run_window, show_relink_dialog, tray_settings_scroll_and_footer,
 )
 from ui.ctk_theme import (
     CONFIG_DIALOG_FRAME_PAD, CONFIG_DIALOG_SIZE, FIRST_RUN_SIZE,
-    create_ctk_toplevel, ctk_theme_for_platform, main_content_frame,
+    create_ctk_toplevel, ctk_theme_for_platform, fade_destroy, main_content_frame,
 )
 from ui.i18n import t
 from ui.settings_dialog import SettingsDialog
@@ -36,34 +37,27 @@ _tray_icon: Optional[object] = None
 _config: dict = {}
 _exiting = False
 
-# dialogs (tkinter messagebox)
+# dialogs
 
 
-def _msgbox(kind: str, text: str, title: str, **kw):
-    import tkinter as _tk
-    from tkinter import messagebox as _mb
-
-    root = _tk.Tk()
-    root.withdraw()
-    try:
-        root.attributes("-topmost", True)
-    except Exception:
-        pass
-    result = getattr(_mb, kind)(title, text, parent=root, **kw)
-    root.destroy()
-    return result
+def _dialog(kind: str, text: str, title: str, buttons=("button.ok",)) -> bool:
+    if not ensure_ctk_thread(ctk, _config.get("appearance", "auto")):
+        log.error("%s: %s", title, text)
+        return False
+    return ctk_call(lambda root: show_message(text, title=title, kind=kind, buttons=buttons,
+                                              after_create=_apply_window_icon)) == 0
 
 
 def _show_error(text: str, title: Optional[str] = None) -> None:
-    _msgbox("showerror", text, title or t("app.error_title"))
+    _dialog("error", text, title or t("app.error_title"))
 
 
 def _show_info(text: str, title: Optional[str] = None) -> None:
-    _msgbox("showinfo", text, title or t("app.name"))
+    _dialog("info", text, title or t("app.name"))
 
 
 def _ask_yes_no(text: str, title: Optional[str] = None) -> bool:
-    return bool(_msgbox("askyesno", text, title or t("app.name")))
+    return _dialog("question", text, title or t("app.name"), ("button.yes", "button.no"))
 
 
 def _apply_window_icon(root) -> None:
@@ -143,7 +137,7 @@ def _edit_config_dialog() -> None:
 
     cfg = dict(_config)
 
-    def _build(done: threading.Event) -> None:
+    def _build(done: threading.Event):
         theme = ctk_theme_for_platform()
         w, h = CONFIG_DIALOG_SIZE
         root = create_ctk_toplevel(
@@ -164,7 +158,7 @@ def _edit_config_dialog() -> None:
         )
 
         def _finish() -> None:
-            root.destroy()
+            fade_destroy(root)
             done.set()
 
         dialog = SettingsDialog(
@@ -172,12 +166,17 @@ def _edit_config_dialog() -> None:
             defaults=DEFAULT_CONFIG, persist=save_config,
             refresh_menu=_refresh_tray_menu, finish=_finish,
             restart=lambda config: restart_proxy(config, _show_error),
+            on_link_changed=lambda config: show_relink_dialog(
+                ctk, theme, tg_proxy_url(config), after_create=_apply_window_icon,
+                on_open=lambda: threading.Thread(target=_on_open_in_telegram, daemon=True).start(),
+            ),
         )
 
         root.protocol("WM_DELETE_WINDOW", dialog.cancel)
         install_tray_config_buttons(ctk, footer, theme, on_save=dialog.save, on_cancel=dialog.cancel)
+        return root
 
-    ctk_run_dialog(_build)
+    ctk_run_dialog(_build, key="settings")
 
 
 # first run
@@ -195,7 +194,7 @@ def _show_first_run() -> None:
     port = _config.get("port", DEFAULT_CONFIG["port"])
     secret = _config.get("secret", DEFAULT_CONFIG["secret"])
 
-    def _build(done: threading.Event) -> None:
+    def _build(done: threading.Event):
         theme = ctk_theme_for_platform()
         w, h = FIRST_RUN_SIZE
         root = create_ctk_toplevel(
@@ -205,14 +204,15 @@ def _show_first_run() -> None:
 
         def on_done(open_tg: bool) -> None:
             FIRST_RUN_MARKER.touch()
-            root.destroy()
+            fade_destroy(root)
             done.set()
             if open_tg:
-                _on_open_in_telegram()
+                threading.Thread(target=_on_open_in_telegram, daemon=True).start()
 
         populate_first_run_window(ctk, root, theme, host=host, port=port, secret=secret, on_done=on_done)
+        return root
 
-    ctk_run_dialog(_build)
+    ctk_run_dialog(_build, key="first_run")
 
 
 # tray menu
