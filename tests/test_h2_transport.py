@@ -1082,7 +1082,8 @@ class H2WireTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(self.connections), 1)
         failures = [record for record in captured.records if record.levelname in ('WARNING', 'ERROR')]
         self.assertEqual(len(failures), 1)
-        self.assertIn('reset: 2', failures[0].getMessage())
+        # h2 4.1 (Python 3.8) formats IntEnum values by name.
+        self.assertRegex(failures[0].getMessage(), r'reset: (?:2|ErrorCodes\.INTERNAL_ERROR)\b')
         self.assertIn('down=20', failures[0].getMessage())
         self.assertIn('sid=1', failures[0].getMessage())
 

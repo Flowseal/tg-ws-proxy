@@ -580,6 +580,29 @@ class HttpMultiplexTest(unittest.IsolatedAsyncioTestCase):
         await healthy.send(b'h' * 40, False)
         self.assertEqual(await asyncio.wait_for(healthy.receive(), 1), b'r' * 65536)
 
+    async def test_recovery_cancellation_is_not_lost_when_wakeup_completes(self):
+        channel = self._channel()
+        wait = channel.recovery_wakeup.wait
+        calls = 0
+
+        async def wake_and_cancel():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                recovery.cancel()
+                return True
+            return await wait()
+
+        with patch.object(channel.recovery_wakeup, 'wait', side_effect=wake_and_cancel):
+            recovery = asyncio.create_task(channel._recover())
+            try:
+                done, _ = await asyncio.wait((recovery,), timeout=.2)
+                self.assertIn(recovery, done)
+                self.assertTrue(recovery.cancelled())
+            finally:
+                recovery.cancel()
+                await asyncio.gather(recovery, return_exceptions=True)
+
     async def test_slow_receiver_queue_overflow_does_not_break_other_channels(self):
         async def handler(request):
             return httpx.Response(200, content=request.content, extensions={'http_version': b'HTTP/2'})

@@ -525,10 +525,14 @@ class _HttpChannel:
 
     async def _recover(self) -> None:
         while not self.closed:
+            wakeup = asyncio.create_task(self.recovery_wakeup.wait())
             try:
-                await asyncio.wait_for(self.recovery_wakeup.wait(), REPLAY_CHECK_SECONDS)
-            except asyncio.TimeoutError:
-                pass
+                # wait_for can swallow cancellation when the wakeup completes
+                # at the same time on Python 3.8-3.11 (CPython #86296).
+                await asyncio.wait((wakeup,), timeout=REPLAY_CHECK_SECONDS)
+            finally:
+                wakeup.cancel()
+                await asyncio.gather(wakeup, return_exceptions=True)
             self.recovery_wakeup.clear()
             now = time.monotonic()
             self.lane.log_wait(now)
