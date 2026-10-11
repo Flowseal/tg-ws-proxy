@@ -118,7 +118,7 @@ jobs:
                           break
               else: 
                   print(default_text)
-            PY
+          PY
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
