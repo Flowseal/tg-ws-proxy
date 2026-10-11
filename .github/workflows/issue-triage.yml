@@ -11,32 +11,117 @@ jobs:
   comment:
     if: contains(github.event.issue.labels.*.name, 'bug')
     runs-on: ubuntu-latest
+    env:
+      default_text: |
+        ### Проверьте две вещи:
+        - вы на последней версии: [Releases](https://github.com/Flowseal/tg-ws-proxy/releases)
+        - запускали по инструкции для своей ОС: [Быстрый старт](https://github.com/Flowseal/tg-ws-proxy#навигация)
+
+        ## Решение частых проблем:
+
+        **Q**: Не запускается, падает с ошибкой, не работает как раньше после обновления?  
+        **A**:
+        1. Удалите всё в папке Temp (или хотя бы всё, что начинается с _MEI) 
+        2. Запускайте от имени админа
+        3. Попробуйте Win7 версию (если вы пользователь Windows)
+        4. Попробуйте отключить антивирус (если помогло, то добавьте exe в исключения). Не забудьте включить антивирус обратно.
+
+        ###
+
+        **Q**: Не грузит медиа? (фото/видео/стикеры)  
+        **A**: Удалите в настройках прокси в поле **DC → IP** всё, кроме `4:149.154.167.220`. Если это не помогло, полностью очистите это поле.
+
+
+        #### Если проблема решена, то закройте Issue
+
+        ### Если проблема осталась, пожалуйста, приложите по возможности логи.
+        Сделать это можно через иконку в трее -> Пкм -> Открыть логи. Сохраните логи в файл и приложите его сюда.
     steps:
+      - name: Check for availability log file
+        id: log
+        env: 
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          if [[ "$ISSUE_BODY" =~ (https://github\.com/user-attachments/files/[^[:space:]]+\.log) ]]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "url=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+            echo "Log file found"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "Log file not found"
+          fi
+
+      - name: Install python
+        if: steps.log.outputs.found == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Start check log
+        if: steps.log.outputs.found == 'true'
+        id: comment
+        env:
+          LOG_URL: ${{ steps.log.outputs.url }}
+          DEFAULT_TEXT: ${{ env.default_text }}
+        run: |
+          {
+            echo "com<<EOF"
+            python - <<'PY'
+          import os
+          import urllib.request as request
+
+          url = os.environ["LOG_URL"]
+          default_text = os.environ["DEFAULT_TEXT"]
+
+          with request.urlopen(url,timeout=30.0) as r:
+              log_bytes = r.read()
+
+          log_old = log_bytes.decode("utf-8",errors="replace").splitlines()
+
+          log = []
+          for line in reversed(log_old):
+              line = line[20:]
+              log.append(line)
+              if "INFO   tg-ws-tray  Starting proxy" in line:
+                  break
+
+          if "CF worker:     enabled" not in log[-9]:
+              worker_end = False
+          else:
+              worker_end = True
+
+          secret_false = 0
+          timeouterror = 0
+
+          for line in log :
+              if "(wrong secret or proto)" in line:
+                  secret_false += 1 
+                  if secret_false >= 10:
+                      print ("Указан неверный секрет в настройках прокси в телеграме")
+                      break
+              elif "TimeoutError" in line: 
+                  timeouterror += 1 
+                  if timeouterror >= 20:
+                      if worker_end is False:
+                          print ("""Timeout error при CF-прокси - проблема с вашей стороны. РКН/сторонние впны/прокси и т.п. 
+                          1. Если используете запрет, попробуйте его выключить и проверьте работу. Если работает, то добавьте в файл list-exclude-user: co.uk
+                          2. Если не помогло, то уберите запись из прошлого пункта и добавьте в файл list-general-user: co.uk
+                          3. Попробуйте настроить https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/RU/CfWorker.md
+                          """)
+                      else:
+                          print ("""Timeout error при CF-прокси - проблема с вашей стороны. РКН/сторонние впны/прокси и т.п. 
+                          1. Если используете запрет, попробуйте его выключить и проверьте работу. Если работает, то добавьте в файл list-exclude-user: co.uk
+                          2. Если не помогло, то уберите запись из прошлого пункта и добавьте в файл list-general-user: co.uk
+                          """)                            
+                      break
+          else: 
+              print(default_text)
+          PY
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Comment on new issue
         uses: peter-evans/create-or-update-comment@v5
         with:
           issue-number: ${{ github.event.issue.number }}
-          body: |
-            ### Проверьте две вещи:
-            - вы на последней версии: [Releases](https://github.com/Flowseal/tg-ws-proxy/releases)
-            - запускали по инструкции для своей ОС: [Быстрый старт](https://github.com/Flowseal/tg-ws-proxy#навигация)
-
-            ## Решение частых проблем:
-
-            **Q**: Не запускается, падает с ошибкой, не работает как раньше после обновления?  
-            **A**:
-            1. Удалите всё в папке Temp (или хотя бы всё, что начинается с _MEI) 
-            2. Запускайте от имени админа
-            3. Попробуйте Win7 версию (если вы пользователь Windows)
-            4. Попробуйте отключить антивирус (если помогло, то добавьте exe в исключения). Не забудьте включить антивирус обратно.
-
-            ###
-
-            **Q**: Не грузит медиа? (фото/видео/стикеры)  
-            **A**: Удалите в настройках прокси в поле **DC → IP** всё, кроме `4:149.154.167.220`. Если это не помогло, полностью очистите это поле.
-
-
-            #### Если проблема решена, то закройте Issue
-
-            ### Если проблема осталась, пожалуйста, приложите по возможности логи.
-            Сделать это можно через иконку в трее -> Пкм -> Открыть логи. Сохраните логи в файл и приложите его сюда.
+          body: ${{ steps.log.outputs.found == 'true' && steps.comment.outputs.com || env.default_text }}
