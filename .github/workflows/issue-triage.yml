@@ -42,7 +42,7 @@ jobs:
         env: 
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
-          if [[ ("$ISSUE_BODY" =~ https://github\.com/user-attachments/files/[^[:space:]]+\.log) ]]; then
+          if [[ "$ISSUE_BODY" =~ (https://github\.com/user-attachments/files/[^[:space:]]+\.log) ]]; then
             echo "found=true" >> "$GITHUB_OUTPUT"
             echo "url=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
             echo "Log file found"
