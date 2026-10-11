@@ -52,13 +52,13 @@ jobs:
           fi
 
       - name: Install python
-        if: steps.log.outputs.found == "true"
+        if: steps.log.outputs.found == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: "3.14"
 
       - name: Start check log
-        if: steps.log.outputs.found == "true"
+        if: steps.log.outputs.found == 'true'
         id: comment
         env:
           LOG_URL: ${{ steps.log.outputs.url }}
