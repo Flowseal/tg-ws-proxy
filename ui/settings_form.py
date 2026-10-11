@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from proxy import __version__, coerce_domain_list
 from proxy.balancer import balancer
-from utils.update_check import RELEASES_PAGE_URL, get_status
+from utils.update_check import RELEASES_PAGE_URL, get_status, run_check
 from ui.background_task import BackgroundTask
 from ui.connectivity import (
     run_cfproxy_multi_test, run_cfproxy_auto_test, run_cfworker_multi_test,
@@ -481,7 +481,6 @@ def _create_logging(ctk, frame, theme, cfg, default_config, no_secure_var):
 
 def _create_updates(ctk, frame, theme, cfg, default_config, on_update_click):
     upd_inner = create_config_section(ctk, frame, theme, t("section.updates"))
-    st = get_status()
     check_updates_var = ctk.BooleanVar(
         master=frame, value=bool(cfg.get("check_updates", default_config.get("check_updates", True)))
     )
@@ -489,50 +488,77 @@ def _create_updates(ctk, frame, theme, cfg, default_config, on_update_click):
     upd_cb.pack(anchor="w", pady=(0, 6))
     attach_ctk_tooltip(upd_cb, t("tip.check_updates"))
 
-    if st.get("error"):
-        upd_status = t("updates.status_error")
-    elif not st.get("checked"):
-        upd_status = t("updates.status_pending")
-    elif st.get("has_update") and st.get("latest"):
-        upd_status = t("updates.status_available", latest=st["latest"], current=__version__)
-    elif st.get("ahead_of_release") and st.get("latest"):
-        upd_status = t("updates.status_ahead", current=__version__, latest=st["latest"])
-    else:
-        upd_status = t("updates.status_latest")
+    status_label = create_label(ctk, upd_inner, theme, "", size=11,
+                                justify="left", wraplength=_INNER_W)
+    status_label.pack(anchor="w", pady=(0, 8))
+    check_task = BackgroundTask(frame.winfo_toplevel())
 
-    create_label(ctk, upd_inner, theme, upd_status, size=11,
-           justify="left", wraplength=_INNER_W).pack(anchor="w", pady=(0, 8))
+    def check():
+        if check_task.running or check_task.closed:
+            return
+        check_button.configure(state="disabled")
+        status_label.configure(text=t("updates.status_checking"))
+        check_task.start(
+            lambda: run_check(__version__), lambda _: refresh(),
+            lambda: check_button.configure(state="normal"),
+        )
 
-    rel_url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
-    if st.get("has_update") and on_update_click is not None:
-        upd_btn_row = ctk.CTkFrame(upd_inner, fg_color="transparent")
-        upd_btn_row.pack(fill="x")
-        upd_btn_row.grid_columnconfigure(0, weight=1)
-        upd_btn_row.grid_columnconfigure(1, weight=1)
-        ctk.CTkButton(
-            upd_btn_row, text=t("button.open_release"), height=32,
-            font=(theme.ui_font_family, 13), corner_radius=8,
-            fg_color=theme.field_bg, hover_color=theme.field_border,
-            text_color=theme.text_primary, border_width=1,
-            border_color=theme.field_border,
-            command=lambda u=rel_url: webbrowser.open(u),
-        ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ctk.CTkButton(
-            upd_btn_row, text=t("button.update"), height=32,
-            font=(theme.ui_font_family, 13, "bold"), corner_radius=8,
-            fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
-            text_color="#ffffff",
-            command=on_update_click,
-        ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
-    else:
-        ctk.CTkButton(
-            upd_inner, text=t("button.open_release"), height=32,
-            font=(theme.ui_font_family, 13), corner_radius=8,
-            fg_color=theme.field_bg, hover_color=theme.field_border,
-            text_color=theme.text_primary, border_width=1,
-            border_color=theme.field_border,
-            command=lambda u=rel_url: webbrowser.open(u),
-        ).pack(anchor="w")
+    check_button = ctk.CTkButton(
+        upd_inner, text=t("button.check_updates"), height=32,
+        font=(theme.ui_font_family, 13), corner_radius=8,
+        fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
+        text_color="#ffffff", command=check,
+    )
+    upd_btn_row = ctk.CTkFrame(upd_inner, fg_color="transparent")
+    upd_btn_row.pack(fill="x")
+    upd_btn_row.grid_columnconfigure(0, weight=1)
+    release_button = ctk.CTkButton(
+        upd_btn_row, text=t("button.open_release"), height=32,
+        font=(theme.ui_font_family, 13), corner_radius=8,
+        fg_color=theme.field_bg, hover_color=theme.field_border,
+        text_color=theme.text_primary, border_width=1,
+        border_color=theme.field_border,
+    )
+    release_button.grid(row=0, column=0, sticky="ew")
+    update_button = ctk.CTkButton(
+        upd_btn_row, text=t("button.update"), height=32,
+        font=(theme.ui_font_family, 13, "bold"), corner_radius=8,
+        fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
+        text_color="#ffffff", command=on_update_click,
+    )
+
+    def refresh():
+        st = get_status()
+        if st.get("error"):
+            status = t("updates.status_error")
+        elif not st.get("checked"):
+            status = t("updates.status_pending")
+        elif st.get("has_update") and st.get("latest"):
+            status = t("updates.status_available", latest=st["latest"], current=__version__)
+        elif st.get("ahead_of_release") and st.get("latest"):
+            status = t("updates.status_ahead", current=__version__, latest=st["latest"])
+        else:
+            status = t("updates.status_latest")
+        status_label.configure(text=status)
+        rel_url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
+        release_button.configure(command=lambda: webbrowser.open(rel_url))
+        can_update = bool(st.get("has_update") and on_update_click is not None)
+        upd_btn_row.grid_columnconfigure(1, weight=int(can_update))
+        release_button.grid_configure(padx=(0, 4) if can_update else 0)
+        if can_update:
+            update_button.grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        else:
+            update_button.grid_remove()
+
+    def sync_manual_check(*_):
+        if check_updates_var.get():
+            check_button.pack_forget()
+        else:
+            check_button.pack(fill="x", pady=(0, 8), before=upd_btn_row)
+
+    check_updates_var.trace_add("write", sync_manual_check)
+    sync_manual_check()
+    refresh()
     return check_updates_var
 
 

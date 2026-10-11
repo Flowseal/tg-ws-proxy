@@ -1,21 +1,19 @@
 from __future__ import annotations
 
-import errno
 import os
-import socket
 import subprocess
 import sys
 import threading
 import time
 import webbrowser
-from typing import Callable, Optional
+from typing import Optional
 
 import customtkinter as ctk
 import pyperclip
 import pystray
 from PIL import Image, ImageTk
 
-from proxy import get_link_host
+from proxy import __version__, get_link_host
 
 from utils.tray_common import (
     APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, IS_FROZEN, LOG_FILE,
@@ -34,10 +32,12 @@ from ui.ctk_theme import (
 )
 from ui.i18n import t
 from ui.settings_dialog import SettingsDialog
+from utils.update_check import get_status, relaunch_env
 
 _tray_icon: Optional[object] = None
 _config: dict = {}
 _exiting = False
+_update_flow_lock = threading.Lock()
 
 # dialogs (tkinter messagebox)
 
@@ -164,6 +164,7 @@ def _edit_config_dialog() -> None:
         widgets = install_tray_config_form(
             ctk, scroll, theme, cfg, DEFAULT_CONFIG,
             show_autostart=False,
+            on_update_click=_trigger_update_flow,
         )
 
         def _finish() -> None:
@@ -221,66 +222,57 @@ def _show_first_run() -> None:
 # update
 
 
-def _wait_port_free(host: str, port: int, timeout: float = 5.0) -> bool:
-    # the successor binds the same port, so don't hand it over too early
-    deadline = time.monotonic() + timeout
-    while True:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind((host, port))
-            return True
-        except OSError as exc:
-            if exc.errno != errno.EADDRINUSE:
-                return True  # some other error: waiting will not help
-        finally:
-            sock.close()
-        if time.monotonic() >= deadline:
-            log.warning("Port %s:%s still busy before restart", host, port)
-            return False
-        time.sleep(0.2)
-
-
 def _restart_after_update() -> None:
-    # the old process must release the lock and the port before the new one starts
-    from utils.linux_update import exe_path, relaunch_env
+    from utils.linux_update import exe_path
 
-    release_lock()
     stop_proxy()
-    _wait_port_free(
-        _config.get("host", DEFAULT_CONFIG["host"]),
-        int(_config.get("port", DEFAULT_CONFIG["port"])),
-    )
+    release_lock()
+    exe = str(exe_path())
     try:
         subprocess.Popen(
-            [str(exe_path())], env=relaunch_env(),
+            [exe, *sys.argv[1:]], env=relaunch_env(),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL, start_new_session=True,
         )
     except OSError as exc:
         log.error("Failed to launch updated binary: %s", exc)
-    time.sleep(0.5)
+        if acquire_lock():
+            start_proxy(_config, _show_error)
+        _show_error(t("update.error", msg=exc))
+        return
     os._exit(0)
 
 
-def _maybe_do_update(cfg: dict, is_exiting: Callable[[], bool]) -> None:
-    def _on_update(version: str, page_url: str) -> None:
+def _trigger_update_flow(icon=None, item=None) -> None:
+    if not _update_flow_lock.acquire(blocking=False):
+        return
+
+    def _work() -> None:
         from utils.linux_update import asset_name, detect_install_kind
-        from utils.update_check import find_asset
+        from utils.update_check import find_asset, RELEASES_PAGE_URL
 
-        kind = detect_install_kind() if IS_FROZEN else None
-        asset = find_asset(asset_name(kind)) if kind else None
-        if not asset:
-            log.info("In-place update unavailable (kind=%s)", kind)
-            if _ask_yes_no(t("update.ask_open", version=version), t("app.update_title")):
-                webbrowser.open(page_url)
-            return
+        try:
+            st = get_status()
+            if _exiting or not st["has_update"]:
+                return
+            if _tray_icon is not None:
+                _tray_icon.menu = _build_menu()
+            kind = detect_install_kind() if IS_FROZEN else None
+            asset = find_asset(asset_name(kind)) if kind else None
+            page_url = st["html_url"] or RELEASES_PAGE_URL
+            if not asset:
+                if _ask_yes_no(t("update.ask_open", version=st["latest"]), t("app.update_title")):
+                    webbrowser.open(page_url)
+                return
 
-        if not _ask_yes_no(t("update.ask_install", version=version), t("app.update_title")):
-            return
-        _install_update(kind, asset, page_url)
+            if _ask_yes_no(t("update.ask_install", version=st["latest"]), t("app.update_title")):
+                _install_update(kind, asset, page_url)
+        except Exception:
+            log.exception("Update flow failed")
+        finally:
+            _update_flow_lock.release()
 
-    check_update_async(cfg, is_exiting, _on_update)
+    threading.Thread(target=_work, daemon=True, name="manual-update").start()
 
 
 def _install_update(kind: str, asset: dict, page_url: str) -> None:
@@ -306,7 +298,7 @@ def _build_menu():
     host = _config.get("host", DEFAULT_CONFIG["host"])
     port = _config.get("port", DEFAULT_CONFIG["port"])
     link_host = get_link_host(host)
-    return pystray.Menu(
+    items = [
         pystray.MenuItem(t("tray.open_telegram", host=link_host, port=port), _on_open_in_telegram, default=True),
         pystray.MenuItem(t("tray.copy_link"), _on_copy_link),
         pystray.Menu.SEPARATOR,
@@ -315,7 +307,13 @@ def _build_menu():
         pystray.MenuItem(t("tray.logs"), _on_open_logs),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(t("tray.exit"), _on_exit),
-    )
+    ]
+    st = get_status()
+    if st["has_update"]:
+        items.insert(-2, pystray.MenuItem(
+            t("tray.update", current=__version__, new=st["latest"]), _trigger_update_flow,
+        ))
+    return pystray.Menu(*items)
 
 
 # entry point
@@ -338,7 +336,7 @@ def run_tray() -> None:
         return
 
     start_proxy(_config, _show_error)
-    _maybe_do_update(_config, lambda: _exiting)
+    check_update_async(_config, lambda: _exiting, lambda version, url: _trigger_update_flow())
     _show_first_run()
     check_ipv6_warning(_show_info)
 
