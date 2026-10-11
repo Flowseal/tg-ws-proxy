@@ -1,6 +1,7 @@
 name: Auto comment on new issues
 
 on:
+  workflow_dispatch:
   issues:
     types: [opened]
 
