@@ -45,5 +45,18 @@ class CheckUpdateAsyncTest(unittest.TestCase):
         self.assertEqual(seen, [])
 
 
+class EnsureCtkThreadTest(unittest.TestCase):
+    def test_init_error_is_logged_and_reported(self):
+        ctk = mock.Mock()
+        ctk.CTk.side_effect = RuntimeError("boom")
+        with mock.patch('ui.ctk_theme.install_tkinter_variable_del_guard'), \
+                mock.patch('ui.ctk_theme.apply_ctk_appearance'), \
+                mock.patch.object(tray_common.log, 'exception') as log_exc:
+            self.assertFalse(tray_common.ensure_ctk_thread(ctk))
+
+        log_exc.assert_called_once()
+        self.assertFalse(tray_common._ctk_root_ready.is_set())
+
+
 if __name__ == '__main__':
     unittest.main()

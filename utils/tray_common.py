@@ -524,19 +524,28 @@ def ensure_ctk_thread(ctk: Any, mode: str = "auto") -> bool:
     if _ctk_root_ready.is_set():
         return True
 
+    started = threading.Event()
+
     def _run():
         global _ctk_root
-        from ui.ctk_theme import apply_ctk_appearance, install_tkinter_variable_del_guard
+        try:
+            from ui.ctk_theme import apply_ctk_appearance, install_tkinter_variable_del_guard
 
-        install_tkinter_variable_del_guard()
-        apply_ctk_appearance(ctk, mode)
-        _ctk_root = ctk.CTk()
-        _ctk_root.withdraw()
-        _ctk_root_ready.set()
+            install_tkinter_variable_del_guard()
+            apply_ctk_appearance(ctk, mode)
+            _ctk_root = ctk.CTk()
+            _ctk_root.withdraw()
+            _ctk_root_ready.set()
+        except Exception:
+            log.exception("CTk init failed")
+            _ctk_root = None
+            return
+        finally:
+            started.set()
         _ctk_root.mainloop()
 
     threading.Thread(target=_run, daemon=True, name="ctk-root").start()
-    _ctk_root_ready.wait(timeout=5.0)
+    started.wait(timeout=5.0)
     return _ctk_root is not None
 
 
