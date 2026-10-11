@@ -68,7 +68,6 @@ jobs:
             echo "com<<EOF"
             python - <<'PY'
           import os
-          import io
           import urllib.request as request
 
           url = os.environ["LOG_URL"]
@@ -77,7 +76,7 @@ jobs:
           with request.urlopen(url,timeout=30.0) as r:
               log_bytes = r.read()
 
-          log_old = io.StringIO(log_bytes.decode("utf-8",errors="replace")).splitlines()
+          log_old = log_bytes.decode("utf-8",errors="replace").splitlines()
 
           log = []
           for line in reversed(log_old):
