@@ -55,11 +55,12 @@ tg-ws-proxy [--port PORT] [--host HOST] [--dc-ip DC:IP ...] [-v]
 | `--no-secure` | `false` | Use 80 port for CF-proxy and CF-worker connections |
 | `--fake-tls-domain` | | Enable Fake TLS masquerading (ee-secret) with specified SNI domain |
 | `--proxy-protocol` | disabled | Accept HAProxy PROXY protocol v1 (for use behind nginx/haproxy with `proxy_protocol on`) |
+| `--force-test-dc` | `false` | Route all traffic to Telegram test DCs [Learn more](./TestDc.md) |
 | `--buf-kb` | `256` | Buffer size in KB |
 | `--pool-size` | `4` | Number of ready WS connections per DC. `0` disables the direct DC→IP WS route |
 | `--log-file` | disabled | Path to file for saving logs |
 | `--log-max-mb` | `5` | Maximum log file size in MB (afterwards overwrites) |
-| `--log-backups` | `0` | Number of log backups after overwrite |
+| `--log-backups` | `1` | Number of rotated log files to keep (minimum 1) |
 | `-v`, `--verbose` | disabled | Verbose logging (DEBUG) |
 
 **Examples:**

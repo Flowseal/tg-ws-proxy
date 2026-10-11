@@ -21,6 +21,7 @@ from .utils import (
 
 log = logging.getLogger('tg-mtproto-proxy')
 MAX_PACKET = 4 * 1024 * 1024
+MAX_PLAIN_PADDING = 256
 MAX_CHANNEL_REQUESTS = 8
 MAX_CHANNEL_BYTES = 8 * 1024 * 1024
 MAX_LANE_REQUESTS = 64
@@ -97,10 +98,11 @@ class _ReplayPacket:
     pending: Optional[asyncio.Task] = None
     originals: Set[asyncio.Task] = field(default_factory=set, repr=False)
     retired: bool = False
+    reply_id: Optional[bytes] = None
 
     @property
     def replayed(self) -> bool:
-        return self.attempts > 0
+        return self.last_attempt_at > 0 or self.attempts > 0
 
 
 async def _read_packet(reader, decryptor, tag: bytes) -> Tuple[bytes, bool]:
@@ -116,16 +118,20 @@ async def _read_packet(reader, decryptor, tag: bytes) -> Tuple[bytes, bool]:
     else:
         value, = struct.unpack('<I', await plaintext(4))
         quick, length = bool(value & 0x80000000), value & 0x7fffffff
-    if not 24 <= length <= MAX_PACKET + (15 if tag == PROTO_TAG_SECURE else 0):
+    if not 24 <= length <= MAX_PACKET + (MAX_PLAIN_PADDING if tag == PROTO_TAG_SECURE else 0):
         raise ValueError('native packet length outside supported range: %d' % length)
     body = await plaintext(length)
     if tag == PROTO_TAG_SECURE:
         if body[:8] == b'\x00' * 8:
             packet_length = 20 + int.from_bytes(body[16:20], 'little')
+            max_padding = MAX_PLAIN_PADDING
         else:
             packet_length = 24 + ((length - 24) // 16) * 16
-        if not 24 <= packet_length <= length or length - packet_length > 15:
-            raise ValueError('invalid padded native packet')
+            max_padding = 15
+        padding = length - packet_length
+        if not 24 <= packet_length <= length or padding > max_padding:
+            raise ValueError('invalid padded native packet: frame=%d packet=%d padding=%d limit=%d' % (
+                length, packet_length, padding, max_padding))
         body = body[:packet_length]
     if len(body) % 4 or len(body) > MAX_PACKET:
         raise ValueError('invalid native packet alignment or size')
@@ -461,6 +467,9 @@ class _HttpChannel:
             reply = await self.lane._post(body, self.channel_id, replay=replay, channel=self)
             self.last_progress = time.monotonic()
             if reply and not self.closed:
+                if packet is not None and reply[:24] != packet.reply_id:
+                    packet.reply_id = reply[:24]
+                    packet.attempts = 0
                 if self.queue.full() or self.reply_bytes + len(reply) > MAX_CHANNEL_BYTES:
                     raise BufferError('H2 client response queue exceeded bound')
                 self.reply_bytes += len(reply)
@@ -525,10 +534,14 @@ class _HttpChannel:
 
     async def _recover(self) -> None:
         while not self.closed:
+            wakeup = asyncio.create_task(self.recovery_wakeup.wait())
             try:
-                await asyncio.wait_for(self.recovery_wakeup.wait(), REPLAY_CHECK_SECONDS)
-            except asyncio.TimeoutError:
-                pass
+                # wait_for can swallow cancellation when the wakeup completes
+                # at the same time on Python 3.8-3.11 (CPython #86296).
+                await asyncio.wait((wakeup,), timeout=REPLAY_CHECK_SECONDS)
+            finally:
+                wakeup.cancel()
+                await asyncio.gather(wakeup, return_exceptions=True)
             self.recovery_wakeup.clear()
             now = time.monotonic()
             self.lane.log_wait(now)

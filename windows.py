@@ -8,11 +8,9 @@ import threading
 import time
 import webbrowser
 import winreg
-import tempfile
 
 from pathlib import Path
 from typing import Optional
-from proxy.utils import build_github_opener
 
 try:
     import pyperclip
@@ -47,7 +45,7 @@ from utils.tray_common import (
     save_config, start_proxy, stop_proxy, tg_proxy_url,
 )
 from utils.update_check import (
-    get_status, get_update_asset, run_check, RELEASES_PAGE_URL, 
+    download_asset, get_status, get_update_asset, run_check, RELEASES_PAGE_URL,
 )
 from ui.ctk_controls import create_button
 from ui.ctk_dialogs import show_message
@@ -238,27 +236,11 @@ def _perform_update(download_url: str, set_status=None) -> None:
     _step(t("update.downloading"))
     cur_exe = Path(sys.executable)
     old_exe = cur_exe.with_name(cur_exe.stem + "_oldtgws.exe")
-    tmp_path = None
     try:
-        fd, tmp_name = tempfile.mkstemp(dir=cur_exe.parent, suffix=".tmp")
-        os.close(fd)
-        tmp_path = Path(tmp_name)
         log.info("Downloading update from %s", download_url)
-        opener = build_github_opener()
-        with opener.open(download_url) as _resp:
-            with open(str(tmp_path), "wb") as _fout:
-                while True:
-                    _chunk = _resp.read(65536)
-                    if not _chunk:
-                        break
-                    _fout.write(_chunk)
+        tmp_path = download_asset(download_url, cur_exe.parent)
     except Exception as exc:
         _err(t("update.download_fail", error=exc))
-        if tmp_path:
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
         return
 
     _step(t("update.replacing"))
@@ -529,6 +511,7 @@ def _edit_config_dialog() -> None:
             restart=lambda config: restart_proxy(config, _show_error),
             include_autostart=_supports_autostart(),
             apply_autostart=set_autostart_enabled if _supports_autostart() else None,
+            read_autostart=is_autostart_enabled if _supports_autostart() else None,
             on_link_changed=lambda config: show_relink_dialog(
                 ctk, theme, tg_proxy_url(config), icon_path=ICON_PATH,
                 on_open=lambda: threading.Thread(target=_on_open_in_telegram, daemon=True).start(),

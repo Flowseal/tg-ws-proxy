@@ -20,6 +20,7 @@ from .utils import create_ssl_context
 
 STREAM_RECEIVE_WINDOW = 256 * 1024
 CONNECTION_RECEIVE_WINDOW = 4 * 1024 * 1024
+IO_BATCH_SIZE = 64 * 1024
 
 
 @lru_cache(maxsize=1)
@@ -36,6 +37,7 @@ class _ResponseStream(httpx.AsyncByteStream):
         self.read_timeout = read_timeout
         self.changed = asyncio.Event()
         self.chunks = deque()
+        self.consumed_credit = 0
         self.headers = None
         self.response_started = None
         self.error = None
@@ -47,7 +49,14 @@ class _ResponseStream(httpx.AsyncByteStream):
         try:
             await asyncio.wait_for(self.changed.wait(), self.read_timeout)
         except asyncio.TimeoutError as exc:
-            raise httpx.ReadTimeout('Timed out waiting for H2 stream %d' % self.stream_id) from exc
+            error = httpx.ReadTimeout('Timed out waiting for H2 stream %d' % self.stream_id)
+            # An idle socket can remain established after the path stops
+            # delivering data. Reconnect once its last active request times
+            # out, while preserving unrelated requests and buffered replies.
+            if not any(stream is not self and not stream.ended
+                       for stream in self.connection.streams.values()):
+                self.connection.fail(error)
+            raise error from exc
 
     def check_error(self):
         if self.error is not None:
@@ -100,6 +109,8 @@ class _Connection:
         data = self.h2.data_to_send()
         if data:
             self.writer.write(data)
+            return True
+        return False
 
     async def drain(self):
         try:
@@ -127,11 +138,12 @@ class _Connection:
     async def read_loop(self):
         try:
             while self.error is None:
-                data = await self.reader.read(64 * 1024)
+                data = await self.reader.read(IO_BATCH_SIZE)
                 if not data:
                     raise httpx.ReadError('H2 peer closed the connection')
                 events = self.h2.receive_data(data)
                 terminated = any(isinstance(e, ConnectionTerminated) for e in events)
+                connection_credit = 0
                 for event in events:
                     if isinstance(event, RemoteSettingsChanged):
                         self.settings_received = True
@@ -145,7 +157,7 @@ class _Connection:
                         stream = self.streams.get(getattr(event, 'stream_id', None))
                         if isinstance(event, DataReceived):
                             if event.flow_controlled_length and not terminated:
-                                self.h2.increment_flow_control_window(event.flow_controlled_length)
+                                connection_credit += event.flow_controlled_length
                             if stream is not None:
                                 if event.data:
                                     stream.chunks.append((event.data, event.flow_controlled_length))
@@ -164,8 +176,10 @@ class _Connection:
                                 self.changed.set()
                         if stream is not None:
                             stream.changed.set()
-                self.flush()
-                await self.drain()
+                if connection_credit:
+                    self.h2.increment_flow_control_window(connection_credit)
+                if self.flush():
+                    await self.drain()
         except asyncio.CancelledError:
             self.fail(httpx.ReadError('H2 reader stopped'))
             raise
@@ -202,7 +216,7 @@ class _Connection:
                 self.changed.clear()
                 self.check_error()
                 stream.check_error()
-                count = min(len(data) - offset, self.h2.max_outbound_frame_size,
+                count = min(len(data) - offset, IO_BATCH_SIZE,
                             self.h2.local_flow_control_window(stream.stream_id))
                 if count <= 0:
                     try:
@@ -210,8 +224,11 @@ class _Connection:
                     except asyncio.TimeoutError as exc:
                         raise httpx.WriteTimeout('H2 upload flow control timed out') from exc
                     continue
-                self.h2.send_data(stream.stream_id, data[offset:offset + count])
-                offset += count
+                batch_end = offset + count
+                while offset < batch_end:
+                    frame_end = min(batch_end, offset + self.h2.max_outbound_frame_size)
+                    self.h2.send_data(stream.stream_id, data[offset:frame_end])
+                    offset = frame_end
                 self.flush()
                 await self.drain()
         self.h2.end_stream(stream.stream_id)
@@ -259,8 +276,12 @@ class _Connection:
 
     def consumed(self, stream, credit):
         if credit and not stream.ended and not stream.closed and self.error is None:
+            stream.consumed_credit += credit
+            if stream.chunks and stream.consumed_credit < IO_BATCH_SIZE:
+                return
             try:
-                self.h2.increment_flow_control_window(credit, stream.stream_id)
+                self.h2.increment_flow_control_window(stream.consumed_credit, stream.stream_id)
+                stream.consumed_credit = 0
                 self.flush()
             except StreamClosedError:
                 pass

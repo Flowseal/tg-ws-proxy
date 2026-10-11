@@ -72,11 +72,14 @@ class MsgSplitter:
             if packet_len is None:
                 break
             if packet_len <= 0:
-                parts.append(bytes(self._cipher_buf[offset:]))
+                parts.append(bytes(self._cipher_buf) if offset == 0 else bytes(self._cipher_buf[offset:]))
                 offset = buf_len
                 self._disabled = True
                 break
-            parts.append(bytes(self._cipher_buf[offset:offset + packet_len]))
+            if offset == 0 and packet_len == buf_len:
+                parts.append(bytes(self._cipher_buf))
+            else:
+                parts.append(bytes(self._cipher_buf[offset:offset + packet_len]))
             offset += packet_len
 
         if offset:

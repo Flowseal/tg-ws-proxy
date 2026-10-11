@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from proxy.config import proxy_config
-from proxy.pool import _WsPool
+from proxy.pool import _CfWorkerPool, _WsPool
 from proxy.raw_websocket import RawWebSocket, WsHandshakeError
 from proxy.utils import ws_domains
 
@@ -237,6 +237,32 @@ class WsPoolTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.pool._idle)
         self.assertFalse(self.pool._rotating)
         self.assertFalse(self.pool._refilling)
+        ready.writer.close.assert_called_once()
+        idle.writer.close.assert_called_once()
+
+
+class CfWorkerPoolTest(unittest.IsolatedAsyncioTestCase):
+    async def test_close_cancels_refill_and_closes_unclaimed_connections(self):
+        pool = _CfWorkerPool()
+        ready = _open_ws()
+        idle = _open_ws()
+        started = asyncio.Event()
+        pool._idle[2] = deque([(idle, time.monotonic(), 'a.example')])
+
+        async def connect(*args):
+            started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                return ready, 'b.example'
+
+        with mock.patch.object(proxy_config, 'pool_size', 1), \
+                mock.patch.object(pool, '_connect_one', side_effect=connect):
+            pool._schedule_refill(4, '192.0.2.4', ['b.example'])
+            await asyncio.wait_for(started.wait(), 1)
+            await pool.close()
+        self.assertFalse(pool._idle)
+        self.assertFalse(pool._refilling)
         ready.writer.close.assert_called_once()
         idle.writer.close.assert_called_once()
 

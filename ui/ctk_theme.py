@@ -282,6 +282,18 @@ def create_ctk_toplevel(
     root.attributes("-alpha", 0.0)
     if icon:
         root.iconbitmap(icon)
+
+    if sys.platform == "win32":
+        def handle_ctrl_shortcut(event: Any) -> Optional[str]:
+            shortcuts = {65: ("a", "<<SelectAll>>"), 67: ("c", "<<Copy>>"), 86: ("v", "<<Paste>>")}
+            shortcut = shortcuts.get(event.keycode)
+            if shortcut and event.keysym.lower() != shortcut[0] and not event.state & 0x20000:
+                event.widget.event_generate(shortcut[1])
+                return "break"
+            return None
+
+        root.bind("<Control-KeyPress>", handle_ctrl_shortcut, add="+")
+
     root.title(title)
     root.resizable(False, False)
     center_ctk_geometry(root, width, height)

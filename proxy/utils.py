@@ -3,7 +3,9 @@ import urllib.request
 import http.client
 import ssl
 import logging
+import os
 import re
+import sys
 
 import certifi
 
@@ -31,7 +33,8 @@ PROTO_PADDED_INTERMEDIATE_INT = 0xDDDDDDDD
 RESERVED_FIRST_BYTES = {0xEF}
 RESERVED_STARTS = {b'\x48\x45\x41\x44', b'\x50\x4F\x53\x54',
                     b'\x47\x45\x54\x20', b'\xee\xee\xee\xee',
-                    b'\xdd\xdd\xdd\xdd', b'\x16\x03\x01\x02'}
+                    b'\xdd\xdd\xdd\xdd', b'\x16\x03\x01\x02',
+                    b'\x4F\x50\x54\x49'}
 RESERVED_CONTINUE = b'\x00\x00\x00\x00'
 
 _GITHUB_IPS: Dict[str, str] = {
@@ -141,7 +144,10 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
 
 
 def create_ssl_context(*, check_hostname: bool = True) -> ssl.SSLContext:
-    context = ssl.create_default_context(cafile=certifi.where())
+    bundle_dir = getattr(sys, '_MEIPASS', None)
+    cafile = (os.path.join(bundle_dir, 'certifi', 'cacert.pem')
+              if bundle_dir else certifi.where())
+    context = ssl.create_default_context(cafile=cafile)
     context.load_default_certs()
     context.check_hostname = check_hostname
     return context
