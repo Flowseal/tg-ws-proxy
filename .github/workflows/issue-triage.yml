@@ -86,7 +86,6 @@ jobs:
                   break
 
           if "CF worker:     enabled" not in log[-9]:
-              print(log[-9])
               worker_end = False
           else:
               worker_end = True
