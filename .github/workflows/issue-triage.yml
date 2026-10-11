@@ -126,4 +126,4 @@ jobs:
         uses: peter-evans/create-or-update-comment@v5
         with:
           issue-number: ${{ github.event.issue.number }}
-          body: ${{ steps.log.outputs.found == "true" && steps.comment.outputs.com || env.default_text }}
+          body: ${{ steps.log.outputs.found == 'true' && steps.comment.outputs.com || env.default_text }}
