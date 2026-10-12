@@ -26,3 +26,9 @@ icon.ico
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Local run config and secrets
+.env
+.secret
+.cfworker
+.dcips
