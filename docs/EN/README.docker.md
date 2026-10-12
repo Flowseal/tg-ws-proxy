@@ -60,6 +60,50 @@ To generate a secret, you can use:
 openssl rand -hex 16  
 ```
 
+## Running via Makefile
+
+For local use there is a `Makefile`. Settings live in `.env` (template —
+`.env.example`), and the proxy secret lives in `.secret`.
+
+```bash
+# create .env from the template (edit it if needed)
+make env
+
+# build the image
+make build
+
+# run the container and print the tg://proxy link
+make run
+```
+
+Common commands:
+
+| Command          | Action                              |
+| ---------------- | ----------------------------------- |
+| `make build`     | build the image                     |
+| `make run`       | run the container                   |
+| `make stop`      | stop the container                  |
+| `make restart`   | restart the container               |
+| `make logs`      | show logs                           |
+| `make link`      | print the `tg://proxy` link         |
+| `make secret`    | print the current secret            |
+| `make install`   | install the systemd service (autostart) |
+| `make uninstall` | remove the systemd service          |
+
+### Persistent secret
+
+If `TG_WS_PROXY_SECRET` is empty in `.env`, the first `make run` creates the
+secret in the `.secret` file and reuses it afterwards — including across
+reboots. This lets you configure Telegram once and keep the same link. Do not
+delete `.secret`.
+
+### Autostart (systemd)
+
+```bash
+make install      # installs and enables the tg-ws-proxy service
+sudo systemctl start tg-ws-proxy
+```
+
 ## Configuring Telegram Desktop
 
 1. Telegram → **Settings** → **Advanced** → **Connection type** → **Proxy**

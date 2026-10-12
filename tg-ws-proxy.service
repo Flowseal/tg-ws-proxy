@@ -1,0 +1,19 @@
+[Unit]
+Description=tg-ws-proxy (Docker)
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=__USER__
+WorkingDirectory=__WORKDIR__
+ExecStartPre=/usr/bin/docker info
+ExecStart=/usr/bin/make run
+ExecStop=/usr/bin/make stop
+ExecReload=/usr/bin/make restart
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -25,3 +25,9 @@ Desktop.ini
 .DS_Store
 
 /icon.icns
+
+# Local run config and secrets
+.env
+.secret
+.cfworker
+.dcips
