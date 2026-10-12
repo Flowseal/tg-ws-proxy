@@ -156,12 +156,8 @@
   "update.ask_install": "New version available: {version}\n\nUpdate now? The app will restart.",
   "update.install_fail": "Failed to install the update:\n{error}\n\nOpen the release page in the browser?",
   "update.downloading": "Downloading...",
-  "update.replacing": "Replacing file...",
   "update.restarting": "Restarting...",
   "update.error": "Error: {msg}",
-  "update.download_fail": "Download failed:\n{error}",
-  "update.rename_fail": "Failed to rename file:\n{error}",
-  "update.move_fail": "Failed to move file:\n{error}",
 
   "error.dc_config": "DC → IP configuration error.",
 

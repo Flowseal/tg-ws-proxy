@@ -32,7 +32,7 @@ class BackgroundTask:
             try:
                 results.put((True, work()))
             except Exception:
-                log.exception("Connectivity test failed")
+                log.exception("Background task failed")
                 results.put((False, None))
 
         def poll():
@@ -52,5 +52,5 @@ class BackgroundTask:
                 if not self.closed:
                     finish()
 
-        threading.Thread(target=run, daemon=True, name="connectivity-test").start()
+        threading.Thread(target=run, daemon=True, name="ui-background-task").start()
         self.pending = self.owner.after(50, poll)

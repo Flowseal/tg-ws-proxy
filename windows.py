@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ctypes
 import os
-import subprocess
 import sys
 import threading
 import time
@@ -39,14 +38,13 @@ from utils.win32_theme import (
 )
 from utils.tray_common import (
     APP_NAME, DEFAULT_CONFIG, FIRST_RUN_MARKER, IS_FROZEN, LOG_FILE,
-    acquire_lock, bootstrap, check_ipv6_warning, ctk_call, ctk_run_dialog,
+    acquire_lock, bootstrap, check_ipv6_warning, check_update_async, ctk_call, ctk_run_dialog,
     ensure_ctk_thread, ensure_dirs, load_config, load_icon, log,
     quit_ctk, release_lock, restart_proxy,
     save_config, start_proxy, stop_proxy, tg_proxy_url,
 )
-from utils.update_check import (
-    download_asset, get_status, get_update_asset, run_check, RELEASES_PAGE_URL,
-)
+from utils.update_check import find_asset, get_status, RELEASES_PAGE_URL
+from utils.windows_update import apply_update, asset_name
 from ui.ctk_controls import create_button
 from ui.ctk_dialogs import show_message
 from ui.ctk_tray_ui import (
@@ -133,14 +131,16 @@ def _ask_yes_no(text: str, title: Optional[str] = None) -> bool:
 
 
 def update_ctk_form(
-    text: str, title: Optional[str] = None, download_url: Optional[str] = None,
+    text: str, title: Optional[str] = None, asset: Optional[dict] = None,
     release_url: Optional[str] = None,
 ) -> str:
     title = title or t("app.name")
     if ctk is None or not ensure_ctk_thread(ctk, _config.get("appearance", "auto")):
+        if not asset:
+            return "open" if _ask_yes_no(t("update.ask_open", version=get_status()["latest"]), title) else "close"
         result = _u32.MessageBoxW(None, text, title, _MB_YESNOCANCEL_Q)
         if result == _IDYES:
-            return "update"
+            _perform_update(asset)
         if result == _IDNO:
             return "open"
         return "close"
@@ -149,10 +149,10 @@ def update_ctk_form(
 
     def _build(done: threading.Event):
         theme = ctk_theme_for_platform()
-        width = 340 if IS_FROZEN else 250
+        width = 340 if asset else 250
         root = create_ctk_toplevel(
-            ctk, title=title, width=width, height=140 if IS_FROZEN else 110,
-            theme=theme, icon=ICON_PATH,
+            ctk, title=title, width=width, height=140 if asset else 110,
+            theme=theme, topmost=True, icon=ICON_PATH,
         )
         frame = main_content_frame(ctk, root, theme, padx=16, pady=14)
 
@@ -186,21 +186,16 @@ def update_ctk_form(
             done.set()
 
         def _on_update() -> None:
-            if not download_url:
-                if release_url:
-                    webbrowser.open(release_url)
-                _close_with("open")
-                return
             for b in btns:
                 b.configure(state="disabled")
             root.protocol("WM_DELETE_WINDOW", lambda: None)
             def _run():
-                _perform_update(download_url, set_status=_set_status)
+                _perform_update(asset, set_status=_set_status)
                 root.after(0, lambda: [b.configure(state="normal") for b in btns])
                 root.after(0, lambda: root.protocol("WM_DELETE_WINDOW", lambda: _close_with("close")))
             threading.Thread(target=_run, daemon=True).start()
 
-        if IS_FROZEN:
+        if asset:
             btns.append(create_button(ctk, row, theme, "button.update", width=96, command=_on_update))
         btns.append(create_button(
             ctk, row, theme, "button.page", "secondary", width=96,
@@ -219,81 +214,37 @@ def update_ctk_form(
     return result["value"]
 
 
-def _perform_update(download_url: str, set_status=None) -> None:
+def _perform_update(asset: dict, set_status=None) -> None:
+    restarting = False
+
     def _step(msg: str) -> None:
         log.info("Update: %s", msg)
         if set_status:
             set_status(msg)
-            time.sleep(0.8)
 
-    def _err(msg: str) -> None:
-        log.error("Update error: %s", msg)
-        if set_status:
-            set_status(f"{t('update.error', msg=msg)}")
-        else:
-            _show_error(msg)
+    def _before_restart() -> None:
+        nonlocal restarting
+        _step(t("update.restarting"))
+        restarting = True
+        stop_proxy()
+        release_lock()
+        _release_win_mutex()
 
     _step(t("update.downloading"))
-    cur_exe = Path(sys.executable)
-    old_exe = cur_exe.with_name(cur_exe.stem + "_oldtgws.exe")
     try:
-        log.info("Downloading update from %s", download_url)
-        tmp_path = download_asset(download_url, cur_exe.parent)
+        apply_update(asset, _before_restart)
     except Exception as exc:
-        _err(t("update.download_fail", error=exc))
+        log.exception("Update failed")
+        if restarting:
+            mutex = _acquire_win_mutex()
+            if mutex is True or mutex is None and acquire_lock():
+                start_proxy(_config, _show_error)
+        msg = t("update.error", msg=exc)
+        if set_status:
+            set_status(msg)
+        else:
+            _show_error(msg)
         return
-
-    _step(t("update.replacing"))
-    try:
-        if old_exe.exists():
-            old_exe.unlink()
-        cur_exe.rename(old_exe)
-    except Exception as exc:
-        _err(t("update.rename_fail", error=exc))
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        return
-
-    try:
-        tmp_path.rename(cur_exe)
-    except Exception as exc:
-        _err(t("update.move_fail", error=exc))
-        try:
-            old_exe.rename(cur_exe)
-        except OSError:
-            pass
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        return
-
-    _step(t("update.restarting"))
-    _release_win_mutex()
-    stop_proxy()
-
-    # Don't reuse existing _MEI* dir
-    env = os.environ.copy()
-    for _k in [k for k in env if k.startswith("_PYI_") or k == "_MEIPASS"]:
-        del env[_k]
-    if hasattr(sys, "_MEIPASS"):
-        _mei = os.path.normcase(sys._MEIPASS.rstrip("\\/"))
-        env["PATH"] = os.pathsep.join(
-            p for p in env.get("PATH", "").split(os.pathsep)
-            if os.path.normcase(p.rstrip("\\/")) != _mei
-        )
-
-    try:
-        subprocess.Popen(
-            [str(cur_exe)],
-            env=env,
-            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-        )
-    except Exception as exc:
-        log.error("Failed to launch updated exe: %s", exc)
-    time.sleep(0.5)
     os._exit(0)
 
 
@@ -314,13 +265,15 @@ def _trigger_update_flow(icon=None, item=None) -> None:
             st = get_status()
             if not st.get("has_update"):
                 return
+            if _tray_icon is not None:
+                _tray_icon.menu = _build_menu()
             url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
             ver = st.get("latest") or "?"
-            asset = get_update_asset(Path(sys.executable), __version__) if IS_FROZEN else None
+            asset = find_asset(asset_name()) if IS_FROZEN else None
 
             choice = update_ctk_form(
                 t("update.available", version=ver),
-                download_url=asset[0] if asset else None,
+                asset=asset,
                 release_url=url,
             )
             if choice == "open":
@@ -331,27 +284,6 @@ def _trigger_update_flow(icon=None, item=None) -> None:
             _update_flow_lock.release()
 
     threading.Thread(target=_show, daemon=True, name="manual-update").start()
-
-
-def _maybe_do_update(cfg: dict, is_exiting) -> None:
-    if not cfg.get("check_updates", True):
-        return
-
-    def _work():
-        time.sleep(1.5)
-        if is_exiting():
-            return
-        try:
-            run_check(__version__)
-            if _tray_icon is not None:
-                _tray_icon.menu = _build_menu()
-            if is_exiting():
-                return
-            _trigger_update_flow()
-        except Exception as exc:
-            log.warning("Update check failed: %s", repr(exc))
-
-    threading.Thread(target=_work, daemon=True, name="update-check").start()
 
 
 # autostart (registry)
@@ -612,7 +544,7 @@ def run_tray() -> None:
         return
 
     start_proxy(_config, _show_error)
-    _maybe_do_update(_config, lambda: _exiting)
+    check_update_async(_config, lambda: _exiting, lambda version, url: _trigger_update_flow())
     _show_first_run()
     check_ipv6_warning(_show_info)
 
@@ -635,14 +567,13 @@ def main() -> None:
 
     if IS_FROZEN:
         def _cleanup_old_exes():
-            exe_dir = Path(sys.executable).parent
             time.sleep(3)
-            for _f in exe_dir.glob("*_oldtgws.exe"):
-                try:
-                    _f.unlink()
-                    log.info("Deleted leftover: %s", _f)
-                except OSError:
-                    pass
+            exe = Path(sys.executable)
+            backup = exe.with_name(exe.stem + "_oldtgws.exe")
+            try:
+                backup.unlink(missing_ok=True)
+            except OSError:
+                pass
         threading.Thread(target=_cleanup_old_exes, daemon=True, name="cleanup-old").start()
 
     try:

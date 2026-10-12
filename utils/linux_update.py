@@ -16,8 +16,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from http.client import HTTPException
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
+
+from utils.update_check import download_asset, relaunch_env
 
 BINARY_ASSET = "TgWsProxy_linux_amd64"
 
@@ -86,20 +89,25 @@ def install_cmd(kind: str, path: Path) -> List[str]:
     if kind == "deb":
         if shutil.which("apt-get"):
             return elevate + [
-                "apt-get", "install", "-y", "--reinstall",
-                "--allow-downgrades", str(path),
+                "apt-get", "install", "-y", str(path),
             ]
         return elevate + ["dpkg", "-i", str(path)]
     if kind == "rpm":
         if shutil.which("dnf"):
             return elevate + ["dnf", "install", "-y", str(path)]
-        return elevate + ["rpm", "-U", "--force", str(path)]
+        return elevate + ["rpm", "-U", str(path)]
     raise ValueError("no install command for kind: {0}".format(kind))
 
 
 def replace_binary_cmd(src: Path, exe: Path) -> List[str]:
-    """Replace the binary as root; install(1) avoids ETXTBSY on the running file."""
-    return _elevate() + ["install", "-m", "755", str(src), str(exe)]
+    """Stage beside the executable so an interrupted copy cannot destroy it."""
+    script = '''set -e
+staged=$(mktemp "$2.XXXXXX")
+trap 'rm -f -- "$staged"' EXIT
+install -m 755 -- "$1" "$staged"
+mv -fT -- "$staged" "$2"
+'''
+    return _elevate() + ["sh", "-c", script, "sh", str(src), str(exe)]
 
 
 def _run_install(cmd: List[str], log: Optional[logging.Logger] = None) -> Optional[str]:
@@ -125,58 +133,22 @@ def apply_update(
     Returns:
         Error text, or None on success.
     """
-    from utils.update_check import download_asset
-
     exe = exe_path()
     suffix = ASSET_SUFFIX[kind] or ".new"
     # with a writable directory download next to the binary and os.replace it
     in_place = kind == "binary" and os.access(str(exe.parent), os.W_OK)
-    dest_dir = exe.parent if in_place else Path(tempfile.gettempdir())
 
     if log:
         log.info("Linux update (%s): downloading %s", kind, url)
     try:
-        tmp = download_asset(url, dest_dir, suffix=suffix, digest=digest)
-    except Exception as exc:
+        with tempfile.TemporaryDirectory(prefix="tgws-update-", dir=exe.parent if in_place else None) as directory:
+            tmp = download_asset(url, Path(directory), suffix=suffix, digest=digest)
+            if kind != "binary":
+                return _run_install(install_cmd(kind, tmp), log=log)
+            if in_place:
+                os.chmod(str(tmp), 0o755)
+                os.replace(str(tmp), str(exe))
+                return None
+            return _run_install(replace_binary_cmd(tmp, exe), log=log)
+    except (OSError, ValueError, HTTPException, subprocess.SubprocessError) as exc:
         return str(exc)
-
-    try:
-        if kind != "binary":
-            return _run_install(install_cmd(kind, tmp), log=log)
-        os.chmod(str(tmp), 0o755)
-        if in_place:
-            os.replace(str(tmp), str(exe))
-            return None
-        return _run_install(replace_binary_cmd(tmp, exe), log=log)
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        return str(exc)
-    finally:
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-
-def relaunch_env() -> Dict[str, str]:
-    """Environment for relaunching without the unpacked PyInstaller bundle."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("_PYI_")}
-    env.pop("_MEIPASS", None)
-    mei = getattr(sys, "_MEIPASS", None)
-    for var in ("PATH", "LD_LIBRARY_PATH", "GI_TYPELIB_PATH", "GTK_PATH",
-                "GST_PLUGIN_PATH", "GIO_MODULE_DIR"):
-        original = env.pop(var + "_ORIG", None)
-        if original is not None:
-            env[var] = original
-            continue
-        if not mei or not env.get(var):
-            continue
-        target = os.path.normcase(mei.rstrip("\\/"))
-        kept = [
-            p for p in env[var].split(os.pathsep)
-            if os.path.normcase(p.rstrip("\\/")) != target
-        ]
-        if kept:
-            env[var] = os.pathsep.join(kept)
-        else:
-            env.pop(var, None)
-    return env

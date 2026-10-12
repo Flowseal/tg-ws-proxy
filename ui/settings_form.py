@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import threading
 import webbrowser
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -453,30 +452,26 @@ def _create_updates(ctk, frame, theme, cfg, default_config, on_update_click):
     upd_cb = create_checkbox(ctk, upd_inner, theme, "label.check_updates", check_updates_var)
     upd_cb.pack(anchor="w", pady=(0, 6))
     attach_ctk_tooltip(upd_cb, "tip.check_updates")
+    check_task = BackgroundTask(frame.winfo_toplevel())
 
     row = ctk.CTkFrame(upd_inner, fg_color="transparent")
     row.pack(fill="x")
     check_btn = create_button(ctk, row, theme, "button.check_updates", "secondary", width=110, height=30)
-    check_btn.pack(side="right")
     status = ctk.CTkLabel(row, text="", anchor="w", justify="left", compound="left",
                           wraplength=240, font=(theme.ui_font_family, 12))
     status.pack(side="left", fill="x", expand=True, padx=(0, 8))
 
-    def open_update():
-        if on_update_click is not None:
-            on_update_click()
-        else:
-            webbrowser.open((get_status().get("html_url") or "").strip() or RELEASES_PAGE_URL)
+    btn_row = ctk.CTkFrame(upd_inner, fg_color="transparent")
+    btn_row.pack(fill="x", pady=(8, 0))
+    btn_row.grid_columnconfigure(0, weight=1)
+    release_button = create_button(ctk, btn_row, theme, "button.open_release", "secondary", height=32)
+    release_button.grid(row=0, column=0, sticky="ew")
+    update_button = create_button(ctk, btn_row, theme, "button.update", height=32, command=on_update_click)
 
-    action = create_button(
-        ctk, upd_inner, theme, "button.update" if on_update_click else "button.open_release",
-        height=32, command=open_update,
-    )
-
-    def render():
+    def refresh():
         st = get_status()
         has_update = bool(st.get("has_update") and st.get("latest"))
-        if st.get("checking"):
+        if check_task.running:
             text, color, image = t("updates.status_checking"), theme.text_secondary, None
         elif st.get("error"):
             text, color, image = t("updates.status_error"), theme.error, icon("warning", 14, theme.error)
@@ -491,25 +486,42 @@ def _create_updates(ctk, frame, theme, cfg, default_config, on_update_click):
         else:
             text, color, image = t("updates.status_latest"), theme.text_secondary, icon("check", 14, theme.ok)
         status.configure(text=(" " if image else "") + text, text_color=color, image=image or "")
-        if has_update:
-            action.pack(fill="x", pady=(8, 0))
+        rel_url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
+        release_button.configure(command=lambda: webbrowser.open(rel_url))
+        can_update = bool(has_update and on_update_click is not None)
+        btn_row.grid_columnconfigure(1, weight=int(can_update))
+        release_button.grid_configure(padx=(0, 4) if can_update else 0)
+        if can_update:
+            update_button.grid(row=0, column=1, sticky="ew", padx=(4, 0))
         else:
-            action.pack_forget()
+            update_button.grid_remove()
+
+    def check():
+        if check_task.running or check_task.closed:
+            return
+        check_btn.configure(state="disabled")
+        check_task.start(
+            lambda: run_check(__version__), lambda _: refresh(),
+            lambda: check_btn.configure(state="normal"),
+        )
+        spin(check_btn, theme, lambda: check_task.running, lambda: None)
+        refresh()
+
+    def sync_manual_check(*_):
+        if check_updates_var.get():
+            check_btn.pack_forget()
+        else:
+            check_btn.pack(side="right", before=status)
 
     def poll():
         if status.winfo_exists():
-            render()
+            refresh()
             status.after(500, poll)
 
-    def check_now():
-        worker = threading.Thread(target=lambda: run_check(__version__, force=True),
-                                  daemon=True, name="update-check-manual")
-        worker.start()
-        check_btn.configure(state="disabled")
-        spin(check_btn, theme, worker.is_alive, lambda: (check_btn.configure(state="normal"), render()))
-
-    check_btn.configure(command=check_now)
-    on_relabel(status, render)
+    check_btn.configure(command=check)
+    check_updates_var.trace_add("write", sync_manual_check)
+    sync_manual_check()
+    on_relabel(status, refresh)
     poll()
     return check_updates_var
 
