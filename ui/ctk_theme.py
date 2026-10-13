@@ -180,6 +180,8 @@ def crossfade(win: Any, change: Callable[[], None], ms: int = 280) -> None:
     try:
         from PIL import ImageGrab, ImageTk
 
+        win.update_idletasks()
+        _dwmapi.DwmFlush()
         r = (ctypes.c_long * 4)()
         _dwmapi.DwmGetWindowAttribute(_hwnd(win), 9, ctypes.byref(r), 16)
         shot = ImageTk.PhotoImage(ImageGrab.grab(bbox=tuple(r), all_screens=True), master=win)
@@ -298,16 +300,22 @@ def create_ctk_toplevel(
     root.resizable(False, False)
     center_ctk_geometry(root, width, height)
 
+    def reveal():
+        root.update_idletasks()
+        fade(root, 1.0, 180)
+
     def show():
         style_titlebar(root)
         set_icon(root, icon)
         present(root)
         if topmost:
             root.after(160, lambda: root.winfo_exists() and root.attributes("-topmost", True))
-        fade(root, 1.0, 180)
+        reveal()
         if after_create:
             after_create(root)
 
+    root.bind("<Unmap>", lambda e: e.widget is root and root.attributes("-alpha", 0.0), add="+")
+    root.bind("<Map>", lambda e: e.widget is root and root.after(30, reveal), add="+")
     root.after(30, show)
     return root
 

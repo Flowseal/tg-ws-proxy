@@ -398,6 +398,7 @@ def _edit_config_dialog() -> None:
         theme,
         on_save=dialog.save,
         on_cancel=dialog.cancel,
+        widgets=widgets,
     )
     _activate_app()
     log.info("Settings window ready")

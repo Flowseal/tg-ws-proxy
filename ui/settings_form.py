@@ -458,8 +458,15 @@ def _create_updates(ctk, frame, theme, cfg, default_config, on_update_click):
     row.pack(fill="x")
     check_btn = create_button(ctk, row, theme, "button.check_updates", "secondary", width=110, height=30)
     status = ctk.CTkLabel(row, text="", anchor="w", justify="left", compound="left",
-                          wraplength=240, font=(theme.ui_font_family, 12))
+                          font=(theme.ui_font_family, 12))
     status.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+    def fit_status(event):
+        wrap = int(status._reverse_widget_scaling(event.width)) - 24
+        if wrap > 0 and wrap != status.cget("wraplength"):
+            status.configure(wraplength=wrap)
+
+    status._canvas.bind("<Configure>", fit_status, add="+")
 
     btn_row = ctk.CTkFrame(upd_inner, fg_color="transparent")
     btn_row.pack(fill="x", pady=(8, 0))
@@ -545,6 +552,10 @@ def validate_config_form(
     *,
     include_autostart: bool,
 ) -> Union[dict, str]:
+    return validate_settings(form_values(widgets, include_autostart=include_autostart), default_config)
+
+
+def form_values(widgets: TrayConfigFormWidgets, *, include_autostart: bool = True) -> dict:
     values = {
         "host": widgets.host_var.get(),
         "port": widgets.port_var.get(),
@@ -574,4 +585,29 @@ def validate_config_form(
         values["appearance"] = _appearance_to_cfg(widgets.appearance_var.get())
     if widgets.language_var is not None:
         values["language"] = language_from_label(widgets.language_var.get()).value
-    return validate_settings(values, default_config)
+    return values
+
+
+def watch_form_changes(widgets: TrayConfigFormWidgets, on_change: Callable[[bool], None]) -> None:
+    saved = form_values(widgets)
+
+    def check(*_):
+        on_change(form_values(widgets) != saved)
+
+    for var in (
+        *(getattr(widgets, name) for name in vars(widgets) if name.endswith("_var")),
+        *widgets.advanced_vars.values(),
+    ):
+        if var is not None:
+            var.trace_add("write", check)
+
+    box = widgets.dc_textbox._textbox
+
+    def on_modified(_):
+        if box.edit_modified():
+            box.edit_modified(False)
+            check()
+
+    box.edit_modified(False)
+    box.bind("<<Modified>>", on_modified, add="+")
+    check()

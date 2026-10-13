@@ -14,6 +14,7 @@ from ui.settings_form import (
     TrayConfigFormWidgets as TrayConfigFormWidgets,
     install_tray_config_form as install_tray_config_form,
     validate_config_form as validate_config_form,
+    watch_form_changes,
 )
 
 
@@ -28,9 +29,21 @@ def tray_settings_scroll_and_footer(
         content_parent,
         fg_color=theme.bg,
         corner_radius=0,
+        scrollbar_fg_color=theme.bg,
         scrollbar_button_color=theme.field_border,
         scrollbar_button_hover_color=theme.text_secondary,
     )
+    bar = scroll._scrollbar
+    bar.configure(width=10, border_spacing=3)
+
+    def set_bar(lo, hi):
+        if float(lo) <= 0 and float(hi) >= 1:
+            bar.grid_remove()
+        else:
+            bar.grid()
+        bar.set(lo, hi)
+
+    scroll._parent_canvas.configure(yscrollcommand=set_bar)
     scroll.pack(fill="both", expand=True)
     if sys.platform == "win32":
         scroll._parent_canvas.configure(yscrollincrement=round(3 * scroll._get_widget_scaling()))
@@ -44,6 +57,7 @@ def install_tray_config_buttons(
     *,
     on_save: Callable[[], None],
     on_cancel: Callable[[], None],
+    widgets: Optional[TrayConfigFormWidgets] = None,
 ) -> None:
     ctk.CTkFrame(
         frame,
@@ -57,8 +71,23 @@ def install_tray_config_buttons(
     save_btn.pack(side="left", fill="x", expand=True, padx=(0, 6))
     attach_ctk_tooltip(save_btn, "tip.save")
     cancel_btn = create_button(ctk, btn_frame, theme, "button.cancel", "secondary", height=38, command=on_cancel)
+    cancel_btn.configure(fg_color=theme.card)
     cancel_btn.pack(side="left", fill="x", expand=True, padx=(6, 0))
     attach_ctk_tooltip(cancel_btn, "tip.cancel")
+    if widgets is None:
+        return
+
+    place = frame.pack_info()
+    place.pop("in", None)
+
+    def show(changed: bool) -> None:
+        if not changed:
+            frame.pack_forget()
+        elif not frame.winfo_manager():
+            others = [w for w in frame.master.pack_slaves() if w is not frame]
+            frame.pack(**place, **({"before": others[0]} if others else {}))
+
+    watch_form_changes(widgets, show)
 
 
 def show_relink_dialog(

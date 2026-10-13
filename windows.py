@@ -451,7 +451,7 @@ def _edit_config_dialog() -> None:
         )
 
         root.protocol("WM_DELETE_WINDOW", dialog.cancel)
-        install_tray_config_buttons(ctk, footer, theme, on_save=dialog.save, on_cancel=dialog.cancel)
+        install_tray_config_buttons(ctk, footer, theme, on_save=dialog.save, on_cancel=dialog.cancel, widgets=widgets)
         return root
 
     ctk_run_dialog(_build, key="settings")

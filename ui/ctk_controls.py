@@ -12,6 +12,16 @@ from ui.ctk_tooltip import attach_tooltip_to_widgets
 from ui.i18n import t
 
 
+def _update_dimensions(self: Any, event: Any) -> None:
+    size = self._reverse_widget_scaling(float(event.width)), self._reverse_widget_scaling(float(event.height))
+    if size != (self._current_width, self._current_height):
+        self._current_width, self._current_height = size
+        self._draw(no_color_updates=True)
+
+
+customtkinter.CTkBaseClass._update_dimensions_event = _update_dimensions
+
+
 def on_relabel(widget: Any, fn: Callable[[], None]) -> None:
     top = widget.winfo_toplevel()
     hooks = getattr(top, "_relabel_hooks", None)
