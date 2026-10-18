@@ -1,387 +1,161 @@
-"""
-Проверка новой версии через GitHub Releases API
-
-Ограничение частоты запросов: не чаще одного раза в час на машину (кэш в каталоге
-данных приложения). Поддерживается If-None-Match (ETag) для ответа 304.
-"""
+"""One startup check against GitHub Releases and verified asset downloads."""
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
+import re
 import sys
 import tempfile
-import time
+from contextlib import suppress
+from http.client import HTTPException
 from itertools import zip_longest
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
-from urllib.error import HTTPError, URLError
+from typing import Any, Dict, Optional
 from urllib.request import Request
+
 from proxy.utils import build_github_opener
 
 REPO = "Flowseal/tg-ws-proxy"
 RELEASES_LATEST_API = f"https://api.github.com/repos/{REPO}/releases/latest"
-RELEASES_BY_TAG_API = f"https://api.github.com/repos/{REPO}/releases/tags/{{tag}}?t={{timestamp}}"
 RELEASES_PAGE_URL = f"https://github.com/{REPO}/releases/latest"
 
-# Не чаще одного полного запроса к API в час (без учёта 304 с тем же ETag).
-_MIN_FETCH_INTERVAL_SEC = 3600.0
-
+_SHA256 = re.compile(r"sha256:([0-9a-f]{64})", re.IGNORECASE)
 _state: Dict[str, Any] = {
     "checked": False,
     "has_update": False,
     "ahead_of_release": False,
     "latest": None,
-    "html_url": None,
+    "html_url": RELEASES_PAGE_URL,
     "error": None,
     "assets": [],
 }
 
 
-def _cache_file() -> Optional[Path]:
-    try:
-        from utils.tray_common import APP_DIR
-        root = APP_DIR
-        root.mkdir(parents=True, exist_ok=True)
-        return root / ".update_check_cache.json"
-    except OSError:
-        return None
-
-
-def _load_cache(path: Optional[Path]) -> Dict[str, Any]:
-    if not path or not path.is_file():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def _save_cache(path: Optional[Path], data: Dict[str, Any]) -> None:
-    if not path:
-        return
-    try:
-        path.write_text(json.dumps(data), encoding="utf-8")
-    except OSError:
-        pass
-
-
 def _parse_version_tuple(s: str) -> tuple:
-    s = (s or "").strip().lstrip("vV")
-    if not s:
-        return (0,)
     parts = []
-    for seg in s.split("."):
-        digits = next((seg[:i] for i, c in enumerate(seg) if not c.isdigit()), seg)
-        if digits:
-            try:
-                parts.append(int(digits))
-            except ValueError:
-                parts.append(0)
-        else:
-            parts.append(0)
-    return tuple(parts) if parts else (0,)
+    for part in (s or "").strip().lstrip("vV").split("."):
+        match = re.match(r"\d+", part)
+        parts.append(int(match[0]) if match else 0)
+    return tuple(parts)
 
 
 def _version_gt(a: str, b: str) -> bool:
-    """True, если версия a новее b (простое сравнение по сегментам)."""
-    ta = _parse_version_tuple(a)
-    tb = _parse_version_tuple(b)
-    for x, y in zip_longest(ta, tb, fillvalue=0):
-        if x > y:
-            return True
-        if x < y:
-            return False
+    for x, y in zip_longest(_parse_version_tuple(a), _parse_version_tuple(b), fillvalue=0):
+        if x != y:
+            return x > y
     return False
 
 
-def _apply_release_tag(
-    tag: str, html_url: str, current_version: str,
-) -> None:
-    global _state
-    if not tag:
-        _state["has_update"] = False
-        _state["ahead_of_release"] = False
-        _state["latest"] = None
-        _state["html_url"] = html_url.strip() or RELEASES_PAGE_URL
-        return
-    latest_clean = tag.lstrip("vV")
-    cur = (current_version or "").strip().lstrip("vV")
-    _state["latest"] = latest_clean
-    _state["html_url"] = html_url.strip() or RELEASES_PAGE_URL
-    _state["has_update"] = _version_gt(latest_clean, cur)
-    _state["ahead_of_release"] = bool(latest_clean) and _version_gt(
-        cur, latest_clean
-    )
-
-
-def fetch_latest_release(
-    timeout: float = 12.0,
-    etag: Optional[str] = None,
-) -> Tuple[Optional[dict], Optional[str], int]:
-    """
-    GET releases/latest. Возвращает (data или None при 304, etag или None, HTTP-код).
-    """
-    headers = {
+def fetch_latest_release(timeout: float = 12.0) -> dict:
+    req = Request(RELEASES_LATEST_API, headers={
         "Accept": "application/vnd.github+json",
         "User-Agent": "tg-ws-proxy-update-check",
-    }
-    if etag:
-        headers["If-None-Match"] = etag
-    req = Request(
-        RELEASES_LATEST_API,
-        headers=headers,
-        method="GET",
-    )
-    try:
-        with build_github_opener().open(req, timeout=timeout) as resp:
-            code = getattr(resp, "status", None) or resp.getcode()
-            new_etag = resp.headers.get("ETag")
-            raw = resp.read().decode("utf-8", errors="replace")
-            return json.loads(raw), new_etag, int(code)
-    except HTTPError as e:
-        if e.code == 304:
-            hdrs = e.headers
-            new_etag = hdrs.get("ETag") if hdrs else None
-            return None, new_etag or etag, 304
-        raise
+    })
+    with build_github_opener().open(req, timeout=timeout) as resp:
+        return json.load(resp)
 
 
-def run_check(current_version: str) -> None:
-    """Запрашивает последний релиз и обновляет внутреннее состояние."""
-    global _state
-    _state["checked"] = True
-    _state["error"] = None
-
-    cache_path = _cache_file()
-    cache = _load_cache(cache_path)
-    now = time.time()
-    last_attempt = float(cache.get("last_attempt_at") or 0)
-
-    if last_attempt and (now - last_attempt) < _MIN_FETCH_INTERVAL_SEC:
-        tag = (cache.get("tag_name") or "").strip()
-        if tag:
-            _apply_release_tag(tag, cache.get("html_url") or "", current_version)
-            _state["assets"] = cache.get("assets") or []
-            return
-        err = cache.get("last_error")
-        _state["error"] = (
-            err if err else "Проверка обновлений отложена (интервал между запросами)."
-        )
-        _state["has_update"] = False
-        _state["ahead_of_release"] = False
-        _state["latest"] = None
-        _state["html_url"] = RELEASES_PAGE_URL
-        return
-
-    etag = (cache.get("etag") or "").strip() or None
-    try:
-        data, new_etag, code = fetch_latest_release(etag=etag)
-        cache["last_attempt_at"] = now
-        if code == 304:
-            tag = (cache.get("tag_name") or "").strip()
-            url = (cache.get("html_url") or "").strip() or RELEASES_PAGE_URL
-            _apply_release_tag(tag, url, current_version)
-            _state["assets"] = cache.get("assets") or []
-            if new_etag:
-                cache["etag"] = new_etag
-            _save_cache(cache_path, cache)
-            return
-
-        assert data is not None
-        tag = (data.get("tag_name") or "").strip()
-        html_url = (data.get("html_url") or "").strip() or RELEASES_PAGE_URL
-        if not tag:
-            _state["has_update"] = False
-            _state["ahead_of_release"] = False
-            _state["latest"] = None
-            _state["html_url"] = html_url
-        else:
-            _apply_release_tag(tag, html_url, current_version)
-        if new_etag:
-            cache["etag"] = new_etag
-        cache["tag_name"] = tag
-        cache["html_url"] = html_url
-        assets = [
-            {"name": a.get("name", ""), "url": a.get("browser_download_url", ""), "digest": a.get("digest", "")}
-            for a in (data.get("assets") or [])
-            if a.get("name") and a.get("browser_download_url")
-        ]
-        _state["assets"] = assets
-        cache["assets"] = assets
-        cache.pop("last_error", None)
-        _save_cache(cache_path, cache)
-    except (HTTPError, URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError) as e:
-        cache["last_attempt_at"] = now
-        msg = str(e)
-        if isinstance(e, HTTPError) and e.code == 403:
-            msg = (
-                "GitHub API вернул 403 (лимит или доступ). Повторите позже."
-            )
-        cache["last_error"] = msg
-        _save_cache(cache_path, cache)
-        _state["error"] = msg
-        _state["has_update"] = False
-        _state["ahead_of_release"] = False
-        _state["latest"] = None
-        _state["html_url"] = RELEASES_PAGE_URL
-
-
-def fetch_release_by_tag(
-    tag: str, timeout: float = 12.0,
-) -> Tuple[Optional[dict], int]:
-    if not tag:
-        return None, 0
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "tg-ws-proxy-update-check",
-    }
-    req = Request(
-        RELEASES_BY_TAG_API.format(tag=tag, timestamp=int(time.time())),
-        headers=headers,
-        method="GET",
-    )
-    try:
-        with build_github_opener().open(req, timeout=timeout) as resp:
-            code = getattr(resp, "status", None) or resp.getcode()
-            raw = resp.read().decode("utf-8", errors="replace")
-            return json.loads(raw), int(code)
-    except HTTPError as e:
-        if e.code in [304, 404]:
-            return None, e.code
-        raise
-
-
-def _extract_assets(data: Optional[dict]) -> list:
-    if not data:
-        return []
+def _extract_assets(data: dict) -> list:
+    assets = (data or {}).get("assets") or []
+    if not isinstance(assets, list):
+        raise ValueError("Invalid release assets from GitHub")
     return [
-        {"name": a.get("name", ""), "url": a.get("browser_download_url", ""), "digest": a.get("digest", "")}
-        for a in (data.get("assets") or [])
-        if a.get("name") and a.get("browser_download_url")
+        {"name": a["name"], "url": a["browser_download_url"],
+         "digest": a.get("digest") if isinstance(a.get("digest"), str) else ""}
+        for a in assets
+        if isinstance(a, dict) and isinstance(a.get("name"), str) and a["name"]
+        and isinstance(a.get("browser_download_url"), str) and a["browser_download_url"]
     ]
 
 
-def _expected_length(resp: Any) -> Optional[int]:
+def run_check(current_version: str) -> None:
+    """Publish the complete result at once; no persistent cache or error cooldown."""
+    global _state
+    state = {
+        "checked": True, "has_update": False, "ahead_of_release": False,
+        "latest": None, "html_url": RELEASES_PAGE_URL, "error": None, "assets": [],
+    }
     try:
-        return int(resp.headers.get("Content-Length"))
-    except (AttributeError, TypeError, ValueError):
-        return None
+        data = fetch_latest_release()
+        if not isinstance(data, dict) or not isinstance(data.get("tag_name"), str):
+            raise ValueError("Invalid release from GitHub")
+        latest = data["tag_name"].strip().lstrip("vV")
+        if not latest or not latest[0].isdigit():
+            raise ValueError("Invalid release version from GitHub")
+        state.update(
+            latest=latest,
+            has_update=_version_gt(latest, current_version),
+            ahead_of_release=_version_gt(current_version, latest),
+            html_url=data.get("html_url") or RELEASES_PAGE_URL,
+            assets=_extract_assets(data),
+        )
+    except (OSError, ValueError, HTTPException) as exc:
+        state["error"] = str(exc) or type(exc).__name__
+        logging.getLogger(__name__).warning("Update check failed: %s", exc)
+    _state = state
 
 
 def download_asset(
     url: str, dest_dir: Path, suffix: str = ".tmp", digest: str = "",
     timeout: float = 30.0,
 ) -> Path:
-    """Download a release asset into a temporary file inside dest_dir.
+    """Return a temporary file only after its mandatory SHA-256 has matched."""
+    expected = _SHA256.fullmatch(digest if isinstance(digest, str) else "")
+    if not expected:
+        raise ValueError("The release asset has no valid SHA-256 checksum")
 
-    The size is checked against Content-Length and, when the GitHub API
-    provides a "sha256:..." digest, the checksum too. A truncated or
-    corrupted file is removed instead of being returned.
-    timeout limits blocking network operations, including response reads.
-
-    Raises:
-        OSError: network error, truncated download or checksum mismatch.
-    """
-    fd, name = tempfile.mkstemp(dir=str(dest_dir), suffix=suffix)
-    os.close(fd)
+    fd, name = tempfile.mkstemp(dir=str(dest_dir), suffix=suffix, prefix="TgWsProxy_tmp_")
     path = Path(name)
     try:
         sha = hashlib.sha256()
-        written = 0
-        with build_github_opener().open(url, timeout=timeout) as resp:
-            expected = _expected_length(resp)
-            with open(str(path), "wb") as out:
-                while True:
-                    chunk = resp.read(65536)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-                    sha.update(chunk)
-                    written += len(chunk)
-        if expected is not None and written != expected:
-            raise OSError(
-                "incomplete download: {0} of {1} bytes".format(written, expected)
-            )
-        want = (digest or "").lower()
-        if want.startswith("sha256:") and sha.hexdigest() != want[7:]:
-            raise OSError("checksum does not match the release asset")
+        with os.fdopen(fd, "wb") as out, build_github_opener().open(url, timeout=timeout) as resp:
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                out.write(chunk)
+                sha.update(chunk)
+        if sha.hexdigest() != expected[1].lower():
+            raise OSError("SHA-256 checksum does not match the release asset")
         return path
     except BaseException:
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        with suppress(OSError):
+            path.unlink()
         raise
 
 
 def find_asset(name: str) -> Optional[Dict[str, str]]:
-    """Asset of the latest release by name (after run_check)."""
-    for a in _state.get("assets") or []:
-        if a.get("name") == name and a.get("url"):
-            return a
+    """Find an asset suitable for automatic installation."""
+    for asset in _state["assets"]:
+        if asset["name"] == name and asset["url"] and _SHA256.fullmatch(asset["digest"]):
+            return dict(asset)
     return None
 
 
 def get_status() -> Dict[str, Any]:
-    """Снимок состояния после run_check (для подписей в настройках)."""
-    return dict(_state)
+    state = _state
+    return {**state, "assets": [dict(a) for a in state["assets"]]}
 
 
-def get_update_asset(exe_path: Path, current_version: str) -> Optional[Tuple[str, str]]:
-    new_assets = _state.get("assets") or []
-    if not new_assets:
-        return None
-
-    target_name = None
-
-    # SHA256 match
-    try:
-        data, code = fetch_release_by_tag(f"v{current_version}")
-        if code == 200 and data:
-            cur_assets = _extract_assets(data)
-            if cur_assets:
-                h = hashlib.sha256()
-                with open(exe_path, "rb") as f:
-                    while True:
-                        chunk = f.read(65536)
-                        if not chunk:
-                            break
-                        h.update(chunk)
-                exe_sha = h.hexdigest().lower()
-                for a in cur_assets:
-                    d = (a.get("digest") or "").lower()
-                    if d.startswith("sha256:") and d[7:] == exe_sha:
-                        target_name = a["name"]
-                        break
-    except Exception:
-        pass
-
-    # Fallback
-    if not target_name or target_name not in [a.get("name") for a in new_assets]:
-        import platform
-        import struct
-
-        is_64 = struct.calcsize("P") * 8 == 64
-        machine = platform.machine().lower()
-        is_arm64 = machine in ("arm64", "aarch64")
-
-        try:
-            is_modern = sys.getwindowsversion().major >= 10
-        except Exception:
-            is_modern = True
-
-        if is_arm64:
-            target_name = "TgWsProxy_windows_arm64.exe"
-        elif is_modern:
-            target_name = "TgWsProxy_windows.exe"
-        elif is_64:
-            target_name = "TgWsProxy_windows_7_64bit.exe"
-        else:
-            target_name = "TgWsProxy_windows_7_32bit.exe"
-
-    for a in new_assets:
-        if a.get("name") == target_name:
-            return a["url"], a["name"]
-
-    return None
+def relaunch_env() -> Dict[str, str]:
+    """Use system libraries and unpack a fresh bundle with PyInstaller 5 or 6."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("_PYI_", "_MEIPASS"))}
+    mei = getattr(sys, "_MEIPASS", None)
+    if mei:
+        env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    for var in ("PATH", "LD_LIBRARY_PATH", "GI_TYPELIB_PATH", "GTK_PATH",
+                "GST_PLUGIN_PATH", "GIO_MODULE_DIR"):
+        original = env.pop(var + "_ORIG", None)
+        if original is not None:
+            env[var] = original
+        elif mei and env.get(var):
+            bundle = os.path.normcase(os.path.abspath(mei))
+            kept = [p for p in env[var].split(os.pathsep)
+                    if not (os.path.normcase(os.path.abspath(p)) + os.sep).startswith(bundle + os.sep)]
+            if kept:
+                env[var] = os.pathsep.join(kept)
+            else:
+                env.pop(var, None)
+    return env

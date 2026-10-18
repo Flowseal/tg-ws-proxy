@@ -39,7 +39,14 @@ on:
         default: true
 
 permissions:
+  actions: read
   contents: write
+
+env:
+  SIGNPATH_ORGANIZATION_ID: d0164909-65ed-4ca8-aa9f-ec148a9f7950
+  SIGNPATH_PROJECT_SLUG: tg-ws-proxy
+  SIGNPATH_ARTIFACT_CONFIGURATION_SLUG: initial
+  SIGNPATH_SIGNING_POLICY: ${{ github.event.inputs.make_release == 'true' && 'release-signing' || 'test-signing' }}
 
 jobs:
   build-windows-x64:
@@ -96,11 +103,34 @@ jobs:
       - name: Rename artifact
         run: mv dist/TgWsProxy.exe dist/TgWsProxy_windows.exe
 
-      - name: Upload artifact
+      - name: Upload unsigned artifact
+        id: upload-unsigned
+        uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-windows-x64
+          path: dist/TgWsProxy_windows.exe
+          archive: true
+          if-no-files-found: error
+
+      - name: Sign EXE with SignPath
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY }}
+          artifact-configuration-slug: ${{ env.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Upload signed artifact
         uses: actions/upload-artifact@v7
         with:
           name: TgWsProxy-windows-x64
-          path: dist/TgWsProxy_windows.exe
+          path: signed/TgWsProxy_windows.exe
+          archive: true
+          if-no-files-found: error
 
   build-windows-arm64:
     runs-on: windows-11-arm
@@ -173,11 +203,34 @@ jobs:
       - name: Rename artifact
         run: mv dist/TgWsProxy.exe dist/TgWsProxy_windows_arm64.exe
 
-      - name: Upload artifact
+      - name: Upload unsigned artifact
+        id: upload-unsigned
+        uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-windows-arm64
+          path: dist/TgWsProxy_windows_arm64.exe
+          archive: true
+          if-no-files-found: error
+
+      - name: Sign EXE with SignPath
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY }}
+          artifact-configuration-slug: ${{ env.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Upload signed artifact
         uses: actions/upload-artifact@v7
         with:
           name: TgWsProxy-windows-arm64
-          path: dist/TgWsProxy_windows_arm64.exe
+          path: signed/TgWsProxy_windows_arm64.exe
+          archive: true
+          if-no-files-found: error
 
   build-win7:
     runs-on: windows-latest
@@ -227,11 +280,34 @@ jobs:
       - name: Rename artifact
         run: mv dist/TgWsProxy.exe dist/TgWsProxy_windows_7_${{ matrix.suffix }}.exe
 
-      - name: Upload artifact
+      - name: Upload unsigned artifact
+        id: upload-unsigned
+        uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-win7-${{ matrix.suffix }}
+          path: dist/TgWsProxy_windows_7_${{ matrix.suffix }}.exe
+          archive: true
+          if-no-files-found: error
+
+      - name: Sign EXE with SignPath
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY }}
+          artifact-configuration-slug: ${{ env.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Upload signed artifact
         uses: actions/upload-artifact@v7
         with:
           name: TgWsProxy-win7-${{ matrix.suffix }}
-          path: dist/TgWsProxy_windows_7_${{ matrix.suffix }}.exe
+          path: signed/TgWsProxy_windows_7_${{ matrix.suffix }}.exe
+          archive: true
+          if-no-files-found: error
 
   build-macos:
     runs-on: macos-latest

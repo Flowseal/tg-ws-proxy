@@ -1,12 +1,18 @@
+import hashlib
+import io
 import os
+import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import ExitStack
+from http.client import IncompleteRead
 from pathlib import Path
 from unittest import mock
 
-from utils import linux_update
+from utils import linux_update, update_check
 
 
 class _Proc:
@@ -97,7 +103,7 @@ class InstallCmdTest(unittest.TestCase):
 
     def test_rpm_falls_back_to_rpm_binary(self):
         self.assertEqual(
-            self._cmd('rpm', ()), ['pkexec', 'rpm', '-U', '--force', str(self.package_path)],
+            self._cmd('rpm', ()), ['pkexec', 'rpm', '-U', str(self.package_path)],
         )
 
     def test_unknown_kind_is_rejected(self):
@@ -127,7 +133,7 @@ class ApplyUpdateTest(unittest.TestCase):
             exe.write_bytes(b'old')
 
             with mock.patch.object(linux_update, 'exe_path', return_value=exe), \
-                    mock.patch('utils.update_check.download_asset', self._download()):
+                    mock.patch('utils.linux_update.download_asset', self._download()):
                 self.assertIsNone(linux_update.apply_update('binary', 'https://x.invalid/a'))
 
             self.assertEqual(exe.read_bytes(), b'new')
@@ -139,7 +145,7 @@ class ApplyUpdateTest(unittest.TestCase):
             exe = Path(tmp) / 'TgWsProxy'
             exe.write_bytes(b'old')
             with mock.patch.object(linux_update, 'exe_path', return_value=exe), \
-                    mock.patch('utils.update_check.download_asset', self._download()):
+                    mock.patch('utils.linux_update.download_asset', self._download()):
                 self.assertIsNone(linux_update.apply_update('binary', 'https://x.invalid/a'))
             self.assertEqual(stat.S_IMODE(exe.stat().st_mode), 0o755)
 
@@ -155,18 +161,18 @@ class ApplyUpdateTest(unittest.TestCase):
             with mock.patch.object(linux_update, 'exe_path', return_value=exe), \
                     mock.patch.object(linux_update.os, 'access', return_value=False), \
                     mock.patch.object(linux_update, '_is_root', return_value=False), \
-                    mock.patch('utils.update_check.download_asset', _download), \
+                    mock.patch('utils.linux_update.download_asset', _download), \
                     mock.patch.object(linux_update.subprocess, 'run', run):
                 self.assertIsNone(linux_update.apply_update('binary', 'https://x.invalid/a'))
 
             cmd = run.call_args[0][0]
-            self.assertEqual(cmd[:4], ['pkexec', 'install', '-m', '755'])
+            self.assertEqual(cmd[:3], ['pkexec', 'sh', '-c'])
             self.assertEqual(cmd[-1], str(exe))
 
     def test_deb_install_failure_returns_stderr(self):
         run = mock.Mock(return_value=_Proc(1, stderr=b'dpkg: error'))
         with mock.patch.object(linux_update, 'exe_path', return_value=Path('/usr/bin/x')), \
-                mock.patch('utils.update_check.download_asset', self._download()), \
+                mock.patch('utils.linux_update.download_asset', self._download()), \
                 mock.patch.object(linux_update.subprocess, 'run', run), \
                 mock.patch.object(linux_update.shutil, 'which', return_value=None), \
                 mock.patch.object(linux_update, '_is_root', return_value=True):
@@ -184,7 +190,7 @@ class ApplyUpdateTest(unittest.TestCase):
             return path
 
         with mock.patch.object(linux_update, 'exe_path', return_value=Path('/usr/bin/x')), \
-                mock.patch('utils.update_check.download_asset', _download), \
+                mock.patch('utils.linux_update.download_asset', _download), \
                 mock.patch.object(linux_update.subprocess, 'run',
                                   return_value=_Proc(0)), \
                 mock.patch.object(linux_update.shutil, 'which', return_value=None), \
@@ -206,16 +212,99 @@ class ApplyUpdateTest(unittest.TestCase):
             exe = Path(tmp) / 'TgWsProxy'
             exe.write_bytes(b'old')
             with mock.patch.object(linux_update, 'exe_path', return_value=exe), \
-                    mock.patch('utils.update_check.download_asset', _download):
+                    mock.patch('utils.linux_update.download_asset', _download):
                 linux_update.apply_update('binary', 'https://x.invalid/a', digest='sha256:ab')
 
         self.assertEqual(seen['digest'], 'sha256:ab')
 
     def test_download_failure_is_reported(self):
-        with mock.patch.object(linux_update, 'exe_path', return_value=Path('/tmp/x')), \
-                mock.patch('utils.update_check.download_asset',
-                           side_effect=OSError('boom')):
-            self.assertEqual(linux_update.apply_update('binary', 'https://x.invalid/a'), 'boom')
+        for error in (OSError('boom'), ValueError('invalid checksum'), IncompleteRead(b'partial', 100)):
+            with self.subTest(error=error), \
+                    mock.patch.object(linux_update, 'exe_path', return_value=Path('/tmp/x')), \
+                    mock.patch.object(linux_update, 'download_asset', side_effect=error), \
+                    mock.patch.object(linux_update, '_run_install') as install:
+                self.assertEqual(linux_update.apply_update('binary', 'https://x.invalid/a'), str(error))
+                install.assert_not_called()
+
+    def test_corrupt_download_never_changes_binary_or_runs_a_package_manager(self):
+        for kind in ('binary', 'deb', 'rpm'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                exe = Path(tmp) / 'TgWsProxy'
+                exe.write_bytes(b'old')
+                opener = mock.Mock()
+                opener.open.return_value = io.BytesIO(b'corrupt')
+                with mock.patch.object(linux_update, 'exe_path', return_value=exe), \
+                        mock.patch.object(update_check, 'build_github_opener', return_value=opener), \
+                        mock.patch.object(linux_update, '_run_install') as install:
+                    error = linux_update.apply_update(kind, 'https://example.invalid/asset',
+                                                     digest='sha256:' + '0' * 64)
+                self.assertIn('SHA-256', error)
+                install.assert_not_called()
+                self.assertEqual(exe.read_bytes(), b'old')
+                self.assertEqual(list(Path(tmp).iterdir()), [exe])
+
+    def test_verified_download_is_installed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / 'TgWsProxy'
+            exe.write_bytes(b'old')
+            opener = mock.Mock()
+            opener.open.return_value = io.BytesIO(b'new')
+            with mock.patch.object(linux_update, 'exe_path', return_value=exe), \
+                    mock.patch.object(update_check, 'build_github_opener', return_value=opener):
+                self.assertIsNone(linux_update.apply_update(
+                    'binary', 'https://example.invalid/asset',
+                    digest='sha256:' + hashlib.sha256(b'new').hexdigest(),
+                ))
+            self.assertEqual(exe.read_bytes(), b'new')
+            self.assertEqual(list(Path(tmp).iterdir()), [exe])
+
+    def test_install_timeout_cleans_download_directory(self):
+        holder = {}
+
+        def download(url, dest_dir, **kwargs):
+            holder['directory'] = dest_dir
+            path = dest_dir / 'update.deb'
+            path.write_bytes(b'package')
+            return path
+
+        with mock.patch.object(linux_update, 'download_asset', side_effect=download), \
+                mock.patch.object(linux_update, '_run_install', side_effect=subprocess.TimeoutExpired('apt-get', 600)):
+            self.assertIsNotNone(linux_update.apply_update('deb', 'https://example.invalid/asset'))
+        self.assertFalse(holder['directory'].exists())
+
+
+@unittest.skipUnless(sys.platform == 'linux', 'Linux install(1) and executable replacement')
+class ElevatedBinaryReplacementTest(unittest.TestCase):
+    def test_replaces_a_running_executable_with_special_characters_in_its_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            exe = directory / 'app $(touch unwanted); тест'
+            src = directory / 'download with spaces'
+            shutil.copy2(shutil.which('sleep'), exe)
+            src.write_bytes(b'new')
+            process = subprocess.Popen([str(exe), '30'])
+            try:
+                with mock.patch.object(linux_update, '_is_root', return_value=True):
+                    cmd = linux_update.replace_binary_cmd(src, exe)
+                self.assertEqual(subprocess.run(cmd, cwd=tmp, timeout=10).returncode, 0)
+                self.assertIsNone(process.poll())
+                self.assertEqual(exe.read_bytes(), b'new')
+                self.assertEqual(stat.S_IMODE(exe.stat().st_mode), 0o755)
+                self.assertEqual(set(directory.iterdir()), {exe, src})
+            finally:
+                process.terminate()
+                process.wait(timeout=5)
+
+    def test_failed_copy_preserves_the_old_binary_and_removes_the_stage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / 'app'
+            exe.write_bytes(b'old')
+            with mock.patch.object(linux_update, '_is_root', return_value=True):
+                cmd = linux_update.replace_binary_cmd(Path(tmp) / 'missing', exe)
+            result = subprocess.run(cmd, stderr=subprocess.PIPE, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(exe.read_bytes(), b'old')
+            self.assertEqual(list(Path(tmp).iterdir()), [exe])
 
 
 class ExternalCommandsEnvTest(unittest.TestCase):
@@ -274,6 +363,42 @@ class RelaunchEnvTest(unittest.TestCase):
             with mock.patch.object(linux_update.sys, '_MEIPASS', None, create=True):
                 out = linux_update.relaunch_env()
         self.assertEqual(out, env)
+
+
+class RestartAfterUpdateTest(unittest.TestCase):
+    def test_restart_releases_resources_before_launch_and_preserves_arguments(self):
+        with mock.patch.dict(sys.modules, {'pystray': mock.Mock()}):
+            import linux
+
+        events = []
+        exe = str(Path(tempfile.gettempdir()) / 'proxy')
+        with mock.patch.object(linux, 'stop_proxy', side_effect=lambda: events.append('stop')), \
+                mock.patch.object(linux, 'release_lock', side_effect=lambda: events.append('unlock')), \
+                mock.patch.object(linux_update, 'exe_path', return_value=Path(exe)), \
+                mock.patch.object(linux, 'relaunch_env', return_value={'PATH': '/usr/bin'}), \
+                mock.patch.object(sys, 'argv', ['proxy', '--portable']), \
+                mock.patch.object(linux.subprocess, 'Popen', side_effect=lambda *a, **k: events.append('launch')) as launch, \
+                mock.patch.object(linux.os, '_exit', side_effect=lambda code: events.append('exit')):
+            linux._restart_after_update()
+        self.assertEqual(events, ['stop', 'unlock', 'launch', 'exit'])
+        self.assertEqual(launch.call_args[0][0], [exe, '--portable'])
+        self.assertEqual(launch.call_args[1]['env'], {'PATH': '/usr/bin'})
+
+    def test_launch_failure_recovers_the_running_proxy_instead_of_exiting(self):
+        with mock.patch.dict(sys.modules, {'pystray': mock.Mock()}):
+            import linux
+
+        with ExitStack() as stack:
+            mocks = {name: stack.enter_context(mock.patch.object(linux, name)) for name in (
+                'stop_proxy', 'release_lock', 'acquire_lock', 'start_proxy', '_show_error',
+            )}
+            exit_process = stack.enter_context(mock.patch.object(linux.os, '_exit'))
+            stack.enter_context(mock.patch.object(linux.subprocess, 'Popen', side_effect=OSError('launch failed')))
+            linux._restart_after_update()
+        mocks['acquire_lock'].assert_called_once_with()
+        mocks['start_proxy'].assert_called_once_with(linux._config, mocks['_show_error'])
+        mocks['_show_error'].assert_called_once()
+        exit_process.assert_not_called()
 
 
 if __name__ == '__main__':
