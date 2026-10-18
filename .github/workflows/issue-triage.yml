@@ -78,20 +78,23 @@ jobs:
 
           log_old = log_bytes.decode("utf-8",errors="replace").splitlines()
 
+          worker_end = False
+          cfproxy_end = False
+
           log = []
           for line in reversed(log_old):
               line = line[20:]
               log.append(line)
-              if "INFO   tg-ws-tray  Starting proxy" in line:
+              if "CF proxy:      enabled" in line:
+                  cfproxy_end = True
+              elif "CF worker:     enabled" in line:
+                  worker_end = True
+              elif "INFO   tg-ws-tray  Starting proxy" in line:
                   break
-
-          if "CF worker:     enabled" not in log[-9]:
-              worker_end = False
-          else:
-              worker_end = True
 
           secret_false = 0
           timeouterror = 0
+          reset_error = 0 
 
           for line in log :
               if "(wrong secret or proto)" in line:
@@ -104,18 +107,34 @@ jobs:
                   if timeouterror >= 20:
                       if worker_end is False:
                           print ("""Timeout error при CF-прокси - проблема с вашей стороны. РКН/сторонние впны/прокси и т.п. 
-                          1. Если используете запрет, попробуйте его выключить и проверьте работу. Если работает, то добавьте в файл list-exclude-user: co.uk
-                          2. Если не помогло, то уберите запись из прошлого пункта и добавьте в файл list-general-user: co.uk
+                          1. Если используете запрет, попробуйте его выключить и проверьте работу. Если работает, то добавьте в файл `list-exclude-user`: **`co.uk`**
+                          2. Если не помогло, то уберите запись из прошлого пункта и добавьте в файл `list-general-user`: **`co.uk`**
                           3. Попробуйте настроить https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/RU/CfWorker.md
                           """)
                       else:
                           print ("""Timeout error при CF-прокси - проблема с вашей стороны. РКН/сторонние впны/прокси и т.п. 
-                          1. Если используете запрет, попробуйте его выключить и проверьте работу. Если работает, то добавьте в файл list-exclude-user: co.uk
-                          2. Если не помогло, то уберите запись из прошлого пункта и добавьте в файл list-general-user: co.uk
+                          1. Если используете запрет, попробуйте его выключить и проверьте работу. Если работает, то добавьте в файл `list-exclude-user`: **`co.uk`**
+                          2. Если не помогло, то уберите запись из прошлого пункта и добавьте в файл `list-general-user`: **`co.uk`**
                           """)                            
                       break
+              elif "ConnectionResetError" in line:
+                  reset_error += 1 
+                  if reset_error >= 20:
+                      print(""" Проверьте включенли WARP/VPN, если выключены то: 
+                      1. Если используете запрет, добавьте в файл `list-general-user`: **`co.uk`**
+                      2. Попробуйте настроить https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/RU/CfWorker.md
+                      """)
           else: 
-              print(default_text)
+              if cfproxy_end is True:
+                  print(default_text)
+              else:
+                  print("""CF-прокси включите
+                  Если в логах будет TimeoutError, то:
+                  Timeout error при CF-прокси - проблема с вашей стороны. РКН/сторонние впны/прокси и т.п.
+                  1) Если используете запрет, попробуйте его выключить и проверьте работу. Если работает, то добавьте в файл `list-exclude-user`: **`co.uk`**
+                  2) Если не помогло, то уберите запись из прошлого пункта и добавьте в файл `list-general-user`: **`co.uk`**
+                  3) Попробуйте настроить https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/RU/CfWorker.md
+                  """)
           PY
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
