@@ -105,6 +105,8 @@ jobs:
               elif "TimeoutError" in line: 
                   timeouterror += 1 
                   if timeouterror >= 20:
+                      if cfproxy_end is False:
+                          break
                       if worker_end is False:
                           print ("""Timeout error при CF-прокси - проблема с вашей стороны. РКН/сторонние впны/прокси и т.п. 
                           1. Если используете запрет, попробуйте его выключить и проверьте работу. Если работает, то добавьте в файл `list-exclude-user`: **`co.uk`**
