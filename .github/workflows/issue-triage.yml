@@ -49,7 +49,7 @@ jobs:
         run: |
           {
             echo "com<<EOF"
-            python github/scripts/check_log.py
+            python .github/scripts/check_log.py
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
