@@ -12,6 +12,7 @@ import logging
 
 from typing import Dict, FrozenSet, NamedTuple, Optional, Tuple
 from .stats import stats
+from .utils import set_x25519
 
 try:
     from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
@@ -272,7 +273,7 @@ async def probe_appdata_len(domain: str, port: int = 443,
     writer = None
     try:
         ctx = ssl.create_default_context()
-        ctx.set_ecdh_curve('X25519')
+        set_x25519(ctx)
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         ctx.minimum_version = ssl.TLSVersion.TLSv1_3
