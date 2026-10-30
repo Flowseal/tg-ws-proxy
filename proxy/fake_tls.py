@@ -5,12 +5,18 @@ import hmac
 import hashlib
 import os
 import random
+import ssl
 import struct
 import time
 import logging
 
-from typing import Optional, Tuple
+from typing import Dict, FrozenSet, NamedTuple, Optional, Tuple
 from .stats import stats
+
+try:
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+except ImportError:
+    X25519PrivateKey = None
 
 
 log = logging.getLogger('tg-mtproto-proxy')
@@ -32,26 +38,46 @@ TIMESTAMP_TOLERANCE = 120
 
 TLS_APPDATA_MAX = 16384
 
+EXT_SUPPORTED_VERSIONS = 0x002b
+EXT_KEY_SHARE = 0x0033
+
+GROUP_X25519 = 0x001d
+GROUP_X25519MLKEM768 = 0x11ec
+
+X25519_KEY_LEN = 32
+X25519MLKEM768_CLIENT_SHARE_LEN = 1216
+MLKEM768_CIPHERTEXT_LEN = 1088
+
+# TLS 1.3 suites in the order a typical server picks them from the client list
+CIPHER_PREFERENCE = (0x1301, 0x1303, 0x1302)
+
+# Bounds for the single ApplicationData record that follows CCS; the low bound
+# matches the smallest record telemt emits, the high one is the TLS limit
+APPDATA_MIN = 64
+# Without a site profile stay near the 64-byte record telemt passed DPI with,
+# far from the 1900-2100 bytes of the classic MTProxy answer
+FALLBACK_APPDATA_RANGE = (64, 160)
+
+SERVER_HELLO_DELAY = (0.008, 0.024)
+
+PROFILE_PROBE_TIMEOUT = 5
+
 
 _CCS_FRAME = b'\x14\x03\x03\x00\x01\x01'
 
-_SERVER_HELLO_TEMPLATE = bytearray(
-    b'\x16\x03\x03\x00\x7a'
-    b'\x02\x00\x00\x76'
-    b'\x03\x03'
-    + b'\x00' * 32
-    + b'\x20'
-    + b'\x00' * 32
-    + b'\x13\x01\x00'
-    + b'\x00\x2e'
-    + b'\x00\x33\x00\x24\x00\x1d\x00\x20'
-    + b'\x00' * 32
-    + b'\x00\x2b\x00\x02\x03\x04'
-)
-
 _SH_RANDOM_OFF = 11
-_SH_SESSID_OFF = 44
-_SH_PUBKEY_OFF = 89
+
+# Size of the first encrypted record the masking site sends after ServerHello;
+# set once at startup by probe_appdata_len()
+_profiled_appdata_len: Optional[int] = None
+
+
+class ClientHelloInfo(NamedTuple):
+    cipher_suites: FrozenSet[int]
+    key_shares: Dict[int, int]  # named group -> key_exchange length
+
+
+_EMPTY_HELLO_INFO = ClientHelloInfo(frozenset(), {})
 
 
 def verify_client_hello(data: bytes, secret: bytes) -> Optional[Tuple[bytes, bytes, int]]:
@@ -88,17 +114,114 @@ def verify_client_hello(data: bytes, secret: bytes) -> Optional[Tuple[bytes, byt
     return client_random, session_id, timestamp
 
 
-def build_server_hello(secret: bytes, client_random: bytes, session_id: bytes) -> bytes:
-    sh = bytearray(_SERVER_HELLO_TEMPLATE)
-    sh[_SH_SESSID_OFF:_SH_SESSID_OFF + 32] = session_id
-    sh[_SH_PUBKEY_OFF:_SH_PUBKEY_OFF + 32] = os.urandom(32)
+def parse_client_hello(data: bytes) -> ClientHelloInfo:
+    """Extract offered cipher suites and key_share groups from a ClientHello.
 
-    ccs = _CCS_FRAME
-    encrypted_size = random.randint(1900, 2100)
-    encrypted_data = os.urandom(encrypted_size)
-    app_record = b'\x17\x03\x03' + struct.pack('>H', encrypted_size) + encrypted_data
+    Returns empty info on malformed input so the caller falls back to the
+    plain X25519 / TLS_AES_128_GCM_SHA256 answer.
+    """
+    try:
+        pos = 5 + 4 + 2 + CLIENT_RANDOM_LEN
+        pos += 1 + data[pos]
 
-    response = bytes(sh) + ccs + app_record
+        suites_len = struct.unpack_from('>H', data, pos)[0]
+        pos += 2
+        suites_end = pos + suites_len
+        if suites_end > len(data):
+            return _EMPTY_HELLO_INFO
+        suites = frozenset(
+            struct.unpack_from('>H', data, off)[0]
+            for off in range(pos, suites_end - 1, 2))
+        pos = suites_end
+
+        pos += 1 + data[pos]
+
+        ext_total = struct.unpack_from('>H', data, pos)[0]
+        pos += 2
+        ext_end = min(pos + ext_total, len(data))
+        key_shares: Dict[int, int] = {}
+        while pos + 4 <= ext_end:
+            ext_type, ext_len = struct.unpack_from('>HH', data, pos)
+            pos += 4
+            if ext_type == EXT_KEY_SHARE and pos + 2 <= ext_end:
+                shares_end = min(pos + 2 + struct.unpack_from('>H', data, pos)[0],
+                                 ext_end)
+                off = pos + 2
+                while off + 4 <= shares_end:
+                    group, key_len = struct.unpack_from('>HH', data, off)
+                    off += 4 + key_len
+                    if off <= shares_end:
+                        key_shares.setdefault(group, key_len)
+            pos += ext_len
+    except (IndexError, struct.error):
+        return _EMPTY_HELLO_INFO
+
+    return ClientHelloInfo(suites, key_shares)
+
+
+def _select_cipher_suite(info: ClientHelloInfo) -> int:
+    for suite in CIPHER_PREFERENCE:
+        if suite in info.cipher_suites:
+            return suite
+    return CIPHER_PREFERENCE[0]
+
+
+def _x25519_public_key() -> bytes:
+    if X25519PrivateKey is not None:
+        return X25519PrivateKey.generate().public_key().public_bytes_raw()
+    # Real public keys are field elements below 2^255; keep the top bit clear
+    key = bytearray(os.urandom(X25519_KEY_LEN))
+    key[-1] &= 0x7f
+    return bytes(key)
+
+
+def _server_key_share(info: ClientHelloInfo) -> Tuple[int, bytes]:
+    # Mirror the hybrid post-quantum group when the client offers it, as
+    # current browsers and servers do; the client never derives keys from it
+    if info.key_shares.get(GROUP_X25519MLKEM768) == X25519MLKEM768_CLIENT_SHARE_LEN:
+        return GROUP_X25519MLKEM768, (os.urandom(MLKEM768_CIPHERTEXT_LEN)
+                                      + _x25519_public_key())
+    return GROUP_X25519, _x25519_public_key()
+
+
+def _appdata_len() -> int:
+    if _profiled_appdata_len is not None:
+        return _profiled_appdata_len
+    return random.randint(*FALLBACK_APPDATA_RANGE)
+
+
+def build_server_hello(secret: bytes, client_random: bytes, session_id: bytes,
+                       info: ClientHelloInfo = _EMPTY_HELLO_INFO) -> bytes:
+    """ServerHello + CCS + one ApplicationData record.
+
+    Telegram clients parse exactly these three records and check the HMAC
+    over all of them, so the shape must stay fixed while sizes may vary.
+    """
+    group, key_exchange = _server_key_share(info)
+    extensions = (
+        struct.pack('>HHH', EXT_SUPPORTED_VERSIONS, 2, 0x0304)
+        + struct.pack('>HHHH', EXT_KEY_SHARE, 4 + len(key_exchange),
+                      group, len(key_exchange))
+        + key_exchange
+    )
+
+    body = (
+        TLS_VERSION_12
+        + b'\x00' * 32
+        + bytes([len(session_id)]) + session_id
+        + struct.pack('>H', _select_cipher_suite(info))
+        + b'\x00'
+        + struct.pack('>H', len(extensions)) + extensions
+    )
+    message = b'\x02' + struct.pack('>I', len(body))[1:] + body
+    server_hello = (bytes([TLS_RECORD_HANDSHAKE]) + TLS_VERSION_12
+                    + struct.pack('>H', len(message)) + message)
+
+    appdata_len = _appdata_len()
+    app_record = (bytes([TLS_RECORD_APPDATA]) + TLS_VERSION_12
+                  + struct.pack('>H', appdata_len) + os.urandom(appdata_len))
+
+    response = server_hello + _CCS_FRAME + app_record
 
     hmac_input = client_random + response
     server_random = hmac.new(secret, hmac_input, hashlib.sha256).digest()
@@ -107,6 +230,84 @@ def build_server_hello(secret: bytes, client_random: bytes, session_id: bytes) -
     final[_SH_RANDOM_OFF:_SH_RANDOM_OFF + 32] = server_random
 
     return bytes(final)
+
+
+def set_profiled_appdata_len(length: Optional[int]) -> None:
+    global _profiled_appdata_len
+    if length is None:
+        _profiled_appdata_len = None
+    else:
+        _profiled_appdata_len = max(APPDATA_MIN, min(length, TLS_APPDATA_MAX))
+
+
+def first_appdata_record_len(data: bytes) -> Optional[int]:
+    """Length of the first ApplicationData record in a server's first flight.
+
+    Returns None while more data is needed, 0 if the flight cannot contain
+    one (alert, TLS 1.2 handshake, garbage).
+    """
+    pos = 0
+    while pos + 5 <= len(data):
+        rtype = data[pos]
+        rec_len = struct.unpack_from('>H', data, pos + 3)[0]
+        if rtype == TLS_RECORD_APPDATA:
+            return rec_len
+        if rtype not in (TLS_RECORD_HANDSHAKE, TLS_RECORD_CCS):
+            return 0
+        pos += 5 + rec_len
+    return None
+
+
+async def probe_appdata_len(domain: str, port: int = 443,
+                            timeout: float = PROFILE_PROBE_TIMEOUT) -> Optional[int]:
+    """Measure the first encrypted record the masking site sends after ServerHello.
+
+    Only the raw first flight is read; the TLS handshake is never completed.
+    """
+    if not getattr(ssl, 'HAS_TLSv1_3', False):
+        log.warning("Fake TLS profile: local ssl lacks TLS 1.3, "
+                    "using random record sizes")
+        return None
+
+    writer = None
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+        ctx.set_alpn_protocols(['h2', 'http/1.1'])
+        outgoing = ssl.MemoryBIO()
+        tls = ctx.wrap_bio(ssl.MemoryBIO(), outgoing, server_hostname=domain)
+        try:
+            tls.do_handshake()
+        except ssl.SSLWantReadError:
+            pass
+        client_hello = outgoing.read()
+
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(domain, port), timeout=timeout)
+        writer.write(client_hello)
+        await writer.drain()
+
+        flight = bytearray()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            chunk = await asyncio.wait_for(
+                reader.read(16384), timeout=max(0.1, deadline - loop.time()))
+            if not chunk:
+                return None
+            flight.extend(chunk)
+            length = first_appdata_record_len(bytes(flight))
+            if length is not None:
+                return length or None
+    except Exception as exc:
+        log.warning("Fake TLS profile: cannot probe %s:%d: %r",
+                    domain, port, exc)
+        return None
+    finally:
+        if writer is not None:
+            writer.close()
 
 
 def wrap_tls_record(data: bytes) -> bytes:
