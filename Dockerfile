@@ -45,5 +45,17 @@ USER app
 
 EXPOSE 1443/tcp
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/bin/sh", "-lc", "set -eu; args=\"--host ${TG_WS_PROXY_HOST} --port ${TG_WS_PROXY_PORT}\"; for dc in ${TG_WS_PROXY_DC_IPS}; do args=\"$args --dc-ip $dc\"; done; if [ -n \"${TG_WS_PROXY_SECRET}\" ]; then args=\"$args --secret ${TG_WS_PROXY_SECRET}\"; fi; if [ -n \"${TG_WS_PROXY_CF_WORKER}\" ]; then args=\"$args --cfproxy-worker-domain ${TG_WS_PROXY_CF_WORKER}\"; fi; if [ \"${TG_WS_PROXY_NO_SECURE}\" = \"True\" ]; then args=\"$args --no-secure \"; fi; exec /opt/venv/bin/python -u proxy/tg_ws_proxy.py $args \"$@\"", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/bin/sh", "-lc", "set -eu; args=\"\
+    --host ${TG_WS_PROXY_HOST} \
+    --port ${TG_WS_PROXY_PORT}\"; \
+    for dc in ${TG_WS_PROXY_DC_IPS}; \
+        do args=\"$args --dc-ip $dc\"; \
+    done; \
+    if [ -n \"${TG_WS_PROXY_SECRET}\" ]; \
+        then args=\"$args --secret ${TG_WS_PROXY_SECRET}\"; fi; \
+    if [ -n \"${TG_WS_PROXY_CF_WORKER}\" ]; \
+        then args=\"$args --cfproxy-worker-domain ${TG_WS_PROXY_CF_WORKER}\"; fi; \
+    if [ \"${TG_WS_PROXY_NO_SECURE}\" = \"True\" ]; \ 
+        then args=\"$args --no-secure \"; fi; \
+    exec /opt/venv/bin/python -u proxy/tg_ws_proxy.py $args \"$@\"", "--"]
 CMD []
