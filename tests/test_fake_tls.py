@@ -8,6 +8,7 @@ import struct
 import tempfile
 import time
 import unittest
+from unittest.mock import AsyncMock, Mock, patch
 
 from proxy import fake_tls
 from proxy.fake_tls import (
@@ -337,6 +338,38 @@ def _self_signed_context() -> ssl.SSLContext:
 
 @unittest.skipUnless(getattr(ssl, 'HAS_TLSv1_3', False), 'needs TLS 1.3 in ssl')
 class ProbeAppdataLenTest(unittest.TestCase):
+    def test_continuous_records_do_not_extend_probe_timeout(self):
+        async def scenario():
+            async def read(_size):
+                await asyncio.sleep(0.01)
+                return _record(TLS_RECORD_CCS, 1)
+
+            reader = Mock(read=AsyncMock(side_effect=read))
+            writer = Mock(drain=AsyncMock())
+            with patch.object(fake_tls.asyncio, 'open_connection',
+                              AsyncMock(return_value=(reader, writer))):
+                result = await asyncio.wait_for(
+                    probe_appdata_len('localhost', timeout=0.1), timeout=2)
+            self.assertIsNone(result)
+            self.assertGreater(reader.read.await_count, 1)
+            writer.close.assert_called_once()
+
+        asyncio.run(scenario())
+
+    def test_blocked_drain_obeys_probe_timeout(self):
+        async def scenario():
+            reader = Mock(read=AsyncMock())
+            writer = Mock(drain=AsyncMock(side_effect=asyncio.Event().wait))
+            with patch.object(fake_tls.asyncio, 'open_connection',
+                              AsyncMock(return_value=(reader, writer))):
+                result = await asyncio.wait_for(
+                    probe_appdata_len('localhost', timeout=0.1), timeout=2)
+            self.assertIsNone(result)
+            reader.read.assert_not_called()
+            writer.close.assert_called_once()
+
+        asyncio.run(scenario())
+
     def test_measures_first_encrypted_record_of_real_tls13_server(self):
         async def scenario():
             server = await asyncio.start_server(

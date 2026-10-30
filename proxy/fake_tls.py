@@ -284,17 +284,21 @@ async def probe_appdata_len(domain: str, port: int = 443,
             pass
         client_hello = outgoing.read()
 
+        # Share one deadline across connecting, sending, and reading the flight.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(domain, port), timeout=timeout)
         writer.write(client_hello)
-        await writer.drain()
+        await asyncio.wait_for(writer.drain(), timeout=deadline - loop.time())
 
         flight = bytearray()
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout
         while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError
             chunk = await asyncio.wait_for(
-                reader.read(16384), timeout=max(0.1, deadline - loop.time()))
+                reader.read(16384), timeout=remaining)
             if not chunk:
                 return None
             flight.extend(chunk)
