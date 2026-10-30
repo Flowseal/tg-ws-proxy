@@ -8,3 +8,6 @@ captures/
 .externalNativeBuild/
 .cxx/
 app/src/main/python/
+keystore.properties
+*.jks
+*.keystore

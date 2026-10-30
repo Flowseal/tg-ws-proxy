@@ -1,7 +1,7 @@
 package com.tgwsproxy
 
 import android.app.Application
-import chaquo.chaquopy.Python
+import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 
 class App : Application() {
@@ -10,5 +10,7 @@ class App : Application() {
         if (!Python.isStarted()) {
             Python.start(AndroidPlatform(this))
         }
+        Python.getInstance().getModule("tg_android")
+            .callAttr("init_logging", LogFiles.dir(this).absolutePath)
     }
 }
