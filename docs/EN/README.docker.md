@@ -35,13 +35,14 @@ tg://proxy?server=172.17.0.2&port=1443&secret=dd68f127db1d...
 
 All settings are configured using environment variables when running the container:
 
-| Variable                | Description                      | Default                           |
-| ----------------------- | -------------------------------- | --------------------------------- |
-| `TG_WS_PROXY_HOST`      | Address for incoming connections | `0.0.0.0`                        |
-| `TG_WS_PROXY_PORT`      | Port inside the container        | `1443`                           |
-| `TG_WS_PROXY_SECRET`    | Secret key                       | `random`                         |
-| `TG_WS_PROXY_DC_IPS`    | DC number:IP pairs separated by space | `2:149.154.167.220 4:149.154.167.220` |
-| `TG_WS_PROXY_CF_WORKER` | Cloudflare Worker domain         | `None`                           |
+| Variable                | Description                                        | Default                               |
+| ----------------------- | -------------------------------------------------- | ------------------------------------- |
+| `TG_WS_PROXY_HOST`      | Address for incoming connections                   | `0.0.0.0`                             |
+| `TG_WS_PROXY_PORT`      | Port inside the container                          | `1443`                                |
+| `TG_WS_PROXY_SECRET`    | Secret key                                         | `random`                              |
+| `TG_WS_PROXY_DC_IPS`    | DC number:IP pairs separated by space              | `2:149.154.167.220 4:149.154.167.220` |
+| `TG_WS_PROXY_CF_WORKER` | Cloudflare Worker domain                           | `None`                                |
+| `TG_WS_PROXY_NO_SECURE` | Use 80 port for CF-proxy and CF-worker connections | `False`                               |
 
 Example with manually specified secret:
 
