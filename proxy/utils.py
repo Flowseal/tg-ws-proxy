@@ -149,6 +149,7 @@ def create_ssl_context(*, check_hostname: bool = True) -> ssl.SSLContext:
               if bundle_dir else certifi.where())
     context = ssl.create_default_context(cafile=cafile)
     context.load_default_certs()
+    context.set_ecdh_curve('X25519')
     context.check_hostname = check_hostname
     return context
 

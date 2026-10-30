@@ -272,6 +272,7 @@ async def probe_appdata_len(domain: str, port: int = 443,
     writer = None
     try:
         ctx = ssl.create_default_context()
+        ctx.set_ecdh_curve('X25519')
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         ctx.minimum_version = ssl.TLSVersion.TLSv1_3

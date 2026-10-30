@@ -366,6 +366,9 @@ class ProbeAppdataLenTest(unittest.TestCase):
                     probe_appdata_len('localhost', timeout=0.1), timeout=2)
             self.assertIsNone(result)
             reader.read.assert_not_called()
+            hello = writer.write.call_args[0][0]
+            self.assertEqual(parse_client_hello(hello).key_shares,
+                             {GROUP_X25519: X25519_KEY_LEN})
             writer.close.assert_called_once()
 
         asyncio.run(scenario())
