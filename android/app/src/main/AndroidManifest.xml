@@ -11,6 +11,8 @@
     <application
         android:name=".App"
         android:label="TG WS Proxy"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.TgWsProxy">
 
         <activity
