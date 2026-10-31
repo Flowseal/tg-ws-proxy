@@ -5,7 +5,7 @@ import urllib.request as request
 url = os.environ["LOG_URL"]
 path_answer = ".github/scripts/answers"
 
-for index in range(0,3):
+for _ in range(0,3):
     try:
         with request.urlopen(url,timeout=30.0) as r:
             log_bytes = r.read()

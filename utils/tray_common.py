@@ -225,7 +225,6 @@ def save_config(cfg: dict) -> None:
 
 # logging
 
-_LOG_FMT_FILE = "%(asctime)s  %(levelname)-5s  %(name)s  %(message)s"
 _LOG_FMT_CONSOLE = "%(asctime)s  %(levelname)-5s  %(message)s"
 
 
@@ -238,7 +237,6 @@ def setup_logging(verbose: bool = False, log_max_mb: float = 5) -> None:
 
     fh = build_log_handler(str(LOG_FILE), log_max_mb=log_max_mb, backups=1)
     fh.setLevel(logging.DEBUG)
-    fh.setFormatter(logging.Formatter(_LOG_FMT_FILE, datefmt="%Y-%m-%d %H:%M:%S"))
     fh.addFilter(DomainCensorFilter())
     root.addHandler(fh)
 

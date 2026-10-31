@@ -34,7 +34,6 @@ jobs:
           python-version: "3.14"
 
       - name: Clone folder 
-        if: steps.log.outputs.found == 'true'
         uses: actions/checkout@v4
         with:
           sparse-checkout: |

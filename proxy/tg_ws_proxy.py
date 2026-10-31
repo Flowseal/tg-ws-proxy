@@ -695,7 +695,6 @@ def main():
             log_max_mb=args.log_max_mb,
             backups=args.log_backups,
         )
-        fh.setFormatter(log_fmt)
         fh.addFilter(DomainCensorFilter())
         root.addHandler(fh)
 
