@@ -6,37 +6,55 @@ on:
 
 permissions:
   issues: write
+  contents: read
 
 jobs:
   comment:
     if: contains(github.event.issue.labels.*.name, 'bug')
     runs-on: ubuntu-latest
     steps:
+      - name: Check for availability log file
+        id: log
+        env: 
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          if [[ "$ISSUE_BODY" =~ (https://github\.com/user-attachments/files/[^[:space:]]+\.log) ]]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "url=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+            echo "Log file found"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "Log file not found"
+          fi
+
+      - name: Install python
+        if: steps.log.outputs.found == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Clone folder 
+        if: steps.log.outputs.found == 'true'
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts/*
+          sparse-checkout-cone-mode: false
+
+      - name: Start check log
+        if: steps.log.outputs.found == 'true'
+        id: comment
+        env:
+          LOG_URL: ${{ steps.log.outputs.url }}
+        run: |
+          {
+            echo "com<<EOF"
+            python .github/scripts/check_log.py
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Comment on new issue
         uses: peter-evans/create-or-update-comment@v5
         with:
           issue-number: ${{ github.event.issue.number }}
-          body: |
-            ### Проверьте две вещи:
-            - вы на последней версии: [Releases](https://github.com/Flowseal/tg-ws-proxy/releases)
-            - запускали по инструкции для своей ОС: [Быстрый старт](https://github.com/Flowseal/tg-ws-proxy#навигация)
-
-            ## Решение частых проблем:
-
-            **Q**: Не запускается, падает с ошибкой, не работает как раньше после обновления?  
-            **A**:
-            1. Удалите всё в папке Temp (или хотя бы всё, что начинается с _MEI) 
-            2. Запускайте от имени админа
-            3. Попробуйте Win7 версию (если вы пользователь Windows)
-            4. Попробуйте отключить антивирус (если помогло, то добавьте exe в исключения). Не забудьте включить антивирус обратно.
-
-            ###
-
-            **Q**: Не грузит медиа? (фото/видео/стикеры)  
-            **A**: Удалите в настройках прокси в поле **DC → IP** всё, кроме `4:149.154.167.220`. Если это не помогло, полностью очистите это поле.
-
-
-            #### Если проблема решена, то закройте Issue
-
-            ### Если проблема осталась, пожалуйста, приложите по возможности логи.
-            Сделать это можно через иконку в трее -> Пкм -> Открыть логи. Сохраните логи в файл и приложите его сюда.
+          body-path: ${{ steps.log.outputs.found == 'true' && steps.comment.outputs.com || '.github/scripts/answers/default.md' }}
