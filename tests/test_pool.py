@@ -9,7 +9,7 @@ from unittest import mock
 from proxy.config import proxy_config
 from proxy.pool import _CfWorkerPool, _WsPool
 from proxy.raw_websocket import RawWebSocket, WsHandshakeError
-from proxy.utils import ws_domains
+from proxy.utils import DC_DEFAULT_IPS, ws_domains
 
 
 class _StopRotation(Exception):
@@ -242,6 +242,154 @@ class WsPoolTest(unittest.IsolatedAsyncioTestCase):
 
 
 class CfWorkerPoolTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.pool = _CfWorkerPool()
+        self.pool.WS_POOL_CHECK_INTERVAL = .01
+        for name, value in [
+                ('pool_size', 4),
+                ('dc_redirects', {dc: ip for dc, ip in DC_DEFAULT_IPS.items() if dc != 2}),
+                ('cfproxy_worker_domains', ['worker.example'])]:
+            patcher = mock.patch.object(proxy_config, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.addAsyncCleanup(self.pool.close)
+
+    async def wait_for(self, predicate):
+        async def wait():
+            while not predicate():
+                await asyncio.sleep(.001)
+        await asyncio.wait_for(wait(), 1)
+
+    async def test_failed_warmup_recovers_without_new_client_requests(self):
+        ready = _open_ws()
+        self.pool.REFILL_BACKOFF_INITIAL = .03
+        with mock.patch.object(self.pool, '_connect_one',
+                               side_effect=[None, (ready, 'worker.example')]) as dial:
+            await self.pool.warmup()
+            await self.wait_for(lambda: 2 in self.pool._refill_after)
+            self.assertFalse(self.pool._refilling)
+            await self.wait_for(lambda: bool(self.pool._idle.get(2)))
+            self.assertEqual(dial.await_count, 2)
+            self.assertIs(self.pool._idle[2][0][0], ready)
+            self.assertNotIn(2, self.pool._refill_failures)
+            self.assertNotIn(2, self.pool._refill_after)
+
+    async def test_stale_connections_are_replaced(self):
+        for state in ('expired', 'eof', 'exception', 'closed', 'closing'):
+            with self.subTest(state=state):
+                stale, ready = _open_ws(), _open_ws()
+                created = time.monotonic()
+                if state == 'expired':
+                    created -= self.pool.WS_POOL_MAX_AGE
+                elif state == 'eof':
+                    stale.reader.feed_eof()
+                elif state == 'exception':
+                    stale.reader.set_exception(ConnectionResetError())
+                elif state == 'closed':
+                    stale._closed = True
+                else:
+                    stale.writer.transport.is_closing = lambda: True
+                self.pool._idle[2] = deque([(stale, created, 'worker.example')])
+                with mock.patch.object(self.pool, '_connect_one',
+                                       return_value=(ready, 'worker.example')):
+                    self.assertIsNone(await self.pool.get(2, '192.0.2.2', ['worker.example']))
+                    await self.wait_for(lambda: bool(self.pool._idle[2]))
+                    self.assertIs(self.pool._idle[2][0][0], ready)
+                    stale.writer.close.assert_called_once()
+                    await self.pool.close()
+
+    async def test_rotation_replaces_idle_connection_without_client_requests(self):
+        stale, ready = _open_ws(), _open_ws()
+        self.pool.WS_POOL_MAX_AGE = .05
+        self.pool._idle[2] = deque([(stale, time.monotonic(), 'worker.example')])
+        with mock.patch.object(self.pool, '_connect_one',
+                               return_value=(ready, 'worker.example')) as dial:
+            await self.pool.warmup()
+            await self.wait_for(lambda: stale.writer.close.called)
+            self.assertIs(self.pool._idle[2][0][0], ready)
+            stale.writer.close.assert_called_once()
+            dial.assert_awaited_once()
+
+    async def test_concurrent_misses_start_only_one_background_connection(self):
+        started = asyncio.Event()
+
+        async def connect(*args):
+            started.set()
+            await asyncio.Future()
+
+        with mock.patch.object(self.pool, '_connect_one', side_effect=connect) as dial:
+            for _ in range(10):
+                self.assertIsNone(await self.pool.get(2, '192.0.2.2', ['worker.example']))
+            await asyncio.wait_for(started.wait(), 1)
+            self.assertEqual(dial.await_count, 1)
+
+    async def test_failed_refills_use_capped_exponential_backoff(self):
+        ready = _open_ws()
+        self.pool.REFILL_BACKOFF_INITIAL = 1
+        self.pool.REFILL_BACKOFF_MAX = 2
+        with mock.patch.object(self.pool, '_connect_one',
+                               side_effect=[None, None, None, (ready, 'worker.example')]), \
+                mock.patch.object(self.pool, '_schedule_rotation'):
+            for failures, delay in enumerate((1, 2, 2), 1):
+                self.pool._refill_after.pop(2, None)
+                started = time.monotonic()
+                self.pool._schedule_refill(2, '192.0.2.2', ['worker.example'])
+                await asyncio.gather(*self.pool._refilling.values())
+                self.assertFalse(self.pool._refilling)
+                self.assertEqual(self.pool._refill_failures[2], failures)
+                self.assertGreaterEqual(self.pool._refill_after[2], started + delay)
+                self.assertLessEqual(self.pool._refill_after[2], time.monotonic() + delay)
+            self.pool._refill_after.pop(2)
+            self.pool._schedule_refill(2, '192.0.2.2', ['worker.example'])
+            await asyncio.gather(*self.pool._refilling.values())
+        self.assertIs(self.pool._idle[2][0][0], ready)
+        self.assertNotIn(2, self.pool._refill_failures)
+        self.assertNotIn(2, self.pool._refill_after)
+
+    async def test_misses_during_backoff_do_not_retry_and_shutdown_cancels_retry(self):
+        self.pool.REFILL_BACKOFF_INITIAL = 60
+        with mock.patch.object(self.pool, '_connect_one', return_value=None) as dial:
+            await self.pool.warmup()
+            await self.wait_for(lambda: 2 in self.pool._refill_after)
+            for _ in range(10):
+                self.assertIsNone(await self.pool.get(2, '192.0.2.2', ['worker.example']))
+            await asyncio.sleep(.01)
+            self.assertEqual(dial.await_count, 1)
+            self.assertFalse(self.pool._refilling)
+            self.assertTrue(self.pool._rotating)
+            tasks = list(self.pool._rotating.values())
+            await self.pool.close()
+            self.assertFalse(self.pool._refilling)
+            self.assertFalse(self.pool._rotating)
+            self.assertFalse(self.pool._refill_after)
+            self.assertFalse(self.pool._refill_failures)
+            self.assertTrue(all(task.done() for task in tasks))
+
+    async def test_hit_does_not_reset_failed_refill_backoff(self):
+        ready = _open_ws()
+        self.pool._idle[2] = deque([(ready, time.monotonic(), 'worker.example')])
+        self.pool._refill_failures[2] = 3
+        retry_at = time.monotonic() + 60
+        self.pool._refill_after[2] = retry_at
+        with mock.patch.object(self.pool, '_schedule_rotation'):
+            self.assertEqual(await self.pool.get(2, '192.0.2.2', ['worker.example']),
+                             (ready, 'worker.example'))
+        self.assertEqual(self.pool._refill_failures[2], 3)
+        self.assertEqual(self.pool._refill_after[2], retry_at)
+        self.assertFalse(self.pool._refilling)
+
+    async def test_zero_size_and_missing_worker_domains_do_not_start_refills(self):
+        with mock.patch.object(self.pool, '_connect_one') as dial:
+            with mock.patch.object(proxy_config, 'pool_size', 0):
+                await self.pool.warmup()
+                self.assertIsNone(await self.pool.get(2, '192.0.2.2', ['worker.example']))
+                self.assertFalse(self.pool._refilling)
+                self.assertFalse(self.pool._rotating)
+            self.assertIsNone(await self.pool.get(2, '192.0.2.2', []))
+            self.assertFalse(self.pool._refilling)
+            self.assertFalse(self.pool._rotating)
+            dial.assert_not_called()
+
     async def test_close_cancels_refill_and_closes_unclaimed_connections(self):
         pool = _CfWorkerPool()
         ready = _open_ws()
@@ -263,6 +411,9 @@ class CfWorkerPoolTest(unittest.IsolatedAsyncioTestCase):
             await pool.close()
         self.assertFalse(pool._idle)
         self.assertFalse(pool._refilling)
+        self.assertFalse(pool._rotating)
+        self.assertFalse(pool._refill_after)
+        self.assertFalse(pool._refill_failures)
         ready.writer.close.assert_called_once()
         idle.writer.close.assert_called_once()
 

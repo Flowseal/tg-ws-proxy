@@ -812,7 +812,8 @@ class HttpMultiplexTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(older), 1)
                 self.assertEqual(len(latest), 4)
                 for first, second in zip(latest[1:], latest[2:]):
-                    self.assertGreaterEqual(second - first, .015)
+                    # Account for subtraction roundoff at the threshold.
+                    self.assertGreaterEqual(second - first, .015 - 1e-9)
                 self.assertFalse(channel.pending)
                 self.assertFalse(channel.replay_pending)
                 self.assertEqual(self.lane.inflight, 0)

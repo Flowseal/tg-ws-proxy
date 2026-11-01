@@ -42,6 +42,8 @@ log = logging.getLogger('tg-mtproto-proxy')
 
 LISTENER_CHECK_INTERVAL = 5.0
 LISTENER_RESTART_DELAY = 1.0
+BAD_HANDSHAKE_DRAIN_TIMEOUT = 10.0
+BAD_HANDSHAKE_DRAIN_LIMIT = 64 * 1024
 cf_h2_pool: Optional[CfH2Pool] = None
 
 
@@ -251,6 +253,15 @@ def _build_crypto_ctx(client_dec_prekey_iv, secret, relay_init):
     return CryptoCtx(clt_decryptor, clt_encryptor, tg_encryptor, tg_decryptor)
 
 
+async def _drain_bad_handshake(reader):
+    remaining = BAD_HANDSHAKE_DRAIN_LIMIT
+    while remaining > 0:
+        chunk = await reader.read(min(4096, remaining))
+        if not chunk:
+            break
+        remaining -= len(chunk)
+
+
 async def _handle_client(reader, writer, secret: bytes):
     stats.connections_total += 1
     stats.connections_active += 1
@@ -272,8 +283,9 @@ async def _handle_client(reader, writer, secret: bytes):
             stats.connections_bad += 1
             log.warning("[%s] bad handshake (wrong secret or proto)", label)
             try:
-                while await clt_reader.read(4096):
-                    pass
+                await asyncio.wait_for(
+                    _drain_bad_handshake(clt_reader),
+                    timeout=BAD_HANDSHAKE_DRAIN_TIMEOUT)
             except Exception:
                 pass
             return
