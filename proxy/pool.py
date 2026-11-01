@@ -383,6 +383,8 @@ class _CfWorkerPool:
                     secure=not proxy_config.disable_secure)
                 return ws, worker_domain
             except Exception as exc:
+                log.debug("CF worker pool connect DC%d via %s for %s failed: %r",
+                          dc, worker_domain, fallback_dst, exc)
                 self.report_failure(worker_domain, exc)
         return None
 
