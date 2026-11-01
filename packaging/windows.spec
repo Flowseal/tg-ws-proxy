@@ -36,7 +36,6 @@ a = Analysis(
     excludes=[
         'PIL._avif',
         'PIL._webp',
-        'PIL._imagingtk',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -45,7 +44,7 @@ a = Analysis(
 )
 
 _PIL_EXCLUDE_PYDS = {
-    '_avif', '_webp', '_imagingtk',
+    '_avif', '_webp',
     'FpxImagePlugin', 'MicImagePlugin',
 }
 a.binaries = [
