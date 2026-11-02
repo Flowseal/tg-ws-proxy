@@ -306,6 +306,9 @@ def load_icon():
 _proxy_thread: Optional[threading.Thread] = None
 _async_stop: Optional[Tuple[asyncio.AbstractEventLoop, asyncio.Event]] = None
 _RESTART_STOP_TIMEOUT = 30.0
+# Tray actions run start/stop/restart from worker threads; serialise them so
+# repeated clicks cannot interleave and start two proxies
+_lifecycle_lock = threading.RLock()
 
 
 def _run_proxy_thread(show_error: Callable[[str], None]) -> None:
@@ -381,50 +384,56 @@ def apply_proxy_config(cfg: dict) -> bool:
 
 def start_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
     global _proxy_thread
-    if _proxy_thread and _proxy_thread.is_alive():
-        log.info("Proxy already running")
-        return
+    with _lifecycle_lock:
+        if _proxy_thread and _proxy_thread.is_alive():
+            log.info("Proxy already running")
+            return
 
-    if not apply_proxy_config(cfg):
-        from ui.i18n import t
-        on_error(t("error.dc_config"))
-        return
+        if not apply_proxy_config(cfg):
+            from ui.i18n import t
+            on_error(t("error.dc_config"))
+            return
 
-    pc = proxy_config
-    log.info("Starting proxy on %s:%d ...", pc.host, pc.port)
-    _proxy_thread = threading.Thread(
-        target=_run_proxy_thread, args=(on_error,), daemon=True, name="proxy"
-    )
-    _proxy_thread.start()
+        pc = proxy_config
+        log.info("Starting proxy on %s:%d ...", pc.host, pc.port)
+        _proxy_thread = threading.Thread(
+            target=_run_proxy_thread, args=(on_error,), daemon=True, name="proxy"
+        )
+        _proxy_thread.start()
 
 
 def stop_proxy() -> None:
-    global _proxy_thread, _async_stop
-    if _async_stop:
-        loop, stop_ev = _async_stop
-        loop.call_soon_threadsafe(stop_ev.set)
-        if _proxy_thread:
-            _proxy_thread.join(timeout=5)
-            if _proxy_thread.is_alive():
-                log.warning("Proxy thread did not stop within timeout; "
-                            "port may still be in use")
-    _proxy_thread = None
-    log.info("Proxy stopped")
+    global _proxy_thread
+    with _lifecycle_lock:
+        if _async_stop:
+            loop, stop_ev = _async_stop
+            loop.call_soon_threadsafe(stop_ev.set)
+            if _proxy_thread:
+                _proxy_thread.join(timeout=5)
+                if _proxy_thread.is_alive():
+                    log.warning("Proxy thread did not stop within timeout; "
+                                "port may still be in use")
+        # Keep a thread that is still cleaning up, so start_proxy() and the
+        # next restart see it instead of starting a second proxy beside it
+        if _proxy_thread and not _proxy_thread.is_alive():
+            _proxy_thread = None
+        log.info("Proxy stopped")
 
 
 def restart_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
-    log.info("Restarting proxy...")
-    previous = _proxy_thread
-    stop_proxy()
-    if previous is not None and previous.is_alive():
-        # The old run still owns the shared pools and stop handle; starting
-        # another one now would let its cleanup tear down the new proxy
-        previous.join(timeout=_RESTART_STOP_TIMEOUT)
-        if previous.is_alive():
-            log.error("Proxy thread is still stopping; restart skipped")
-            return
-    time.sleep(1.0)
-    start_proxy(cfg, on_error)
+    with _lifecycle_lock:
+        log.info("Restarting proxy...")
+        previous = _proxy_thread
+        stop_proxy()
+        if previous is not None and previous.is_alive():
+            # The old run still owns the shared pools and stop handle; starting
+            # another one now would let its cleanup tear down the new proxy
+            previous.join(timeout=_RESTART_STOP_TIMEOUT)
+            if previous.is_alive():
+                log.error("Proxy thread is still stopping; restart skipped")
+                return
+        time.sleep(1.0)
+        start_proxy(cfg, on_error)
 
 
 def tg_proxy_url(cfg: dict) -> str:

@@ -1,7 +1,11 @@
+import threading
 import unittest
 from unittest import mock
 
 from utils import tray_common
+
+# Captured before tests patch threading.Thread for the proxy thread
+_RealThread = threading.Thread
 
 
 class CheckUpdateAsyncTest(unittest.TestCase):
@@ -95,6 +99,99 @@ class RestartProxyTest(unittest.TestCase):
 
         self.assertEqual(self.restart(thread), ['stop', 'start'])
         self.assertEqual(thread.joins, [])
+
+
+class _FakeLoop:
+    def __init__(self):
+        self.stop_requests = 0
+
+    def call_soon_threadsafe(self, callback):
+        self.stop_requests += 1
+
+
+class ProxyLifecycleTest(unittest.TestCase):
+    """Real start/stop/restart with a fake proxy thread: nothing binds a port."""
+
+    def setUp(self):
+        self.created = []
+        self.started_beside_alive = 0
+
+        def new_thread(*args, **kwargs):
+            current = tray_common._proxy_thread
+            if any(t.is_alive() for t in self.created) or (current and current.is_alive()):
+                self.started_beside_alive += 1
+            thread = _StoppingThread(finishes_on_join=True)
+            thread.start = lambda: None
+            self.created.append(thread)
+            return thread
+
+        for patcher in (
+                mock.patch.object(tray_common, '_proxy_thread', None),
+                mock.patch.object(tray_common, '_async_stop', (_FakeLoop(), threading.Event())),
+                mock.patch.object(tray_common, 'apply_proxy_config', return_value=True),
+                mock.patch.object(tray_common.threading, 'Thread', side_effect=new_thread),
+                mock.patch.object(tray_common.time, 'sleep')):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_stop_then_start_keeps_the_stuck_thread_and_starts_nothing(self):
+        stuck = _StoppingThread(finishes_on_join=False)
+        tray_common._proxy_thread = stuck
+
+        tray_common.stop_proxy()
+        tray_common.start_proxy({}, lambda message: None)
+
+        self.assertIs(tray_common._proxy_thread, stuck)
+        self.assertEqual(self.created, [])
+
+    def test_restart_after_failed_stop_waits_for_the_same_thread(self):
+        stuck = _StoppingThread(finishes_on_join=False)
+        tray_common._proxy_thread = stuck
+
+        tray_common.restart_proxy({}, lambda message: None)
+        self.assertEqual(self.created, [])
+
+        stuck.finishes_on_join = True
+        tray_common.restart_proxy({}, lambda message: None)
+        self.assertFalse(stuck.is_alive(), 'the second restart must wait for the stuck thread')
+        self.assertEqual(len(self.created), 1)
+        self.assertIs(tray_common._proxy_thread, self.created[0])
+
+    def test_normal_stop_then_start(self):
+        running = _StoppingThread(finishes_on_join=True)
+        tray_common._proxy_thread = running
+
+        tray_common.stop_proxy()
+        tray_common.start_proxy({}, lambda message: None)
+
+        self.assertFalse(running.is_alive())
+        self.assertEqual(len(self.created), 1)
+        self.assertIs(tray_common._proxy_thread, self.created[0])
+
+    def test_parallel_restarts_never_run_two_proxies_at_once(self):
+        tray_common._proxy_thread = _StoppingThread(finishes_on_join=True)
+        both_checked = threading.Barrier(2, timeout=1)
+
+        def apply_after_both_checked(cfg):
+            # Without serialisation both restarts get here before either sets _proxy_thread
+            try:
+                both_checked.wait()
+            except threading.BrokenBarrierError:
+                pass
+            return True
+
+        tray_common.apply_proxy_config.side_effect = apply_after_both_checked
+        clicks = [_RealThread(target=tray_common.restart_proxy, args=({}, lambda message: None))
+                  for _ in range(2)]
+        for click in clicks:
+            click.start()
+        for click in clicks:
+            click.join(5)
+
+        # Two clicks are two restarts in a row, but a proxy never starts beside a live one
+        self.assertEqual(self.started_beside_alive, 0)
+        self.assertEqual(sum(t.is_alive() for t in self.created), 1)
+        self.assertIs(tray_common._proxy_thread, self.created[-1])
 
 
 if __name__ == '__main__':

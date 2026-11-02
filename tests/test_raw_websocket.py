@@ -215,6 +215,32 @@ class CloseTest(unittest.IsolatedAsyncioTestCase):
         writer.wait_closed.assert_awaited_once()
         writer.transport.abort.assert_not_called()
 
+    async def test_failing_abort_after_timeout_does_not_escape_close(self):
+        writer = Mock(drain=AsyncMock(), wait_closed=AsyncMock(side_effect=_hang))
+        writer.transport.abort.side_effect = RuntimeError('transport already gone')
+        ws = RawWebSocket(asyncio.StreamReader(), writer)
+
+        with patch.object(RawWebSocket, 'CLOSE_TIMEOUT', .01):
+            await asyncio.wait_for(ws.close(), 1)
+
+        writer.transport.abort.assert_called_once()
+
+    async def test_cancelling_close_during_wait_closed_propagates_without_hanging(self):
+        waiting = asyncio.Event()
+
+        async def wait_closed():
+            waiting.set()
+            await asyncio.Future()
+
+        writer = Mock(drain=AsyncMock(), wait_closed=AsyncMock(side_effect=wait_closed))
+        ws = RawWebSocket(asyncio.StreamReader(), writer)
+        task = asyncio.create_task(ws.close())
+        await asyncio.wait_for(waiting.wait(), 1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 1)
+        writer.close.assert_called_once()
+
 
 class HandshakeErrorTest(unittest.TestCase):
     def test_redirect_status_codes(self):

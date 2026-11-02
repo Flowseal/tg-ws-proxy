@@ -242,7 +242,10 @@ class RawWebSocket:
                 # (30s) and delay proxy shutdown past the tray's stop timeout
                 await asyncio.wait_for(self.writer.wait_closed(), self.CLOSE_TIMEOUT)
             except asyncio.TimeoutError:
-                self.writer.transport.abort()
+                try:
+                    self.writer.transport.abort()
+                except Exception:
+                    pass
             except Exception:
                 pass
 
