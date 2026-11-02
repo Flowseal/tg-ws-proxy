@@ -27,6 +27,18 @@ class AssetNameTest(unittest.TestCase):
                 self.assertEqual(windows_update.asset_name(), expected)
 
 
+class CanSelfUpdateTest(unittest.TestCase):
+    def test_writable_folder_leaves_no_files_behind(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(sys, 'executable', str(Path(directory) / 'app.exe')):
+            self.assertTrue(windows_update.can_self_update())
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_unwritable_folder_is_reported(self):
+        with mock.patch.object(windows_update.os, 'open', side_effect=PermissionError('denied')):
+            self.assertFalse(windows_update.can_self_update())
+
+
 class ApplyUpdateTest(unittest.TestCase):
     def setUp(self):
         stack = ExitStack()
@@ -60,6 +72,15 @@ class ApplyUpdateTest(unittest.TestCase):
         self.assertEqual(set(self.exe.parent.iterdir()), {self.exe, self.backup})
         self.assertEqual(self.launch.call_args[0][0], [str(self.exe), '--portable'])
         self.assertEqual(self.launch.call_args[1]['creationflags'], 520)
+
+    def test_unwritable_folder_fails_before_downloading_or_touching_files(self):
+        with mock.patch.object(windows_update, 'can_self_update', return_value=False):
+            with self.assertRaises(PermissionError):
+                windows_update.apply_update(self.asset, self.prepare)
+        self.opener.open.assert_not_called()
+        self.assertEqual(list(self.exe.parent.iterdir()), [self.exe])
+        self.prepare.assert_not_called()
+        self.launch.assert_not_called()
 
     def test_missing_or_corrupt_checksum_does_not_replace_or_launch(self):
         for digest in ('', 'sha256:' + '0' * 64):
@@ -131,6 +152,28 @@ class UpdateFlowTest(unittest.TestCase):
                 mock.patch.object(app, '_perform_update') as update:
             app.update_ctk_form('update', asset=asset)
         update.assert_called_once_with(asset)
+
+    def _offered_asset(self, writable):
+        app = self.windows
+        asset = {'url': 'https://example.invalid/new.exe', 'digest': 'sha256:' + '0' * 64}
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(app, 'IS_FROZEN', True))
+            stack.enter_context(mock.patch.object(app, '_exiting', False))
+            stack.enter_context(mock.patch.object(app, '_tray_icon', None))
+            stack.enter_context(mock.patch.object(app, 'get_status', return_value={'has_update': True}))
+            stack.enter_context(mock.patch.object(app, 'asset_name', return_value='app.exe'))
+            stack.enter_context(mock.patch.object(app, 'find_asset', return_value=asset))
+            stack.enter_context(mock.patch.object(app, 'can_self_update', return_value=writable))
+            form = stack.enter_context(mock.patch.object(app, 'update_ctk_form', return_value='close'))
+            thread = stack.enter_context(mock.patch.object(app.threading, 'Thread'))
+            app._trigger_update_flow()
+            thread.call_args.kwargs['target']()
+        return asset, form.call_args.kwargs['asset']
+
+    def test_update_button_is_offered_only_when_the_folder_is_writable(self):
+        asset, offered = self._offered_asset(writable=True)
+        self.assertEqual(offered, asset)
+        self.assertIsNone(self._offered_asset(writable=False)[1])
 
     def test_failed_launch_recovers_proxy_and_lock_instead_of_exiting(self):
         app = self.windows
