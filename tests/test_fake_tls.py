@@ -422,5 +422,58 @@ class WrapTlsRecordTest(unittest.TestCase):
         self.assertEqual(wrap_tls_record(b''), b'')
 
 
+class ReplayCacheTest(unittest.TestCase):
+    def test_second_sighting_within_window_is_a_replay(self):
+        cache = fake_tls._ReplayCache(window=10, size=8)
+        self.assertTrue(cache.first_seen(b'a'))
+        self.assertFalse(cache.first_seen(b'a'))
+        self.assertTrue(cache.first_seen(b'b'))
+
+    def test_entries_expire_after_the_window(self):
+        cache = fake_tls._ReplayCache(window=10, size=8)
+        with patch('proxy.fake_tls.time.monotonic', return_value=100.0):
+            cache.first_seen(b'a')
+        with patch('proxy.fake_tls.time.monotonic', return_value=110.0):
+            self.assertTrue(cache.first_seen(b'a'))
+
+    def test_size_is_bounded_by_dropping_oldest(self):
+        cache = fake_tls._ReplayCache(window=10, size=2)
+        for key in (b'a', b'b', b'c'):
+            cache.first_seen(key)
+        self.assertEqual(len(cache._expiry), 2)
+        self.assertTrue(cache.first_seen(b'a'))
+
+    def test_window_covers_the_whole_timestamp_tolerance(self):
+        self.assertGreaterEqual(fake_tls.REPLAY_WINDOW, 2 * fake_tls.TIMESTAMP_TOLERANCE)
+
+
+class ReplayedHelloTest(unittest.IsolatedAsyncioTestCase):
+    async def _handshake(self, hello):
+        from proxy import tg_ws_proxy
+
+        reader = asyncio.StreamReader()
+        reader.feed_data(hello + wrap_tls_record(os.urandom(64)))
+        reader.feed_eof()
+        writer = Mock(drain=AsyncMock())
+        with patch.object(tg_ws_proxy, 'proxy_to_masking_domain', AsyncMock()) as masking, \
+                patch.object(tg_ws_proxy.asyncio, 'sleep', AsyncMock()):
+            result = await tg_ws_proxy._read_client_init(
+                reader, writer, SECRET, 'test', 'example.com')
+        return result, writer, masking
+
+    async def test_replayed_hello_is_masked_instead_of_answered(self):
+        hello = _structured_client_hello()
+        first, first_writer, first_masking = await self._handshake(hello)
+        second, second_writer, second_masking = await self._handshake(hello)
+
+        self.assertIsNotNone(first)
+        first_masking.assert_not_awaited()
+        self.assertEqual(first_writer.write.call_args_list[0].args[0][0], TLS_RECORD_HANDSHAKE)
+
+        self.assertIsNone(second)
+        second_masking.assert_awaited_once()
+        second_writer.write.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
