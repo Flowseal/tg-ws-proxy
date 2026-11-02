@@ -305,6 +305,7 @@ def load_icon():
 
 _proxy_thread: Optional[threading.Thread] = None
 _async_stop: Optional[Tuple[asyncio.AbstractEventLoop, asyncio.Event]] = None
+_RESTART_STOP_TIMEOUT = 30.0
 
 
 def _run_proxy_thread(show_error: Callable[[str], None]) -> None:
@@ -413,7 +414,15 @@ def stop_proxy() -> None:
 
 def restart_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
     log.info("Restarting proxy...")
+    previous = _proxy_thread
     stop_proxy()
+    if previous is not None and previous.is_alive():
+        # The old run still owns the shared pools and stop handle; starting
+        # another one now would let its cleanup tear down the new proxy
+        previous.join(timeout=_RESTART_STOP_TIMEOUT)
+        if previous.is_alive():
+            log.error("Proxy thread is still stopping; restart skipped")
+            return
     time.sleep(1.0)
     start_proxy(cfg, on_error)
 

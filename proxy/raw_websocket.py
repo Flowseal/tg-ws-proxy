@@ -81,6 +81,7 @@ class RawWebSocket:
     OP_PONG = 0xA
 
     MAX_MESSAGE_LEN = 16 * 1024 * 1024
+    CLOSE_TIMEOUT = 2.0
 
     def __init__(self, reader: asyncio.StreamReader,
                  writer: asyncio.StreamWriter):
@@ -231,13 +232,17 @@ class RawWebSocket:
                 try:
                     self.writer.write(
                         self._build_frame(self.OP_CLOSE, b'', mask=True))
-                    await self.writer.drain()
+                    await asyncio.wait_for(self.writer.drain(), self.CLOSE_TIMEOUT)
                 except Exception:
                     pass
         finally:
             try:
                 self.writer.close()
-                await self.writer.wait_closed()
+                # A silent TLS peer would hold us here for ssl_shutdown_timeout
+                # (30s) and delay proxy shutdown past the tray's stop timeout
+                await asyncio.wait_for(self.writer.wait_closed(), self.CLOSE_TIMEOUT)
+            except asyncio.TimeoutError:
+                self.writer.transport.abort()
             except Exception:
                 pass
 
