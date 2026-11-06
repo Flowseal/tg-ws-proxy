@@ -295,6 +295,8 @@ class CfWorkerPoolTest(unittest.IsolatedAsyncioTestCase):
                     self.assertIsNone(await self.pool.get(2, '192.0.2.2', ['worker.example']))
                     await self.wait_for(lambda: bool(self.pool._idle[2]))
                     self.assertIs(self.pool._idle[2][0][0], ready)
+                    # Refill and stale connection cleanup run independently.
+                    await self.wait_for(lambda: stale.writer.close.called)
                     stale.writer.close.assert_called_once()
                     await self.pool.close()
 

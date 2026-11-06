@@ -148,6 +148,23 @@ class ParseCloseTest(unittest.TestCase):
 
 
 class CloseTest(unittest.IsolatedAsyncioTestCase):
+    async def test_cancellation_when_close_operation_finishes_is_not_lost(self):
+        for operation in ('drain', 'wait_closed'):
+            with self.subTest(operation=operation):
+                task = None
+
+                async def finish_and_cancel():
+                    task.cancel()
+
+                writer = Mock(drain=AsyncMock(), wait_closed=AsyncMock())
+                getattr(writer, operation).side_effect = finish_and_cancel
+                ws = RawWebSocket(asyncio.StreamReader(), writer)
+                task = asyncio.create_task(ws.close())
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                writer.close.assert_called_once()
+                writer.wait_closed.assert_awaited_once()
+
     async def test_peer_close_still_closes_transport_without_another_close_frame(self):
         reader = asyncio.StreamReader()
         reader.feed_data(_raw_frame(RawWebSocket.OP_CLOSE, b'\x03\xe8'))
@@ -240,6 +257,7 @@ class CloseTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await asyncio.wait_for(task, 1)
         writer.close.assert_called_once()
+        writer.transport.abort.assert_called_once()
 
 
 class HandshakeErrorTest(unittest.TestCase):
