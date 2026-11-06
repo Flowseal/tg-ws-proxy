@@ -45,7 +45,7 @@ from utils.tray_common import (
     save_config, start_proxy, stop_proxy, tg_proxy_url,
 )
 from utils.update_check import find_asset, get_status, RELEASES_PAGE_URL
-from utils.windows_update import apply_update, asset_name
+from utils.windows_update import apply_update, asset_name, can_self_update
 from ui.ctk_tray_ui import (
     install_tray_config_buttons, install_tray_config_form,
     populate_first_run_window, tray_settings_scroll_and_footer,
@@ -276,7 +276,7 @@ def _trigger_update_flow(icon=None, item=None) -> None:
                 _tray_icon.menu = _build_menu()
             url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
             ver = st.get("latest") or "?"
-            asset = find_asset(asset_name()) if IS_FROZEN else None
+            asset = find_asset(asset_name()) if IS_FROZEN and can_self_update() else None
 
             choice = update_ctk_form(
                 t("update.available", version=ver),
