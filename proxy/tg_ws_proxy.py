@@ -28,7 +28,7 @@ from .raw_websocket import set_sock_opts
 from .fake_tls import (
     proxy_to_masking_domain, verify_client_hello, parse_client_hello, build_server_hello,
     probe_appdata_len, set_profiled_appdata_len, FakeTlsStream, TLS_RECORD_HANDSHAKE,
-    SERVER_HELLO_DELAY,
+    SERVER_HELLO_DELAY, replay_cache,
 )
 from .balancer import balancer
 from .pool import ws_pool, cf_worker_pool
@@ -157,11 +157,16 @@ async def _read_client_init(reader, writer, secret, label, masking):
         client_hello = tls_header + record_body
 
         tls_result = verify_client_hello(client_hello, secret)
+        # A recorded hello stays valid for minutes; answering it again would
+        # tell an active prober that this is a proxy, not the masking site
+        replayed = (tls_result is not None
+                    and not replay_cache.first_seen(tls_result[0]))
 
-        if tls_result is None:
-            log.debug("[%s] Fake TLS verify failed (size=%d rec=%d) "
+        if tls_result is None or replayed:
+            log.debug("[%s] Fake TLS %s (size=%d rec=%d) "
                       "-> masking",
-                      label, len(client_hello), record_len)
+                      label, "hello replayed" if replayed else "verify failed",
+                      len(client_hello), record_len)
             await proxy_to_masking_domain(
                 reader, writer, client_hello, masking, label)
             return None

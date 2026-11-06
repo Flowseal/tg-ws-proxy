@@ -422,5 +422,113 @@ class WrapTlsRecordTest(unittest.TestCase):
         self.assertEqual(wrap_tls_record(b''), b'')
 
 
+class ReplayCacheTest(unittest.TestCase):
+    def test_second_sighting_within_window_is_a_replay(self):
+        cache = fake_tls._ReplayCache(window=10, size=8)
+        self.assertTrue(cache.first_seen(b'a'))
+        self.assertFalse(cache.first_seen(b'a'))
+        self.assertTrue(cache.first_seen(b'b'))
+
+    def test_entries_expire_after_the_window(self):
+        cache = fake_tls._ReplayCache(window=10, size=8)
+        with patch('proxy.fake_tls.time.monotonic', return_value=100.0):
+            cache.first_seen(b'a')
+        with patch('proxy.fake_tls.time.monotonic', return_value=110.0):
+            self.assertTrue(cache.first_seen(b'a'))
+
+    def test_size_is_bounded_by_dropping_oldest(self):
+        cache = fake_tls._ReplayCache(window=10, size=2)
+        for key in (b'a', b'b', b'c'):
+            cache.first_seen(key)
+        self.assertEqual(len(cache._expiry), 2)
+        self.assertTrue(cache.first_seen(b'a'))
+
+    def test_window_covers_the_whole_timestamp_tolerance(self):
+        self.assertGreaterEqual(fake_tls.REPLAY_WINDOW, 2 * fake_tls.TIMESTAMP_TOLERANCE)
+
+    def test_repeat_in_a_full_cache_is_still_a_replay(self):
+        cache = fake_tls._ReplayCache(window=10, size=2)
+        cache.first_seen(b'a')
+        cache.first_seen(b'b')
+        self.assertFalse(cache.first_seen(b'a'), 'a live entry must not be evicted before the lookup')
+        self.assertFalse(cache.first_seen(b'b'))
+
+    def test_full_cache_evicts_the_oldest_entry_for_a_new_key(self):
+        cache = fake_tls._ReplayCache(window=10, size=2)
+        for key in (b'a', b'b', b'c'):
+            self.assertTrue(cache.first_seen(key))
+        self.assertEqual(list(cache._expiry), [b'b', b'c'])
+        self.assertFalse(cache.first_seen(b'b'))
+        self.assertFalse(cache.first_seen(b'c'))
+
+    def test_entry_is_still_a_replay_just_before_expiry(self):
+        cache = fake_tls._ReplayCache(window=10, size=8)
+        with patch('proxy.fake_tls.time.monotonic', return_value=100.0):
+            cache.first_seen(b'a')
+        with patch('proxy.fake_tls.time.monotonic', return_value=109.999):
+            self.assertFalse(cache.first_seen(b'a'))
+
+    def test_replay_is_refused_for_as_long_as_the_hello_verifies(self):
+        # The earliest and latest moments one hello passes the timestamp check, with
+        # verify_client_hello() truncating wall time to whole seconds.
+        ts = 1_800_000_000
+        hello = _client_hello(timestamp=ts)
+        cache = fake_tls._ReplayCache()
+        clock = {'now': 0.0}
+        fake_time = Mock(time=lambda: clock['now'], monotonic=lambda: clock['now'])
+
+        with patch.object(fake_tls, 'time', fake_time):
+            clock['now'] = ts - fake_tls.TIMESTAMP_TOLERANCE
+            first = verify_client_hello(hello, SECRET)
+            self.assertIsNotNone(first)
+            self.assertTrue(cache.first_seen(first[0]))
+
+            clock['now'] = ts + fake_tls.TIMESTAMP_TOLERANCE + 0.999
+            replayed = verify_client_hello(hello, SECRET)
+            self.assertIsNotNone(replayed, 'the hello still passes the timestamp check')
+            self.assertFalse(cache.first_seen(replayed[0]), 'so the cache must still refuse it')
+
+    def test_key_is_new_again_after_the_window(self):
+        cache = fake_tls._ReplayCache(window=10, size=8)
+        with patch('proxy.fake_tls.time.monotonic', return_value=100.0):
+            cache.first_seen(b'a')
+        with patch('proxy.fake_tls.time.monotonic', return_value=111.0):
+            self.assertTrue(cache.first_seen(b'a'))
+            self.assertFalse(cache.first_seen(b'a'))
+
+
+class ReplayedHelloTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # The proxy keeps one process-wide cache; start and end every test with it empty.
+        fake_tls.replay_cache._expiry.clear()
+        self.addCleanup(fake_tls.replay_cache._expiry.clear)
+
+    async def _handshake(self, hello):
+        from proxy import tg_ws_proxy
+
+        reader = asyncio.StreamReader()
+        reader.feed_data(hello + wrap_tls_record(os.urandom(64)))
+        reader.feed_eof()
+        writer = Mock(drain=AsyncMock())
+        with patch.object(tg_ws_proxy, 'proxy_to_masking_domain', AsyncMock()) as masking, \
+                patch.object(tg_ws_proxy.asyncio, 'sleep', AsyncMock()):
+            result = await tg_ws_proxy._read_client_init(
+                reader, writer, SECRET, 'test', 'example.com')
+        return result, writer, masking
+
+    async def test_replayed_hello_is_masked_instead_of_answered(self):
+        hello = _structured_client_hello()
+        first, first_writer, first_masking = await self._handshake(hello)
+        second, second_writer, second_masking = await self._handshake(hello)
+
+        self.assertIsNotNone(first)
+        first_masking.assert_not_awaited()
+        self.assertEqual(first_writer.write.call_args_list[0].args[0][0], TLS_RECORD_HANDSHAKE)
+
+        self.assertIsNone(second)
+        second_masking.assert_awaited_once()
+        second_writer.write.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
