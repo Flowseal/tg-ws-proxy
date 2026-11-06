@@ -15,6 +15,10 @@ def _raw_frame(opcode, data, fin=True):
     return bytes([b0, 127]) + n.to_bytes(8, 'big') + data
 
 
+async def _hang():
+    await asyncio.Future()
+
+
 class _NullWriter:
     def write(self, data):
         pass
@@ -144,6 +148,23 @@ class ParseCloseTest(unittest.TestCase):
 
 
 class CloseTest(unittest.IsolatedAsyncioTestCase):
+    async def test_cancellation_when_close_operation_finishes_is_not_lost(self):
+        for operation in ('drain', 'wait_closed'):
+            with self.subTest(operation=operation):
+                task = None
+
+                async def finish_and_cancel():
+                    task.cancel()
+
+                writer = Mock(drain=AsyncMock(), wait_closed=AsyncMock())
+                getattr(writer, operation).side_effect = finish_and_cancel
+                ws = RawWebSocket(asyncio.StreamReader(), writer)
+                task = asyncio.create_task(ws.close())
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                writer.close.assert_called_once()
+                writer.wait_closed.assert_awaited_once()
+
     async def test_peer_close_still_closes_transport_without_another_close_frame(self):
         reader = asyncio.StreamReader()
         reader.feed_data(_raw_frame(RawWebSocket.OP_CLOSE, b'\x03\xe8'))
@@ -188,6 +209,55 @@ class CloseTest(unittest.IsolatedAsyncioTestCase):
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+    async def test_silent_peer_does_not_hold_close_until_tls_shutdown_timeout(self):
+        # TLS wait_closed() waits for the peer's close_notify for up to 30s
+        writer = Mock(drain=AsyncMock(), wait_closed=AsyncMock(side_effect=_hang))
+        ws = RawWebSocket(asyncio.StreamReader(), writer)
+
+        with patch.object(RawWebSocket, 'CLOSE_TIMEOUT', .01):
+            await asyncio.wait_for(ws.close(), 1)
+
+        writer.close.assert_called_once()
+        writer.transport.abort.assert_called_once()
+
+    async def test_peer_that_stopped_reading_does_not_hold_close_in_drain(self):
+        writer = Mock(drain=AsyncMock(side_effect=_hang), wait_closed=AsyncMock())
+        ws = RawWebSocket(asyncio.StreamReader(), writer)
+
+        with patch.object(RawWebSocket, 'CLOSE_TIMEOUT', .01):
+            await asyncio.wait_for(ws.close(), 1)
+
+        writer.close.assert_called_once()
+        writer.wait_closed.assert_awaited_once()
+        writer.transport.abort.assert_not_called()
+
+    async def test_failing_abort_after_timeout_does_not_escape_close(self):
+        writer = Mock(drain=AsyncMock(), wait_closed=AsyncMock(side_effect=_hang))
+        writer.transport.abort.side_effect = RuntimeError('transport already gone')
+        ws = RawWebSocket(asyncio.StreamReader(), writer)
+
+        with patch.object(RawWebSocket, 'CLOSE_TIMEOUT', .01):
+            await asyncio.wait_for(ws.close(), 1)
+
+        writer.transport.abort.assert_called_once()
+
+    async def test_cancelling_close_during_wait_closed_propagates_without_hanging(self):
+        waiting = asyncio.Event()
+
+        async def wait_closed():
+            waiting.set()
+            await asyncio.Future()
+
+        writer = Mock(drain=AsyncMock(), wait_closed=AsyncMock(side_effect=wait_closed))
+        ws = RawWebSocket(asyncio.StreamReader(), writer)
+        task = asyncio.create_task(ws.close())
+        await asyncio.wait_for(waiting.wait(), 1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 1)
+        writer.close.assert_called_once()
+        writer.transport.abort.assert_called_once()
 
 
 class HandshakeErrorTest(unittest.TestCase):

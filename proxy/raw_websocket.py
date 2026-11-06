@@ -54,6 +54,21 @@ def _xor_mask(data: bytes, mask: bytes) -> bytes:
             int.from_bytes(mask_rep, 'big')).to_bytes(n, 'big')
 
 
+async def _wait_close(awaitable, timeout):
+    # wait_for() can lose external cancellation when its task finishes at the
+    # same time on Python < 3.12. wait() leaves cancellation with the caller.
+    task = asyncio.ensure_future(awaitable)
+    try:
+        done, _ = await asyncio.wait((task,), timeout=timeout)
+        if not done:
+            raise asyncio.TimeoutError()
+        return task.result()
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 def set_sock_opts(transport, buffer_size):
     sock = transport.get_extra_info('socket')
     if sock is None:
@@ -81,6 +96,7 @@ class RawWebSocket:
     OP_PONG = 0xA
 
     MAX_MESSAGE_LEN = 16 * 1024 * 1024
+    CLOSE_TIMEOUT = 2.0
 
     def __init__(self, reader: asyncio.StreamReader,
                  writer: asyncio.StreamWriter):
@@ -231,13 +247,22 @@ class RawWebSocket:
                 try:
                     self.writer.write(
                         self._build_frame(self.OP_CLOSE, b'', mask=True))
-                    await self.writer.drain()
+                    await _wait_close(self.writer.drain(), self.CLOSE_TIMEOUT)
                 except Exception:
                     pass
         finally:
             try:
                 self.writer.close()
-                await self.writer.wait_closed()
+                # A silent TLS peer would hold us here for ssl_shutdown_timeout
+                # (30s) and delay proxy shutdown past the tray's stop timeout
+                await _wait_close(self.writer.wait_closed(), self.CLOSE_TIMEOUT)
+            except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
+                try:
+                    self.writer.transport.abort()
+                except Exception:
+                    pass
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
             except Exception:
                 pass
 
