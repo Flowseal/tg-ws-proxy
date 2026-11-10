@@ -1,0 +1,79 @@
+# TG WS Proxy — общий конфиг для установщика, CLI и Docker.
+# Скопируйте в config.toml и замените proxy.example.com своим доменом.
+# Linux: sudo python3 deploy/setup_masking.py --config config.toml
+# Docker Hub / готовые образы: настройте .env и выполните docker compose up -d --wait
+# Инструкция: docs/RU/DockerHub.md. Python на VPS не нужен.
+# Сборка из исходников: python3 deploy/setup_masking.py --config config.toml --mode docker
+# Только прокси, без настройки системы: python3 -m proxy.tg_ws_proxy --config config.toml
+# CLI/установщик: CLI > TG_WS_PROXY_* > TOML > значения по умолчанию.
+# Готовый Compose: приложение читает TOML, .env управляет образами и портами.
+# CLI: --config или TG_WS_PROXY_CONFIG, без автопоиска. Готовый Compose
+# монтирует ./config.toml в стандартный путь контейнера cover.
+# TOML: Python 3.11+; на Python 3.8–3.10 нужен пакет tomli.
+# Неизвестные секции/ключи и неправильные типы считаются ошибками.
+# Относительные пути ниже считаются от каталога этого файла.
+
+[server]
+bind_address = "0.0.0.0"       # Host/установщик: адрес слушателя. В готовом Compose
+                               # внешний адрес задаёт PUBLIC_BIND_ADDRESS в .env.
+port = 443                     # Host: порт слушателя. Docker-установщик: внешний
+                               # порт; внутри сгенерированного Compose всегда 1443.
+                               # Готовый корневой docker-compose.yaml использует PUBLIC_PORT
+                               # из .env; server.port не меняет публикацию Docker.
+public_host = "proxy.example.com" # IP/домен VPS в Telegram-ссылке, отдельно от SNI.
+# public_port = 443            # Порт в ссылке, если отличается от server.port (NAT).
+
+[access]
+# secret = "<32 hex символа>"  # Один общий MTProto secret, без префикса ee/dd.
+# Установщик генерирует и сохраняет secret при первом запуске; повторно использует
+# его из state.json. Готовые Docker-образы сохраняют secret в томе state.
+# Для прямого запуска CLI без установщика или готового Compose задайте secret сами:
+# иначе он будет генерироваться заново при каждом запуске процесса.
+# Конфиг с secret храните приватно (chmod 600), не добавляйте в Git/образ.
+
+[fake_tls]
+domain = "proxy.example.com"   # SNI, включённый в ee-secret; не адрес подключения.
+                               # Смена домена требует новых ссылок у клиентов.
+drs = true                     # Первые 8 downstream records до 1369 байт.
+server_hello_split = true       # Первый байт ServerHello отдельно, затем остаток.
+split_delay_ms = 5              # Базовая задержка, 0..1000 мс.
+split_jitter_ms = 10            # Дополнительная случайная задержка, 0..1000 мс.
+# Anti-replay включён автоматически: RAM, до 8192 записей, окно 241 секунда.
+# При перезапуске процесса кеш очищается; SQLite и файлового кеша нет.
+
+[masking]
+mode = "local"                 # local: nginx + сайт, создаваемые cover или установщиком.
+port = 8443                    # Порт backend: local — 1024..65535, default 8443.
+# certificate = "tls/fullchain.pem" # Свой PEM-сертификат для fake_tls.domain.
+# private_key = "tls/privkey.pem"   # Соответствующий PEM-ключ без пароля.
+# Сертификат и ключ задаются вместе. Без них local создаёт самоподписанный
+# сертификат. Автоматического ACME/продления доверенного сертификата нет.
+# Для перенаправления проб на существующий HTTPS-сайт вместо локального nginx:
+# mode = "external"
+# backend_host = "example.org" # Если не задан — fake_tls.domain.
+# port = 443                  # Default для external, 1..65535.
+# В external уберите certificate/private_key. TLS завершает внешний backend.
+# Для чужого SNI задайте server.public_host = "<IP вашего VPS>".
+# backend_host не должен вести на публичный слушатель этого же прокси.
+# При прямом запуске CLI режим local НЕ создаёт nginx: backend должен уже работать.
+
+[deployment]
+mode = "host"                  # host: Debian/Ubuntu + systemd; docker: Compose v2.
+# state_dir = ".tgws-masking"  # Docker default: .tgws-masking в репозитории;
+                               # host default: /var/lib/tg-ws-proxy-masking.
+tcpmss = 88                    # 64..1460; 0 отключает и удаляет автоматические правила.
+nfqws = true                   # Сборка zapret + NFQUEUE + запуск обработчика.
+nfqws_ttl = 6                  # TTL fake-пакетов, 1..255; подбирается для сети.
+# tcpmss/nfqws/nfqws_ttl применяются установщиком и готовым Compose.
+# mode/state_dir — только установщиком; Compose хранит состояние в томе state.
+# Обычный прямой запуск прокси не меняет firewall.
+# --prepare-only генерирует файлы без установки пакетов и запуска служб.
+
+[upstream]
+dc_ips = ["2:149.154.167.220", "4:149.154.167.220"] # Перенаправления DC:IP; [] — без них.
+pool_size = 4                  # WS-пул на DC; 0 отключает пул.
+cfproxy = true                 # Cloudflare fallback.
+h2 = true                      # HTTP/2 для CF media, если cfproxy и secure включены.
+secure = true                  # TLS для CF proxy/worker; false переключает на порт 80.
+domains = []                   # Свои CF-домены; [] — автоматический список.
+workers = []                   # Свои CF Worker-домены; пробуются раньше fallback.

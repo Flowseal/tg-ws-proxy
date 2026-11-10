@@ -2,7 +2,8 @@
 
 Этот режим предназначен для запуска прокси на VPS. Он использует Fake TLS
 с `ee`-секретом, DRS и разделение отправки ServerHello. Для Linux отдельно
-предусмотрены TCPMSS и интеграция с установленным `nfqws` из zapret.
+установщик автоматически включает TCPMSS и устанавливает `nfqws` из zapret.
+В Docker nfqws работает отдельным контейнером в общей сети с прокси.
 Идеи DRS, TCPMSS и серверной десинхронизации сопоставлены с
 [mtproto.zig](https://github.com/sleep3r/mtproto.zig).
 
@@ -15,7 +16,176 @@ SNI, размеры и время пакетов остаются видимым
 одной маскировки недостаточно. Эффективность зависит от сети и проверяется
 реальным клиентом и захватом пакетов, а не только успешными тестами кода.
 
-## Домен и HTTPS backend
+Для запуска готовых образов на VPS используйте [статический Docker Compose](./DockerHub.md):
+Python-установщик на сервере не нужен. Вариант установки из исходников описан ниже.
+
+## Автоматическая настройка
+
+Рекомендуемый вариант — общий TOML-конфиг с комментариями в корне репозитория:
+[`config.toml.example`](../../config.toml.example).
+
+```bash
+cp config.toml.example config.toml
+# Отредактируйте server.public_host и fake_tls.domain.
+sudo python3 deploy/setup_masking.py --config config.toml
+# Тот же конфиг для Docker:
+python3 deploy/setup_masking.py --config config.toml --mode docker
+```
+
+`server.public_host` — IP или домен VPS в ссылке подключения; `fake_tls.domain` —
+SNI внутри Fake TLS. Это независимые настройки. `server.port` задаёт порт
+слушателя на хосте или публикуемый порт Docker; внутри автоматического Compose
+прокси всегда слушает 1443. `server.public_port` меняет только порт в ссылке
+при внешнем NAT. В режиме local предпочтительно использовать свой домен,
+указывающий на VPS, и такой же `fake_tls.domain`.
+
+Приоритет: **CLI → `TG_WS_PROXY_*` → TOML → значения по умолчанию**.
+Файл выбирается через `--config` или `TG_WS_PROXY_CONFIG`, автопоиска нет.
+CLI-списки заменяют списки из файла. Параметры `--fake-tls-drs`,
+`--fake-tls-split`, `--h2`, `--cfproxy`, `--secure`, `--nfqws` позволяют
+переопределить отключённые функции. Старый `--domain` сохранён как alias
+`--fake-tls-domain`. Относительные пути TOML считаются от каталога конфига.
+Неизвестные ключи, неверные типы и диапазоны отклоняются до изменения системы.
+Для чтения TOML нужен Python 3.11+; на 3.8–3.10 установите `tomli` в тот же
+интерпретатор (для системного Python Debian/Ubuntu: `sudo apt-get install python3-tomli`).
+Без TOML прежний CLI работает.
+
+Секции `[server]`, `[access]`, `[fake_tls]`, `[masking]`, `[upstream]` описывают
+работу прокси, `[deployment]` — установку системы. Прямой запуск
+`python3 -m proxy.tg_ws_proxy --config config.toml` не устанавливает nginx,
+не создаёт сертификаты и не настраивает firewall. Для такого запуска задайте
+постоянный `access.secret`; установщик сам генерирует и сохраняет secret в
+`state.json`. Файл `config.toml` исключён из Git и Docker build context.
+
+У masking есть два режима:
+
+- `mode = "local"` (по умолчанию): установщик создаёт nginx, сайт и сертификат.
+  `masking.port` по умолчанию 8443. Свои сертификат и ключ задаются вместе
+  через `masking.certificate` и `masking.private_key`.
+- `mode = "external"`: nginx и сертификаты не создаются; пробы передаются на
+  `masking.backend_host` (по умолчанию `fake_tls.domain`), порт по умолчанию 443.
+  Сертификат возвращает backend. Не направляйте backend на публичный слушатель
+  этого же прокси. Проверка готовности допускает HTTP redirects/ошибки внешнего
+  сайта и подтверждает только TLS/HTTP-доступность, не эффективность обхода DPI.
+
+Пример external: измените `[masking]` на `mode = "external"`, `port = 443`,
+удалите параметры локального сертификата и при необходимости задайте
+`backend_host`. В `server.public_host` оставьте адрес своего VPS.
+После изменения TOML повторите запуск установщика с `--config`: сервисы
+используют сгенерированную конфигурацию. На хосте собственная старая конфигурация
+nginx удаляется при переходе на external; чужие конфигурации не меняются.
+
+Из корня репозитория на Debian/Ubuntu с systemd:
+
+```bash
+sudo python3 deploy/setup_masking.py --fake-tls-domain proxy.example.com
+```
+
+Скрипт устанавливает nginx, OpenSSL, поддержку venv и зависимости консольного
+прокси. Создаёт HTTPS backend на `127.0.0.1:8443`, страницу, самоподписанный
+EC-сертификат с SAN выбранного домена и постоянный secret. Прокси запускается
+как systemd-сервис `tg-ws-proxy` с DynamicUser и CAP_NET_BIND_SERVICE на порту
+443. Конфигурация nginx проверяется перед применением; чужие сайты сохраняются.
+После запуска скрипт проверяет настоящее HTTPS-подключение через прокси
+с указанным SNI и выводит приватную `ee`-ссылку.
+
+По умолчанию файлы находятся в `/var/lib/tg-ws-proxy-masking`: `state.json`,
+`proxy.env`, `tls/`, `site/`, `nginx.conf`, снимок исходников `runtime/` и
+отдельное окружение `venv/`. Повторный запуск обновляет снимок исходников,
+сохраняет secret, действующий сертификат и ваш `site/index.html`.
+
+Домен предпочтительно должен принадлежать вам и указывать на VPS. Порты 443
+и 8443 должны быть свободны. Если на 443 уже работает TLS-терминатор,
+его нужно перенастроить отдельно либо выбрать другой `--port`.
+Чужой SNI может выдать несовпадение домена с IP. Самоподписанный сертификат
+обеспечивает TLS-рукопожатие, но остаётся узнаваемым как самоподписанный.
+Готовый доверенный сертификат можно передать так:
+
+```bash
+sudo python3 deploy/setup_masking.py --fake-tls-domain proxy.example.com \
+  --cert /etc/letsencrypt/live/proxy.example.com/fullchain.pem \
+  --key /etc/letsencrypt/live/proxy.example.com/privkey.pem
+```
+
+Скрипт проверяет пару, имя домена и срок действия, затем копирует PEM-файлы
+в `tls/`. ACME-сертификат автоматически не выпускается и не продлевается:
+после внешнего продления повторите команду с обоими путями. Самоподписанный
+сертификат переиспользуется, а при близком истечении пересоздаётся при запуске
+установщика. Сохранённый внешний сертификат не заменяется самоподписанным
+без вашего указания. Ключ, `state.json` и `proxy.env` имеют приватные права.
+
+Дополнительные параметры: `--port 2443`, `--mask-port 8444`,
+`--bind-address 0.0.0.0`, `--secret <32 hex>`, `--state-dir <каталог>`.
+Если адрес подключения отличается от SNI-домена, задайте `--public-host <IP VPS>`;
+иначе в ссылке будет указан домен. PEM-ключ должен быть без пароля.
+При повторном запуске указывайте те же параметры. Сохраняйте каталог состояния,
+чтобы не потерять secret и ссылки. Изменение домена требует
+`--force-domain-change` и новых ссылок у пользователей.
+
+Для подготовки файлов без установки пакетов и запуска сервисов:
+
+```bash
+python3 deploy/setup_masking.py --fake-tls-domain proxy.example.com \
+  --state-dir /tmp/tgws-preview --prepare-only
+```
+
+Для генерации сертификата нужен OpenSSL. Preview тоже создаёт реальные
+приватные ключи и secret. Для настоящей host-установки выбирайте каталог
+вне домашних и временных каталогов: сервис использует ProtectHome/PrivateTmp.
+Каталог по умолчанию подходит.
+
+Проверка и остановка: `systemctl status tg-ws-proxy`,
+`sudo systemctl disable --now tg-ws-proxy`. Для удаления backend удалите
+только `/etc/nginx/conf.d/tg-ws-proxy-masking.conf`, проверьте `sudo nginx -t`
+и перезагрузите nginx. Каталог состояния удаляйте только если хотите удалить
+также secret и сайт. Для удаления автоматического TCPMSS также выполните
+`sudo systemctl disable --now tg-ws-proxy-tcpmss`. Для nfqws остановите
+`tg-ws-proxy-dpi.service` и `tg-ws-proxy-nfqws.service` (см. ниже).
+
+## Автоматическая настройка Docker
+
+Нужны Python 3.8+, OpenSSL, Docker Engine и Docker Compose v2:
+
+```bash
+python3 deploy/setup_masking.py --mode docker --fake-tls-domain proxy.example.com
+```
+
+Скрипт создаёт `.tgws-masking/{state.json,proxy.env,nginx.conf,compose.yaml}`,
+`tls/` и `site/`, собирает образ прокси и запускает отдельный контейнер nginx.
+Наружу публикуется только порт прокси. nginx доступен по внутренней сети
+Compose, а приватный TLS-ключ монтируется только в nginx, для чтения.
+Прокси ждёт готовности backend; его healthcheck проверяет HTTPS через
+маскировку. Установщик ждёт успешного healthcheck и дополнительно проверяет
+HTTPS с выбранным SNI. При ошибке проверки установка сообщает об ошибке.
+
+Работают те же параметры сертификата, secret и портов. Прокси внутри образа
+слушает 1443 от `app`, Docker отображает его на 443 VPS. При автоматическом
+TCPMSS entrypoint кратковременно работает от root с NET_ADMIN, настраивает
+только собственный сетевой namespace, очищает дополнительные группы и
+сбрасывает UID/GID до `app` перед запуском слушателя. Включён no-new-privileges;
+systemd внутри контейнера не нужен. Master nginx читает закрытый ключ
+из read-only mount. Для сохранения ссылок сохраняйте весь каталог состояния.
+Он исключён из Git и Docker build context.
+
+```bash
+docker compose -f .tgws-masking/compose.yaml ps
+docker compose -f .tgws-masking/compose.yaml logs proxy
+docker compose -f .tgws-masking/compose.yaml down
+```
+
+`down` сохраняет созданные файлы. Повторный запуск установщика пересобирает
+и пересоздаёт этот Compose-проект. Для локальной проверки используйте
+`--bind-address 127.0.0.1 --port 19443`. TCPMSS применяется внутри контейнера
+до Docker DNAT/SNAT; firewall хоста не меняется, privileged-контейнер не нужен.
+Для rootless Docker или ядра без поддержки TCPMSS может потребоваться
+`--no-tcpmss`. Docker Desktop и userland TCP forwarding могут завершать внешнее
+соединение за пределами этого namespace: проверяйте MSS, видимый клиенту,
+на Linux VPS. Автоматический nfqws использует отдельный контейнер, общий
+сетевой namespace с прокси и NFQUEUE до Docker NAT. Он получает NET_ADMIN/NET_RAW;
+слушатель прокси работает от `app`. Для rootless Docker добавьте `--no-nfqws`.
+См. также [параметры Docker](./README.docker.md).
+
+## Ручная настройка домена и HTTPS backend
 
 Используйте свой домен, A/AAAA которого указывает на VPS, и действительный
 сертификат для этого домена. Чужой SNI при несовпадающем IP может выдать
@@ -36,7 +206,7 @@ server {
 }
 ```
 
-Сертификат и файлы сайта нужно подготовить самостоятельно. TLS-настройки
+При ручной настройке сертификат и файлы сайта нужно подготовить самостоятельно. TLS-настройки
 backend должны соответствовать имитации: TLS 1.3 и X25519, а для клиентов
 с гибридным key_share — поддержка X25519MLKEM768 в используемом TLS-стеке.
 Fake TLS имитирует рукопожатие и не выполняет настоящий обмен ключами TLS
@@ -86,9 +256,14 @@ HTTPS backend. `--proxy-protocol` используйте только на за�
   и первый байт, не похожий на TLS, пересылаются настоящему backend.
   Прокси не генерирует свой особый HTTP redirect. Для masking установлен
   idle timeout 30 секунд.
-- **Anti-replay:** кеш учитывает аутентифицированную часть ClientHello без
-  изменяемых временных байтов. Кеш общий в пределах процесса и переживает
-  перезапуск listener, но не перезапуск процесса.
+- **Anti-replay:** кеш в оперативной памяти учитывает аутентифицированную часть
+  ClientHello без изменяемых временных байтов. До 8192 записей с окном 241 секунда
+  (включая границы допустимого отклонения времени). При заполнении действующие
+  записи не вытесняются: новые подключения идут на сайт-маскировку.
+  Кеш общий для listener в процессе и очищается при завершении процесса.
+  SQLite, файлов и Docker-тома для anti-replay нет; настройка не требуется
+  ни на Linux, ни в Docker. В статистике: `tls_replay`, `tls_replay_full`.
+  Повтор может быть активной пробой, но не определяет достоверно сканер Revisor.
 - При запуске размер первого зашифрованного ответа измеряется на заданном
   backend с публичным SNI. Это проверка формы первого ответа, а не полная
   проверка сертификата, PQ-совместимости домена или эффективности обхода.
@@ -109,14 +284,37 @@ HTTPS backend. `--proxy-protocol` используйте только на за�
 
 ## TCPMSS на Linux VPS
 
+Установщик включает MSS 88 по умолчанию независимо от nfqws:
+
+```bash
+sudo python3 deploy/setup_masking.py --fake-tls-domain proxy.example.com --tcpmss 92
+sudo python3 deploy/setup_masking.py --fake-tls-domain proxy.example.com --no-tcpmss
+```
+
+В host-режиме устанавливается iptables, помощник копируется в каталог состояния,
+а сервис `tg-ws-proxy-tcpmss.service` запускается перед прокси. Он повторно
+применяет правила при загрузке и удаляет их при остановке. После запуска
+установщик дополнительно проверяет само правило. Повторная установка
+останавливает старый сервис, очищает старый порт и заменяет правила.
+`--no-tcpmss` останавливает, отключает и удаляет сервис вместе с его правилами.
+Ошибка обязательного IPv4 завершает установку ошибкой; IPv6 проверяется
+по возможности, с явным предупреждением при недоступности. Это не проверка
+эффективности обхода конкретного DPI.
+
+`--prepare-only` только создаёт unit-файл. В Docker MSS применяется на внутреннем
+порту 1443 при каждом старте контейнера. Отключение пересоздаёт контейнер без
+NET_ADMIN, root bootstrap и прежнего сетевого namespace. Обычный Docker-образ
+по умолчанию продолжает запускаться непривилегированно без TCPMSS.
+
 Помощник `deploy/linux/dpi.py` использует только стандартную библиотеку Python.
-Он создаёт отдельную цепочку `TGWS_DPI_<port>` в таблице mangle, не очищает
+С флагом `--tcpmss-only` он создаёт отдельную цепочку `TGWS_MSS_<port>`
+в таблице mangle, независимо от NFQUEUE (`TGWS_DPI_<port>`), не очищает
 чужие правила и исключает loopback. Сначала просмотрите команды:
 
 ```bash
-python3 deploy/linux/dpi.py apply --port 443 --mss 88 --dry-run
-sudo python3 deploy/linux/dpi.py apply --port 443 --mss 88
-sudo python3 deploy/linux/dpi.py status --port 443 --mss 88
+python3 deploy/linux/dpi.py apply --tcpmss-only --port 443 --mss 88 --dry-run
+sudo python3 deploy/linux/dpi.py apply --tcpmss-only --port 443 --mss 88
+sudo python3 deploy/linux/dpi.py status --tcpmss-only --port 443 --mss 88
 ```
 
 MSS меняется в **SYN-ACK VPS → клиент**, побуждая клиента отправлять ClientHello
@@ -125,36 +323,52 @@ MSS меняется в **SYN-ACK VPS → клиент**, побуждая кл�
 может быть отличительным признаком. Подбирайте значение по сети.
 `--mss 0` отключает TCPMSS при использовании NFQUEUE.
 
-Для публичного IPv6 добавьте `--ipv6` при apply/status/remove. Ошибка IPv6
-не скрывается. Без этого флага устанавливаются только IPv4-правила.
+Добавьте `--ipv6` для обязательного IPv6 или `--ipv6-optional` для попытки
+настроить IPv6, сохранив работающий IPv4 при его недоступности. Ошибки не
+скрываются. Без этих флагов устанавливаются только IPv4-правила.
 Нужны `iptables`/`ip6tables`, поддержка TCPMSS ядром и права администратора.
 После смены порта сначала удалите правила для старого порта.
 
 ## nfqws и автозапуск
 
-Установите совместимый `nfqws` из [zapret](https://github.com/bol-van/zapret)
-отдельно. Проверьте поддержку параметров из unit-файла в `nfqws --help`.
-Внешние бинарные файлы автоматически не скачиваются.
-
-Шаблоны рассчитаны на репозиторий `/opt/tg-ws-proxy`, `nfqws` по пути
-`/opt/zapret/nfq/nfqws`, публичный порт 443 и NFQUEUE 200. Исправьте их,
-если установка отличается. Номер очереди не должен быть занят другим сервисом.
-Согласуйте его в обоих unit-файлах; TTL 6 тоже требует проверки на вашей сети.
+Установщик автоматически собирает zapret **v72.12** и включает nfqws в обоих режимах:
 
 ```bash
-sudo cp deploy/linux/tg-ws-proxy-{dpi,nfqws}.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now tg-ws-proxy-dpi.service
-sudo python3 deploy/linux/dpi.py status --port 443 --mss 88 --nfqueue
+sudo python3 deploy/setup_masking.py --fake-tls-domain proxy.example.com
+python3 deploy/setup_masking.py --mode docker --fake-tls-domain proxy.example.com
 ```
 
-Сервис DPI запускает зависимый nfqws и устанавливает TCPMSS + NFQUEUE.
-Для IPv6 добавьте `--ipv6` в обе команды сервиса DPI.
-Чтобы сохранять только TCPMSS, удалите зависимость `Requires`/соответствующее
-`After` для nfqws и флаг `--nfqueue` из `ExecStart`.
+По умолчанию: `fake,split2`, TTL 6, split-pos 1, md5sig,badseq, any-protocol и
+NFQUEUE 200. `badseq` добавляет неверный TCP sequence number fake-пакету,
+чтобы он отбрасывался и на коротком маршруте, где TTL ещё не истёк.
+Для настройки TTL добавьте `--nfqws-ttl 8`, для отключения —
+`--no-nfqws`. Повторный запуск удаляет прежние автоматические правила и
+сервисы; TCPMSS управляется независимо. `--prepare-only` только готовит файлы.
+
+На хосте зависимости ставятся через apt, бинарник собирается во временном
+каталоге и атомарно устанавливается в `/opt/tg-ws-proxy-nfqws/nfqws`.
+Ошибка сборки сохраняет установленный бинарник. Эта установка не меняет
+чужой `/opt/zapret`. Создаются сервисы `tg-ws-proxy-nfqws.service` и
+`tg-ws-proxy-dpi.service`; правила восстанавливаются systemd при загрузке.
+Проверяются привязка очереди, активность процесса и правила IPv4;
+недоступность IPv6 выводится явно. При смене порта повторите установку.
+
+В Docker компилятор остаётся в build stage. Контейнер `nfqws` владеет сетевым
+namespace и публикацией порта; прокси подключается через `network_mode:
+service:nfqws` после успешного healthcheck обработчика очереди. Ни systemd,
+ни privileged, ни изменение firewall хоста не нужны. Проверка:
+
+```bash
+docker compose -f .tgws-masking/compose.yaml logs nfqws
+docker compose -f .tgws-masking/compose.yaml ps
+```
+
+Для ручной установки сохранены шаблоны `deploy/linux/tg-ws-proxy-*.service`.
+Они используют внешний `/opt/zapret/nfq/nfqws` и требуют настройки путей и порта.
+Не копируйте их поверх автоматически созданных сервисов.
 
 В очередь попадают **исходящие данные VPS → клиент** с публичного порта,
-без SYN/FIN/RST. `nfqws` использует `fake,split2`, `md5sig`, TTL и
+без SYN/FIN/RST. `nfqws` использует `fake,split2`, `md5sig,badseq`, TTL и
 `any-protocol`, поскольку это серверные ответы, а не ClientHello. Это
 отдельный системный процесс, Python-прокси не получает CAP_NET_ADMIN.
 `--queue-bypass` пропускает трафик при отсутствии обработчика очереди;
@@ -172,7 +386,7 @@ sudo python3 deploy/linux/dpi.py status --port 443 --mss 88 --nfqueue
 
 ```bash
 sudo systemctl disable --now tg-ws-proxy-dpi.service
-sudo systemctl stop tg-ws-proxy-nfqws.service
+sudo systemctl disable --now tg-ws-proxy-nfqws.service
 sudo python3 deploy/linux/dpi.py remove --port 443
 ```
 

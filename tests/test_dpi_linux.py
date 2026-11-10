@@ -45,6 +45,39 @@ class FakeIptables:
 
 
 class FirewallLifecycleTest(unittest.TestCase):
+    def test_automatic_tcpmss_is_independent_of_existing_nfqueue_rules(self):
+        fake = FakeIptables()
+        with patch.object(dpi.subprocess, 'run', side_effect=fake):
+            original = dpi.Firewall('iptables')
+            original.apply(443, 0, 200)
+            expected = list(fake.chains['TGWS_DPI_443'])
+            automatic = dpi.Firewall('iptables', tcpmss_only=True)
+            automatic.apply(443, 88, None)
+            automatic.apply(443, 92, None)
+            automatic.verify(443, 92, None)
+            self.assertEqual(len(fake.chains['TGWS_MSS_443']), 1)
+            automatic.remove(443)
+        self.assertEqual(fake.chains['TGWS_DPI_443'], expected)
+        self.assertEqual(len(fake.chains['OUTPUT']), 2)
+
+    def test_optional_ipv6_failure_keeps_verified_ipv4_rules(self):
+        fake = FakeIptables()
+
+        def run(cmd, **kwargs):
+            if cmd[0] == 'ip6tables':
+                return subprocess.CompletedProcess(cmd, 1, '', 'IPv6 unavailable')
+            return fake(cmd, **kwargs)
+
+        with patch.object(dpi.subprocess, 'run', side_effect=run), \
+                patch.object(dpi.sys, 'platform', 'linux'), \
+                patch.object(dpi.os, 'geteuid', return_value=0, create=True), \
+                patch.object(dpi.shutil, 'which', side_effect=lambda name: name), \
+                contextlib.redirect_stderr(io.StringIO()) as error, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(dpi.main(['apply', '--tcpmss-only', '--ipv6-optional']), 0)
+        self.assertIn('IPv6', error.getvalue())
+        self.assertIn('TGWS_MSS_443', fake.chains)
+
     def test_apply_is_idempotent_and_remove_preserves_unrelated_rules(self):
         fake = FakeIptables()
         with patch.object(dpi.subprocess, 'run', side_effect=fake):
@@ -92,7 +125,8 @@ class FirewallLifecycleTest(unittest.TestCase):
 
     def test_invalid_options_do_not_touch_the_firewall(self):
         for args in (['--port', '0'], ['--port', '65536'], ['--mss', '1'],
-                     ['--queue-num', '-1'], ['--mss', '0']):
+                     ['--queue-num', '-1'], ['--mss', '0'],
+                     ['--tcpmss-only', '--nfqueue']):
             with self.subTest(args=args), patch.object(dpi.subprocess, 'run') as run, \
                     contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 dpi.main(['apply', '--dry-run'] + args)

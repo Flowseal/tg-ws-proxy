@@ -85,20 +85,20 @@ REPLAY_WINDOW = 2 * TIMESTAMP_TOLERANCE + 1
 # Only hellos that passed the HMAC check with the secret are stored, so without
 # the secret nobody can flood the cache to evict an entry early; reaching the
 # limit takes this many genuine handshakes within one window
-REPLAY_CACHE_SIZE = 65536
+REPLAY_CACHE_SIZE = 8192
 
 
 class _ReplayCache:
     """Authenticated prefixes of accepted ClientHellos; a repeat is a probe.
 
-    One cache per process on purpose: it survives proxy restarts, so a hello
-    accepted just before a restart cannot be replayed right after it.
+    Shared by listeners within the process; cleared when the process exits.
     """
 
     def __init__(self, window: float = REPLAY_WINDOW, size: int = REPLAY_CACHE_SIZE):
         self.window = window
         self.size = size
         self._expiry: OrderedDict = OrderedDict()
+        self.last_result = 'new'
 
     def first_seen(self, replay_key: bytes) -> bool:
         now = time.monotonic()
@@ -106,10 +106,13 @@ class _ReplayCache:
         while self._expiry and next(iter(self._expiry.values())) <= now:
             self._expiry.popitem(last=False)
         if replay_key in self._expiry:
+            self.last_result = 'replay'
             return False
         if len(self._expiry) >= self.size:
-            self._expiry.popitem(last=False)
+            self.last_result = 'full'
+            return False
         self._expiry[replay_key] = now + self.window
+        self.last_result = 'new'
         return True
 
 

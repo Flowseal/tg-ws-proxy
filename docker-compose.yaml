@@ -1,0 +1,84 @@
+name: tg-ws-proxy
+
+# Release deployment: pulls prebuilt images, never builds on the VPS.
+# Set DOCKERHUB_NAMESPACE in .env (see .env.example).
+services:
+  cover:
+    image: ${DOCKERHUB_NAMESPACE:?Set DOCKERHUB_NAMESPACE in .env}/tg-ws-proxy-cover:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: ./config.toml
+        target: /etc/tg-ws-proxy/config.toml
+        read_only: true
+        bind:
+          create_host_path: false
+      # For masking.certificate/private_key = "certs/...", uncomment:
+      # - ./certs:/etc/tg-ws-proxy/certs:ro
+      - state:/var/lib/tg-ws-proxy
+    networks: [cover]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [NET_RAW]
+    healthcheck:
+      test: [CMD, python, /app/deploy/docker/entrypoint.py, health, cover]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  nfqws:
+    image: ${DOCKERHUB_NAMESPACE:?Set DOCKERHUB_NAMESPACE in .env}/tg-ws-proxy-nfqws:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    init: true
+    depends_on:
+      cover:
+        condition: service_healthy
+        restart: true
+    volumes:
+      - state:/var/lib/tg-ws-proxy:ro
+    ports:
+      - "${PUBLIC_BIND_ADDRESS:-0.0.0.0}:${PUBLIC_PORT:-443}:1443"
+    networks: [default, cover]
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, NET_RAW]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, python, /app/deploy/docker/entrypoint.py, health, nfqws]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  proxy:
+    image: ${DOCKERHUB_NAMESPACE:?Set DOCKERHUB_NAMESPACE in .env}/tg-ws-proxy:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      cover:
+        condition: service_healthy
+        restart: true
+      nfqws:
+        condition: service_healthy
+        restart: true
+    network_mode: service:nfqws
+    environment:
+      TG_WS_PROXY_PUBLISHED_PORT: ${PUBLIC_PORT:-443}
+    volumes:
+      - state:/var/lib/tg-ws-proxy:ro
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: [CMD, python, /app/deploy/docker/entrypoint.py, health, proxy]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+volumes:
+  state:
+
+networks:
+  cover:
+    internal: true
+  default:

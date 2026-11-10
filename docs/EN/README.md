@@ -58,6 +58,39 @@
 - [Building from Source](./BuildFromSource.md)
 - [Contributor Guide](./CONTRIBUTING.md)
 
+## VPS: automatic masking setup
+
+From the cloned repository on Debian/Ubuntu with systemd:
+
+```bash
+sudo python3 deploy/setup_masking.py --domain proxy.example.com
+```
+
+This installs nginx and headless proxy dependencies, creates an HTTPS site,
+self-signed certificate, persistent secret and systemd service, then checks
+HTTPS through the proxy and prints an `ee` link. Prefer a domain you own that
+resolves to the VPS. Public port 443 must be available. Supply `--cert` and
+`--key` to use an existing trusted certificate.
+
+For prebuilt Docker Hub images use [standalone Compose](./DockerHub.md):
+no host Python or server-side build is needed. Source builds remain available below.
+
+With Docker Compose and OpenSSL installed:
+
+```bash
+python3 deploy/setup_masking.py --mode docker --domain proxy.example.com
+```
+
+This builds and starts the proxy, a private HTTPS backend and nfqws. Reruns preserve
+the secret, certificate and operator website. Add `--prepare-only` to generate
+the files without starting services. Self-signed certificates are not browser
+trusted. TCPMSS=88 is enabled automatically: by a dedicated systemd service on
+Linux, or inside the container network namespace before dropping to `app`.
+Change it with `--tcpmss 92`, or use `--no-tcpmss` to disable it and remove
+previous automatic rules. nfqws is also installed and enabled automatically
+(TTL 6, NFQUEUE 200). Use `--nfqws-ttl 8` to tune TTL or `--no-nfqws` to disable it. See
+[Client ↔ VPS protection](./ClientDpi.md) and [Docker](./README.docker.md).
+
 ## Windows: Quick Start
 
 Go to the [releases page](https://github.com/Flowseal/tg-ws-proxy/releases) and download:

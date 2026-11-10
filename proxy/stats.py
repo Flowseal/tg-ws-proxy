@@ -14,6 +14,8 @@ class _Stats:
         self.connections_fronting = 0
         self.connections_bad = 0
         self.connections_masked = 0
+        self.tls_replay = 0
+        self.tls_replay_full = 0
         self.ws_errors = 0
         self.bytes_up = 0
         self.bytes_down = 0
@@ -41,6 +43,8 @@ class _Stats:
                 f"front={self.connections_fronting} "
                 f"bad={self.connections_bad} "
                 f"masked={self.connections_masked} "
+                f"tls_replay={self.tls_replay} "
+                f"tls_replay_full={self.tls_replay_full} "
                 f"err={self.ws_errors} "
                 f"pool={pool_s} "
                 f"cf_pool={cf_pool_s} "

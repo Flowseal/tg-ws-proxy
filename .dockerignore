@@ -9,6 +9,12 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .venv/
+.tgws-masking/
+config.toml
+.env
+**/proxy.env
+**/state.json
+**/tls/
 venv/
 dist/
 build/

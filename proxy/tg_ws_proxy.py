@@ -35,6 +35,7 @@ from .cf_h2 import CfH2Pool
 from .network_debug import log_ws_flow
 from .event_loop import install_self_pipe_guard
 from ._aes import Cipher, algorithms, modes
+from configuration import apply_sources
 
 
 log = logging.getLogger('tg-mtproto-proxy')
@@ -44,6 +45,17 @@ LISTENER_RESTART_DELAY = 1.0
 BAD_HANDSHAKE_DRAIN_TIMEOUT = 10.0
 BAD_HANDSHAKE_DRAIN_LIMIT = 64 * 1024
 cf_h2_pool: Optional[CfH2Pool] = None
+
+
+def _admit_tls_hello(key):
+    # No await between lookup and insertion: admission is atomic within the
+    # single event-loop thread that handles incoming connections.
+    replay_cache.first_seen(key)
+    result = replay_cache.last_result
+    if result != 'new':
+        counter = {'replay': 'tls_replay', 'full': 'tls_replay_full'}[result]
+        setattr(stats, counter, getattr(stats, counter) + 1)
+    return result
 
 
 def _try_handshake(handshake: bytes, secret: bytes) -> Optional[Tuple[int, bool, bytes, bytes]]:
@@ -163,13 +175,13 @@ async def _read_client_init(reader, writer, secret, label, masking):
             tls_result = None
         # An observer can modify the timestamp XOR bytes without the secret.
         # Key on the authenticated prefix so all time variants hit one entry.
-        replayed = (tls_result is not None
-                    and not replay_cache.first_seen(tls_result[0][:28]))
+        admission = (_admit_tls_hello(tls_result[0][:28])
+                     if tls_result is not None else 'invalid')
 
-        if tls_result is None or replayed:
+        if admission != 'new':
             log.debug("[%s] Fake TLS %s (size=%d rec=%d) "
                       "-> masking",
-                      label, "hello replayed" if replayed else "verify failed",
+                      label, admission,
                       len(client_hello), record_len)
             await proxy_to_masking_domain(
                 reader, writer, client_hello, mask_host, label, port=mask_port)
@@ -434,16 +446,17 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
         except (OSError, AttributeError):
             pass
 
-    link_host = get_link_host(proxy_config.host)
+    link_host = proxy_config.public_host or get_link_host(proxy_config.host)
+    link_port = proxy_config.public_port or proxy_config.port
     ftls = proxy_config.fake_tls_domain
     dd_link = (f"tg://proxy?server={link_host}"
-               f"&port={proxy_config.port}"
+               f"&port={link_port}"
                f"&secret=dd{proxy_config.secret}")
     ee_link = ""
     if ftls:
         domain_hex = ftls.encode('ascii').hex()
         ee_link = (f"tg://proxy?server={link_host}"
-                   f"&port={proxy_config.port}"
+                   f"&port={link_port}"
                    f"&secret=ee{proxy_config.secret}{domain_hex}")
 
     log.info("=" * 60)
@@ -603,7 +616,10 @@ def run_proxy(stop_event: Optional[asyncio.Event] = None):
 
 def main():
     ap = argparse.ArgumentParser(
-        description='Telegram MTProto WebSocket Bridge Proxy')
+        description='Telegram MTProto WebSocket Bridge Proxy', allow_abbrev=False)
+    ap.add_argument('--config', help='TOML configuration file')
+    ap.add_argument('--public-host', default='', help='Host in Telegram connection links')
+    ap.add_argument('--public-port', type=int, default=0, help='Port in Telegram connection links')
     ap.add_argument('--port', type=int, default=1443,
                     help='Listen port (default 1443)')
     ap.add_argument('--host', type=str, default='127.0.0.1',
@@ -668,7 +684,15 @@ def main():
     ap.add_argument('--proxy-protocol', action='store_true',
                     help='Accept PROXY protocol v1 header '
                          '(for use behind nginx/haproxy with proxy_protocol on)')
+    # Positive forms allow CLI to override disabled options in TOML/environment.
+    for option, dest in (('fake-tls-drs', 'no_fake_tls_drs'),
+                         ('fake-tls-split', 'no_fake_tls_split'),
+                         ('h2', 'no_h2'), ('cfproxy', 'no_cfproxy'), ('secure', 'no_secure')):
+        ap.add_argument('--' + option, dest=dest, action='store_false')
+    apply_sources(ap, sys.argv[1:])
     args = ap.parse_args()
+    if not 1 <= args.port <= 65535 or not 0 <= args.public_port <= 65535:
+        ap.error('listen port must be 1..65535; public port must be 0..65535')
     if not 1 <= args.fake_tls_mask_port <= 65535:
         ap.error('--fake-tls-mask-port must be between 1 and 65535')
     for name in ('fake_tls_split_delay_ms', 'fake_tls_split_jitter_ms'):
@@ -712,6 +736,8 @@ def main():
         log.info("Generated secret: %s", secret_hex)
 
     proxy_config.port = args.port
+    proxy_config.public_host = args.public_host
+    proxy_config.public_port = args.public_port
     proxy_config.host = args.host
     proxy_config.secret = secret_hex
     proxy_config.dc_redirects = dc_redirects

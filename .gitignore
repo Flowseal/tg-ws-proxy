@@ -8,6 +8,9 @@ build/
 *.spec.bak
 venv/
 .venv/
+.tgws-masking/
+config.toml
+.env
 
 # PyInstaller
 *.manifest

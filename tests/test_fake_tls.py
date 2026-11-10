@@ -439,12 +439,12 @@ class ReplayCacheTest(unittest.TestCase):
         with patch('proxy.fake_tls.time.monotonic', return_value=110.0):
             self.assertTrue(cache.first_seen(b'a'))
 
-    def test_size_is_bounded_by_dropping_oldest(self):
+    def test_size_is_bounded_without_dropping_live_entries(self):
         cache = fake_tls._ReplayCache(window=10, size=2)
         for key in (b'a', b'b', b'c'):
             cache.first_seen(key)
         self.assertEqual(len(cache._expiry), 2)
-        self.assertTrue(cache.first_seen(b'a'))
+        self.assertFalse(cache.first_seen(b'a'))
 
     def test_window_covers_the_whole_timestamp_tolerance(self):
         self.assertGreaterEqual(fake_tls.REPLAY_WINDOW, 2 * fake_tls.TIMESTAMP_TOLERANCE)
@@ -456,13 +456,15 @@ class ReplayCacheTest(unittest.TestCase):
         self.assertFalse(cache.first_seen(b'a'), 'a live entry must not be evicted before the lookup')
         self.assertFalse(cache.first_seen(b'b'))
 
-    def test_full_cache_evicts_the_oldest_entry_for_a_new_key(self):
+    def test_full_cache_masks_new_keys_without_forgetting_old_keys(self):
         cache = fake_tls._ReplayCache(window=10, size=2)
-        for key in (b'a', b'b', b'c'):
+        for key in (b'a', b'b'):
             self.assertTrue(cache.first_seen(key))
-        self.assertEqual(list(cache._expiry), [b'b', b'c'])
-        self.assertFalse(cache.first_seen(b'b'))
         self.assertFalse(cache.first_seen(b'c'))
+        self.assertEqual(cache.last_result, 'full')
+        self.assertEqual(list(cache._expiry), [b'a', b'b'])
+        self.assertFalse(cache.first_seen(b'a'))
+        self.assertFalse(cache.first_seen(b'b'))
 
     def test_entry_is_still_a_replay_just_before_expiry(self):
         cache = fake_tls._ReplayCache(window=10, size=8)
@@ -555,6 +557,52 @@ class ReplayedHelloTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
         writer.write.assert_not_called()
         masking.assert_awaited_once()
+
+    async def test_unauthed_probes_cannot_fill_replay_cache(self):
+        for hello in (_structured_client_hello(secret=b'\xff' * 16),
+                      _structured_client_hello(server_name='other.example')):
+            result, writer, masking = await self._handshake(hello)
+            self.assertIsNone(result)
+            writer.write.assert_not_called()
+            masking.assert_awaited_once()
+        self.assertEqual(len(fake_tls.replay_cache._expiry), 0)
+
+    async def test_saturated_cache_masks_new_hello_and_preserves_old_hello(self):
+        from proxy import tg_ws_proxy
+
+        cache = fake_tls._ReplayCache(size=1)
+        before = tg_ws_proxy.stats.tls_replay_full
+        hello = _structured_client_hello()
+        with patch.object(tg_ws_proxy, 'replay_cache', cache):
+            first, _, _ = await self._handshake(hello)
+            self.assertIsNotNone(first)
+            rejected, writer, masking = await self._handshake(_structured_client_hello())
+            self.assertIsNone(rejected)
+            writer.write.assert_not_called()
+            masking.assert_awaited_once()
+            self.assertEqual(tg_ws_proxy.stats.tls_replay_full, before + 1)
+            replayed, writer, masking = await self._handshake(hello)
+            self.assertIsNone(replayed)
+            writer.write.assert_not_called()
+            masking.assert_awaited_once()
+
+    async def test_concurrent_same_hello_is_admitted_once(self):
+        from proxy import tg_ws_proxy
+
+        hello = _structured_client_hello()
+
+        async def handshake():
+            reader = asyncio.StreamReader()
+            reader.feed_data(hello + wrap_tls_record(os.urandom(64)))
+            reader.feed_eof()
+            return await tg_ws_proxy._read_client_init(
+                reader, Mock(drain=AsyncMock()), SECRET, 'test', 'example.com')
+
+        with patch.object(tg_ws_proxy, 'proxy_to_masking_domain', AsyncMock()) as masking, \
+                patch.object(tg_ws_proxy.asyncio, 'sleep', AsyncMock()):
+            results = await asyncio.gather(*(handshake() for _ in range(8)))
+        self.assertEqual(sum(result is not None for result in results), 1)
+        self.assertEqual(masking.await_count, 7)
 
 
 class DynamicRecordSizingTest(unittest.IsolatedAsyncioTestCase):

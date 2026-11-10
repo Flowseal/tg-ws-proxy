@@ -35,6 +35,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "tomli>=2.0.1; python_version < '3.11'",
     "pyperclip==1.9.0",
     "certifi",
     "httpx[http2]==0.28.1",
@@ -64,7 +65,7 @@ Source = "https://github.com/Flowseal/tg-ws-proxy"
 Issues = "https://github.com/Flowseal/tg-ws-proxy/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["proxy", "ui", "utils"]
+packages = ["proxy", "ui", "utils", "configuration"]
 
 [tool.hatch.build.force-include]
 "windows.py" = "windows.py"

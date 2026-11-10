@@ -22,15 +22,11 @@ FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH=/opt/venv/bin:$PATH \
-    TG_WS_PROXY_HOST=0.0.0.0 \
-    TG_WS_PROXY_PORT=1443 \
     TG_WS_PROXY_SECRET=""  \
-    TG_WS_PROXY_DC_IPS="2:149.154.167.220 4:149.154.167.220" \
-    TG_WS_PROXY_CF_WORKER="" \
-    TG_WS_PROXY_NO_SECURE=False
+    TG_WS_PROXY_CF_WORKER=""
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tini ca-certificates \
+    && apt-get install -y --no-install-recommends tini ca-certificates iptables \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system app \
     && useradd --system --gid app --create-home --home-dir /home/app app
@@ -39,23 +35,30 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY proxy ./proxy
 COPY utils ./utils
+COPY configuration ./configuration
+COPY deploy/run_proxy.py ./deploy/run_proxy.py
+COPY deploy/linux/dpi.py ./deploy/linux/dpi.py
 COPY docs/README.md LICENSE ./
 
 USER app
 
 EXPOSE 1443/tcp
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/bin/sh", "-lc", "set -eu; args=\"\
-    --host ${TG_WS_PROXY_HOST} \
-    --port ${TG_WS_PROXY_PORT}\"; \
-    for dc in ${TG_WS_PROXY_DC_IPS}; \
-        do args=\"$args --dc-ip $dc\"; \
-    done; \
-    if [ -n \"${TG_WS_PROXY_SECRET}\" ]; \
-        then args=\"$args --secret ${TG_WS_PROXY_SECRET}\"; fi; \
-    if [ -n \"${TG_WS_PROXY_CF_WORKER}\" ]; \
-        then args=\"$args --cfproxy-worker-domain ${TG_WS_PROXY_CF_WORKER}\"; fi; \
-    if [ \"${TG_WS_PROXY_NO_SECURE}\" = \"True\" ]; \ 
-        then args=\"$args --no-secure \"; fi; \
-    exec /opt/venv/bin/python -u proxy/tg_ws_proxy.py $args \"$@\"", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/opt/venv/bin/python", "/app/deploy/run_proxy.py"]
 CMD []
+
+# Optional packet processor. Ordinary proxy images retain their unprivileged entrypoint.
+FROM python:3.12-slim AS nfqws-builder
+COPY deploy/linux/nfqws.py /tmp/nfqws.py
+RUN python /tmp/nfqws.py build
+
+FROM python:3.12-slim AS nfqws
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends iptables libnetfilter-queue1 libnfnetlink0 libcap2 libmnl0 zlib1g \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=nfqws-builder /opt/tg-ws-proxy-nfqws /opt/tg-ws-proxy-nfqws
+COPY deploy/linux/nfqws.py deploy/linux/dpi.py /app/deploy/linux/
+ENTRYPOINT ["python", "/app/deploy/linux/nfqws.py", "container"]
+
+# Keep docker build's default target compatible with ordinary docker run.
+FROM runtime AS final

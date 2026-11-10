@@ -12,8 +12,8 @@ import subprocess
 import sys
 
 
-def rules(port, mss, queue):
-    chain = 'TGWS_DPI_' + str(port)
+def rules(port, mss, queue, tcpmss_only=False):
+    chain = ('TGWS_MSS_' if tcpmss_only else 'TGWS_DPI_') + str(port)
     jump = ['OUTPUT', '!', '-o', 'lo', '-p', 'tcp', '--sport', str(port), '-j', chain]
     entries = []
     if mss:
@@ -26,9 +26,13 @@ def rules(port, mss, queue):
 
 
 class Firewall:
-    def __init__(self, binary, dry_run=False):
+    def __init__(self, binary, dry_run=False, tcpmss_only=False):
         self.binary = binary
         self.dry_run = dry_run
+        self.tcpmss_only = tcpmss_only
+
+    def rules(self, port, mss, queue):
+        return rules(port, mss, queue, self.tcpmss_only)
 
     def call(self, *args, check=True):
         cmd = [self.binary, '-w', '5', '-t', 'mangle'] + list(args)
@@ -43,7 +47,7 @@ class Firewall:
         return result.returncode
 
     def apply(self, port, mss, queue):
-        chain, jump, entries = rules(port, mss, queue)
+        chain, jump, entries = self.rules(port, mss, queue)
         self.call('-S', 'OUTPUT')
         if self.call('-S', chain, check=False):
             self.call('-N', chain)
@@ -55,13 +59,13 @@ class Firewall:
         self.verify(port, mss, queue)
 
     def verify(self, port, mss, queue):
-        _, jump, entries = rules(port, mss, queue)
+        _, jump, entries = self.rules(port, mss, queue)
         self.call('-C', *jump)
         for entry in entries:
             self.call('-C', *entry)
 
     def remove(self, port):
-        chain, jump, _ = rules(port, 0, None)
+        chain, jump, _ = self.rules(port, 0, None)
         if self.dry_run:
             self.call('-D', *jump)
             self.call('-F', chain)
@@ -88,9 +92,14 @@ def main(argv=None):
                         help='Advertised MSS, 64..1460; 0 disables clamping (default 88)')
     parser.add_argument('--nfqueue', action='store_true',
                         help='Queue downstream data to a separately running nfqws')
+    parser.add_argument('--tcpmss-only', action='store_true',
+                        help='Use a separate TCPMSS-only chain, independent of NFQUEUE')
     parser.add_argument('--queue-num', type=int, default=200)
-    parser.add_argument('--ipv6', action='store_true',
-                        help='Require IPv6 rules too; failure is reported, not ignored')
+    ipv6 = parser.add_mutually_exclusive_group()
+    ipv6.add_argument('--ipv6', action='store_true',
+                      help='Require IPv6 rules too; failure is reported, not ignored')
+    ipv6.add_argument('--ipv6-optional', action='store_true',
+                      help='Try IPv6 too; report failures while retaining verified IPv4 rules')
     parser.add_argument('--dry-run', action='store_true', help='Print commands without executing')
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
@@ -101,26 +110,44 @@ def main(argv=None):
         parser.error('--queue-num must be between 0 and 65535')
     if args.action == 'apply' and not args.mss and not args.nfqueue:
         parser.error('enable --mss or --nfqueue')
+    if args.tcpmss_only and (args.nfqueue or (args.action != 'remove' and not args.mss)):
+        parser.error('--tcpmss-only requires a nonzero MSS and cannot use --nfqueue')
     if not args.dry_run and sys.platform != 'linux':
         parser.error('firewall operations require Linux; use --dry-run to preview')
     if not args.dry_run and args.action != 'status' and os.geteuid() != 0:
         parser.error('firewall changes require root')
 
     firewalls = []
-    for name in (['iptables', 'ip6tables'] if args.ipv6 else ['iptables']):
+    for name in (['iptables', 'ip6tables'] if args.ipv6 or args.ipv6_optional else ['iptables']):
         binary = name if args.dry_run else shutil.which(name)
         if binary is None:
+            if name == 'ip6tables' and args.ipv6_optional:
+                print('IPv6 TCPMSS/DPI unavailable: ip6tables not found', file=sys.stderr)
+                continue
             parser.error(name + ' is required')
-        firewalls.append(Firewall(binary, args.dry_run))
+        firewalls.append(Firewall(binary, args.dry_run, args.tcpmss_only))
     queue = args.queue_num if args.nfqueue else None
     try:
         for firewall in firewalls:
-            if args.action == 'apply':
-                firewall.apply(args.port, args.mss, queue)
-            elif args.action == 'remove':
-                firewall.remove(args.port)
-            else:
-                firewall.verify(args.port, args.mss, queue)
+            try:
+                if args.action == 'apply':
+                    firewall.apply(args.port, args.mss, queue)
+                elif args.action == 'remove':
+                    firewall.remove(args.port)
+                else:
+                    firewall.verify(args.port, args.mss, queue)
+                if firewall is not firewalls[0] and not args.dry_run:
+                    print('IPv6 DPI rules: ' + args.action + ' OK')
+            except (OSError, RuntimeError) as exc:
+                if args.ipv6_optional and firewall is not firewalls[0]:
+                    print('IPv6 TCPMSS/DPI not verified: ' + str(exc), file=sys.stderr)
+                    if args.action == 'apply':
+                        try:
+                            firewall.remove(args.port)
+                        except (OSError, RuntimeError) as cleanup_error:
+                            print('IPv6 cleanup failed: ' + str(cleanup_error), file=sys.stderr)
+                    continue
+                raise
     except (OSError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
         if args.action == 'apply':
@@ -132,7 +159,7 @@ def main(argv=None):
                     print('Cleanup failed: ' + str(cleanup_error), file=sys.stderr)
         return 1
     if not args.dry_run:
-        print('DPI rules: ' + args.action + ' OK (does not verify bypass effectiveness)')
+        print('IPv4 DPI rules: ' + args.action + ' OK (does not verify bypass effectiveness)')
     return 0
 
 

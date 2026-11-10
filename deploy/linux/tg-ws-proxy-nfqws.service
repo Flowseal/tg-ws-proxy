@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 # Install a compatible nfqws separately. This service does not download binaries.
 # any-protocol is required because the queued data is server traffic, not ClientHello.
-ExecStart=/opt/zapret/nfq/nfqws --qnum=200 --dpi-desync=fake,split2 --dpi-desync-any-protocol=1 --dpi-desync-ttl=6 --dpi-desync-split-pos=1 --dpi-desync-fooling=md5sig
+ExecStart=/opt/zapret/nfq/nfqws --qnum=200 --dpi-desync=fake,split2 --dpi-desync-any-protocol=1 --dpi-desync-ttl=6 --dpi-desync-split-pos=1 --dpi-desync-fooling=md5sig,badseq
 Restart=on-failure
 RestartSec=3
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
