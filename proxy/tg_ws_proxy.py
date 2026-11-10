@@ -596,11 +596,37 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
 def run_proxy(stop_event: Optional[asyncio.Event] = None):
     asyncio.run(_run(stop_event,))
 
+def _port_type(value: str) -> int:
+    try:
+        ivalue = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid int value: '{value}'") from None
+    if not 0 <= ivalue <= 65535:
+        raise argparse.ArgumentTypeError(f"port must be between 0 and 65535, got {ivalue}")
+    return ivalue
+
+def _log_backups_type(value: str) -> int:
+    try:
+        ivalue = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid int value: '{value}'") from None
+    if ivalue < 1:
+        raise argparse.ArgumentTypeError(f"log backups must be at least 1, got {ivalue}")
+    return ivalue
+
+def _log_max_mb_type(value: str) -> float:
+    try:
+        fvalue = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid float value: '{value}'") from None
+    if fvalue <= 0:
+        raise argparse.ArgumentTypeError(f"log max size must be > 0, got {fvalue}")
+    return fvalue
 
 def main():
     ap = argparse.ArgumentParser(
         description='Telegram MTProto WebSocket Bridge Proxy')
-    ap.add_argument('--port', type=int, default=1443,
+    ap.add_argument('--port', type=_port_type, default=1443,
                     help='Listen port (default 1443)')
     ap.add_argument('--host', type=str, default='127.0.0.1',
                     help='Listen host (default 127.0.0.1)')
@@ -613,9 +639,9 @@ def main():
                     help='Debug logging')
     ap.add_argument('--log-file', type=str, default=None, metavar='PATH',
                     help='Log to file with rotation (default: stderr only)')
-    ap.add_argument('--log-max-mb', type=float, default=5, metavar='MB',
+    ap.add_argument('--log-max-mb', type=_log_max_mb_type, default=5, metavar='MB',
                     help='Max log file size in MB before rotation (default 5)')
-    ap.add_argument('--log-backups', type=int, default=1, metavar='N',
+    ap.add_argument('--log-backups', type=_log_backups_type, default=1, metavar='N',
                     help='Number of rotated log files to keep (min 1; '
                          'rotation needs at least one backup to bound size)')
     ap.add_argument('--buf-kb', type=int, default=256, metavar='KB',
@@ -725,6 +751,11 @@ def main():
         asyncio.run(_run())
     except KeyboardInterrupt:
         log.info("Shutting down. Final stats: %s", stats.summary())
+    except OSError as exc:
+        from utils.diagnostics import diagnoze_listen_error
+        msg, _ = diagnoze_listen_error(exc)
+        log.error("%s", msg or f"Failed to start proxy: {exc!r}")
+        sys.exit(1)
 
 
 if __name__ == '__main__':
