@@ -2,6 +2,12 @@
 
 Домен в параметре `--fake-tls-domain` должен указывать на тот же IP, на котором запущен прокси.
 
+Подготовьте отдельный HTTPS backend с сертификатом этого домена и укажите
+`--fake-tls-mask-host 127.0.0.1 --fake-tls-mask-port 8443` в команде ниже.
+Он должен быть отдельным от stream-listener и Python-прокси, иначе пробы
+могут возвращаться на этот же прокси. Полный пример и настройка Linux:
+[Защита клиент ↔ VPS](./ClientDpi.md).
+
 ## Пример `nginx.conf` для stream-модуля
 
 ```nginx
@@ -41,6 +47,7 @@ python3 proxy/tg_ws_proxy.py \
   --port 8446 \
   --host 127.0.0.1 \
   --fake-tls-domain example.com \
+  --fake-tls-mask-host 127.0.0.1 --fake-tls-mask-port 8443 \
   --proxy-protocol \
   --secret <32-hex-chars>
 ```

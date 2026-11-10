@@ -57,11 +57,13 @@ def _sign_client_hello(body: bytearray, secret: bytes, timestamp: int) -> bytes:
 
 
 def _structured_client_hello(suites=TELEGRAM_SUITES, shares=TELEGRAM_SHARES,
-                             secret: bytes = SECRET) -> bytes:
+                             secret: bytes = SECRET, server_name='example.com') -> bytes:
     key_share_list = b''.join(struct.pack('>HH', group, length) + os.urandom(length)
                               for group, length in shares)
+    name = server_name.encode('ascii')
+    sni = struct.pack('>HBH', len(name) + 3, 0, len(name)) + name
     extensions = (
-        struct.pack('>HH', 0x0000, 0)
+        struct.pack('>HH', 0x0000, len(sni)) + sni
         + struct.pack('>HHH', EXT_KEY_SHARE, 2 + len(key_share_list),
                       len(key_share_list))
         + key_share_list
@@ -164,6 +166,7 @@ class ParseClientHelloTest(unittest.TestCase):
         info = parse_client_hello(_structured_client_hello())
         self.assertEqual(info.cipher_suites, frozenset(TELEGRAM_SUITES))
         self.assertEqual(info.key_shares, dict(TELEGRAM_SHARES))
+        self.assertEqual(info.server_name, 'example.com')
 
     def test_structured_hello_still_verifies(self):
         self.assertIsNotNone(verify_client_hello(_structured_client_hello(), SECRET))
@@ -528,6 +531,181 @@ class ReplayedHelloTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(second)
         second_masking.assert_awaited_once()
         second_writer.write.assert_not_called()
+
+    async def test_timestamp_variation_cannot_bypass_replay_cache(self):
+        hello = _structured_client_hello()
+        first, _, _ = await self._handshake(hello)
+        self.assertIsNotNone(first)
+        # Timestamp is XORed into the last four random bytes. An observer can
+        # change it without knowing the secret; the authenticated prefix is stable.
+        timestamp = verify_client_hello(hello, SECRET)[2]
+        changed = bytearray(hello)
+        for i, (old, new) in enumerate(zip(struct.pack('<I', timestamp),
+                                          struct.pack('<I', timestamp + 1))):
+            changed[CLIENT_RANDOM_OFFSET + 28 + i] ^= old ^ new
+        self.assertIsNotNone(verify_client_hello(bytes(changed), SECRET))
+        second, writer, masking = await self._handshake(bytes(changed))
+        self.assertIsNone(second)
+        writer.write.assert_not_called()
+        masking.assert_awaited_once()
+
+    async def test_authenticated_wrong_sni_is_masked(self):
+        result, writer, masking = await self._handshake(
+            _structured_client_hello(server_name='other.example'))
+        self.assertIsNone(result)
+        writer.write.assert_not_called()
+        masking.assert_awaited_once()
+
+
+class DynamicRecordSizingTest(unittest.IsolatedAsyncioTestCase):
+    def test_ramp_within_one_write_preserves_the_payload(self):
+        payload = os.urandom(60000)
+        sizer = fake_tls.DynamicRecordSizer()
+        records = _split_records(wrap_tls_record(payload, sizer))
+        self.assertEqual([len(data) for _, data in records[:8]], [1369] * 8)
+        self.assertEqual(len(records[8][1]), TLS_APPDATA_MAX)
+        self.assertEqual(b''.join(data for _, data in records), payload)
+        self.assertEqual(sizer.bytes_sent, len(payload))
+
+    async def test_fragmented_wire_stream_roundtrips_with_ccs_and_drs(self):
+        payload = os.urandom(35000)
+        writer = Mock()
+        outbound = fake_tls.FakeTlsStream(None, writer)
+        outbound.write(payload[:3000])
+        outbound.write(payload[3000:])
+        wire = fake_tls._CCS_FRAME + b''.join(c.args[0] for c in writer.write.call_args_list)
+        reader = asyncio.StreamReader()
+        inbound = fake_tls.FakeTlsStream(reader, None)
+
+        async def feed():
+            for start in range(0, len(wire), 37):
+                reader.feed_data(wire[start:start + 37])
+                await asyncio.sleep(0)
+            reader.feed_eof()
+
+        feeder = asyncio.create_task(feed())
+        self.assertEqual(await inbound.readexactly(len(payload)), payload)
+        await feeder
+
+    def test_drs_state_is_per_connection_and_can_be_disabled(self):
+        writers = [Mock(), Mock(), Mock()]
+        streams = [fake_tls.FakeTlsStream(None, w, drs=(i != 2))
+                   for i, w in enumerate(writers)]
+        streams[0].write(b'a' * 20000)
+        streams[0].write(b'b' * 5000)
+        streams[1].write(b'b' * 5000)
+        streams[2].write(b'b' * 5000)
+        self.assertEqual(len(_split_records(writers[0].write.call_args.args[0])), 1)
+        self.assertEqual(len(_split_records(writers[1].write.call_args.args[0])), 4)
+        self.assertEqual(len(_split_records(writers[2].write.call_args.args[0])), 1)
+
+
+class ServerHelloSplitTest(unittest.IsolatedAsyncioTestCase):
+    async def test_split_preserves_authenticated_three_record_response(self):
+        response = build_server_hello(SECRET, os.urandom(32), os.urandom(32))
+        events = []
+        writer = Mock()
+        writer.write.side_effect = lambda data: events.append(('write', data))
+        writer.drain = AsyncMock(side_effect=lambda: events.append(('drain',)))
+
+        async def sleep(delay):
+            events.append(('sleep', delay))
+
+        with patch.object(fake_tls.asyncio, 'sleep', side_effect=sleep), \
+                patch.object(fake_tls.random, 'uniform', side_effect=[.01, 7]):
+            await fake_tls.send_server_hello(writer, response, delay_ms=5, jitter_ms=10)
+        self.assertEqual(events, [('sleep', .01), ('write', response[:1]), ('drain',),
+                                  ('sleep', .012), ('write', response[1:]), ('drain',)])
+        self.assertEqual(b''.join(c.args[0] for c in writer.write.call_args_list), response)
+
+    async def test_split_can_be_disabled(self):
+        writer = Mock(drain=AsyncMock())
+        with patch.object(fake_tls.asyncio, 'sleep', AsyncMock()):
+            await fake_tls.send_server_hello(writer, b'full response', split=False)
+        writer.write.assert_called_once_with(b'full response')
+
+
+class CoverBackendTest(unittest.IsolatedAsyncioTestCase):
+    async def test_tls_probe_uses_custom_backend_and_keeps_the_public_sni(self):
+        from proxy import tg_ws_proxy
+        from proxy.config import ProxyConfig
+
+        config = ProxyConfig(fake_tls_mask_host='127.0.0.1', fake_tls_mask_port=8443)
+        reader = asyncio.StreamReader()
+        hello = _structured_client_hello(secret=b'wrong secret!!!!')
+        reader.feed_data(hello)
+        reader.feed_eof()
+        with patch.object(tg_ws_proxy, 'proxy_config', config), \
+                patch.object(tg_ws_proxy, 'proxy_to_masking_domain', AsyncMock()) as relay:
+            self.assertIsNone(await tg_ws_proxy._read_client_init(
+                reader, Mock(), SECRET, 'probe', 'example.com'))
+        relay.assert_awaited_once_with(reader, unittest.mock.ANY, hello,
+                                       '127.0.0.1', 'probe', port=8443)
+
+    async def test_plaintext_probe_is_forwarded_without_synthetic_redirect(self):
+        from proxy import tg_ws_proxy
+
+        reader = asyncio.StreamReader()
+        reader.feed_data(b'GET / HTTP/1.1\r\n\r\n')
+        reader.feed_eof()
+        writer = Mock()
+        with patch.object(tg_ws_proxy, 'proxy_to_masking_domain', AsyncMock()) as relay:
+            await tg_ws_proxy._read_client_init(reader, writer, SECRET, 'probe', 'example.com')
+        self.assertEqual(relay.call_args.args[2], b'G')
+        writer.write.assert_not_called()
+
+    async def test_real_cover_connection_relays_both_directions(self):
+        await self._cover_roundtrip(half_close=False)
+
+    async def test_half_closed_probe_still_receives_backend_response(self):
+        await self._cover_roundtrip(half_close=True)
+
+    async def _cover_roundtrip(self, half_close):
+        received = []
+        relays = []
+
+        async def cover(reader, writer):
+            received.append(await reader.readexactly(11))
+            if half_close:
+                self.assertEqual(await reader.read(), b'')
+            writer.write(b'backend response')
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        async with await asyncio.start_server(cover, '127.0.0.1', 0) as server:
+            port = server.sockets[0].getsockname()[1]
+
+            def accept(reader, writer):
+                relays.append(asyncio.create_task(fake_tls.proxy_to_masking_domain(
+                    reader, writer, b'hello ', '127.0.0.1', 'test', port=port)))
+
+            async with await asyncio.start_server(accept, '127.0.0.1', 0) as frontend:
+                front_port = frontend.sockets[0].getsockname()[1]
+                reader, writer = await asyncio.open_connection('127.0.0.1', front_port)
+                try:
+                    writer.write(b'world')
+                    await writer.drain()
+                    if half_close:
+                        writer.write_eof()
+                    self.assertEqual(await asyncio.wait_for(reader.read(), 2), b'backend response')
+                    await asyncio.wait_for(asyncio.gather(*relays), 2)
+                finally:
+                    writer.close()
+                    await writer.wait_closed()
+        self.assertEqual(received, [b'hello world'])
+
+    async def test_self_referencing_cover_is_closed_before_forwarding(self):
+        downstream = Mock()
+        downstream.get_extra_info.return_value = ('127.0.0.1', 443)
+        upstream = Mock(wait_closed=AsyncMock())
+        upstream.get_extra_info.return_value = ('127.0.0.1', 443)
+        with patch.object(fake_tls.asyncio, 'open_connection',
+                          AsyncMock(return_value=(Mock(), upstream))):
+            await fake_tls.proxy_to_masking_domain(
+                Mock(), downstream, b'hello', 'example.com', 'test')
+        upstream.write.assert_not_called()
+        upstream.close.assert_called_once()
 
 
 if __name__ == '__main__':

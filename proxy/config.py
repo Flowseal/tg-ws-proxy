@@ -73,6 +73,12 @@ class ProxyConfig:
     cfproxy_h2_media: bool = True
     disable_secure: bool = False
     fake_tls_domain: str = ''
+    fake_tls_mask_host: str = ''
+    fake_tls_mask_port: int = 443
+    fake_tls_drs: bool = True
+    fake_tls_split: bool = True
+    fake_tls_split_delay_ms: int = 5
+    fake_tls_split_jitter_ms: int = 10
     proxy_protocol: bool = False
     force_test_dc: bool = False
 

@@ -9,6 +9,7 @@ import ssl
 import struct
 import time
 import logging
+import ipaddress
 
 from collections import OrderedDict
 from typing import Dict, FrozenSet, NamedTuple, Optional, Tuple
@@ -63,6 +64,10 @@ FALLBACK_APPDATA_RANGE = (64, 160)
 SERVER_HELLO_DELAY = (0.008, 0.024)
 
 PROFILE_PROBE_TIMEOUT = 5
+MASK_IDLE_TIMEOUT = 30
+DRS_INITIAL_SIZE = 1369
+DRS_RAMP_RECORDS = 8
+DRS_RAMP_BYTES = 128 * 1024
 
 
 _CCS_FRAME = b'\x14\x03\x03\x00\x01\x01'
@@ -84,7 +89,7 @@ REPLAY_CACHE_SIZE = 65536
 
 
 class _ReplayCache:
-    """Client randoms of accepted ClientHellos; a repeat is a replay probe.
+    """Authenticated prefixes of accepted ClientHellos; a repeat is a probe.
 
     One cache per process on purpose: it survives proxy restarts, so a hello
     accepted just before a restart cannot be replayed right after it.
@@ -95,16 +100,16 @@ class _ReplayCache:
         self.size = size
         self._expiry: OrderedDict = OrderedDict()
 
-    def first_seen(self, client_random: bytes) -> bool:
+    def first_seen(self, replay_key: bytes) -> bool:
         now = time.monotonic()
         # Insertion order is expiry order, so stale entries are at the front
         while self._expiry and next(iter(self._expiry.values())) <= now:
             self._expiry.popitem(last=False)
-        if client_random in self._expiry:
+        if replay_key in self._expiry:
             return False
         if len(self._expiry) >= self.size:
             self._expiry.popitem(last=False)
-        self._expiry[client_random] = now + self.window
+        self._expiry[replay_key] = now + self.window
         return True
 
 
@@ -114,6 +119,7 @@ replay_cache = _ReplayCache()
 class ClientHelloInfo(NamedTuple):
     cipher_suites: FrozenSet[int]
     key_shares: Dict[int, int]  # named group -> key_exchange length
+    server_name: Optional[str] = None
 
 
 _EMPTY_HELLO_INFO = ClientHelloInfo(frozenset(), {})
@@ -177,11 +183,20 @@ def parse_client_hello(data: bytes) -> ClientHelloInfo:
 
         ext_total = struct.unpack_from('>H', data, pos)[0]
         pos += 2
-        ext_end = min(pos + ext_total, len(data))
+        ext_end = pos + ext_total
+        if ext_end > len(data):
+            return _EMPTY_HELLO_INFO
         key_shares: Dict[int, int] = {}
+        server_name = None
         while pos + 4 <= ext_end:
             ext_type, ext_len = struct.unpack_from('>HH', data, pos)
             pos += 4
+            if pos + ext_len > ext_end:
+                return _EMPTY_HELLO_INFO
+            if ext_type == 0 and ext_len >= 5:
+                names_len, name_type, name_len = struct.unpack_from('>HBH', data, pos)
+                if names_len == ext_len - 2 and name_type == 0 and name_len == ext_len - 5:
+                    server_name = data[pos + 5:pos + 5 + name_len].decode('ascii').lower()
             if ext_type == EXT_KEY_SHARE and pos + 2 <= ext_end:
                 shares_end = min(pos + 2 + struct.unpack_from('>H', data, pos)[0],
                                  ext_end)
@@ -192,10 +207,10 @@ def parse_client_hello(data: bytes) -> ClientHelloInfo:
                     if off <= shares_end:
                         key_shares.setdefault(group, key_len)
             pos += ext_len
-    except (IndexError, struct.error):
+    except (IndexError, struct.error, UnicodeDecodeError):
         return _EMPTY_HELLO_INFO
 
-    return ClientHelloInfo(suites, key_shares)
+    return ClientHelloInfo(suites, key_shares, server_name)
 
 
 def _select_cipher_suite(info: ClientHelloInfo) -> int:
@@ -298,7 +313,8 @@ def first_appdata_record_len(data: bytes) -> Optional[int]:
 
 
 async def probe_appdata_len(domain: str, port: int = 443,
-                            timeout: float = PROFILE_PROBE_TIMEOUT) -> Optional[int]:
+                            timeout: float = PROFILE_PROBE_TIMEOUT, *,
+                            server_name: Optional[str] = None) -> Optional[int]:
     """Measure the first encrypted record the masking site sends after ServerHello.
 
     Only the raw first flight is read; the TLS handshake is never completed.
@@ -317,7 +333,7 @@ async def probe_appdata_len(domain: str, port: int = 443,
         ctx.minimum_version = ssl.TLSVersion.TLSv1_3
         ctx.set_alpn_protocols(['h2', 'http/1.1'])
         outgoing = ssl.MemoryBIO()
-        tls = ctx.wrap_bio(ssl.MemoryBIO(), outgoing, server_hostname=domain)
+        tls = ctx.wrap_bio(ssl.MemoryBIO(), outgoing, server_hostname=server_name or domain)
         try:
             tls.do_handshake()
         except ssl.SSLWantReadError:
@@ -354,28 +370,70 @@ async def probe_appdata_len(domain: str, port: int = 443,
             writer.close()
 
 
-def wrap_tls_record(data: bytes) -> bytes:
+class DynamicRecordSizer:
+    """Per-connection downstream record limits; no bytes are added to MTProto."""
+
+    def __init__(self, enabled: bool = True):
+        self.enabled = enabled
+        self.records_sent = 0
+        self.bytes_sent = 0
+
+    @property
+    def limit(self) -> int:
+        if (self.enabled and self.records_sent < DRS_RAMP_RECORDS
+                and self.bytes_sent < DRS_RAMP_BYTES):
+            return DRS_INITIAL_SIZE
+        return TLS_APPDATA_MAX
+
+    def record_sent(self, size: int) -> None:
+        self.records_sent += 1
+        self.bytes_sent += size
+
+
+async def send_server_hello(writer, response: bytes, *, split: bool = True,
+                            delay_ms: int = 5, jitter_ms: int = 10) -> None:
+    """Split TCP writes, keeping the three TLS records and their HMAC intact.
+
+    TCP_NODELAY is set on accepted sockets by the listener. Actual packet
+    boundaries still depend on the kernel, offloading and the network path.
+    """
+    await asyncio.sleep(random.uniform(*SERVER_HELLO_DELAY))
+    if split and len(response) > 1:
+        writer.write(response[:1])
+        await writer.drain()
+        await asyncio.sleep((delay_ms + random.uniform(0, jitter_ms)) / 1000)
+        response = response[1:]
+    writer.write(response)
+    await writer.drain()
+
+
+def wrap_tls_record(data: bytes, sizer: Optional[DynamicRecordSizer] = None) -> bytes:
     parts = []
     offset = 0
     while offset < len(data):
-        chunk = data[offset:offset + TLS_APPDATA_MAX]
+        limit = sizer.limit if sizer is not None else TLS_APPDATA_MAX
+        chunk = data[offset:offset + limit]
         parts.append(
             b'\x17\x03\x03'
             + struct.pack('>H', len(chunk))
             + chunk
         )
         offset += len(chunk)
+        if sizer is not None:
+            sizer.record_sent(len(chunk))
     return b''.join(parts)
 
 
 class FakeTlsStream:
-    __slots__ = ('_reader', '_writer', '_read_buf', '_read_left')
+    __slots__ = ('_reader', '_writer', '_read_buf', '_read_left', '_sizer')
 
-    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
+                 *, drs: bool = True):
         self._reader = reader
         self._writer = writer
         self._read_buf = bytearray()
         self._read_left = 0
+        self._sizer = DynamicRecordSizer(drs)
 
     async def readexactly(self, n: int) -> bytes:
         while len(self._read_buf) < n:
@@ -430,7 +488,7 @@ class FakeTlsStream:
             return data
 
     def write(self, data: bytes) -> None:
-        self._writer.write(wrap_tls_record(data))
+        self._writer.write(wrap_tls_record(data, self._sizer))
 
     async def drain(self) -> None:
         await self._writer.drain()
@@ -453,49 +511,69 @@ class FakeTlsStream:
 
 
 async def proxy_to_masking_domain(reader, writer, initial_data: bytes,
-                                    domain: str, label: str) -> None:
+                                    domain: str, label: str, port: int = 443) -> None:
     try:
         up_reader, up_writer = await asyncio.wait_for(
-            asyncio.open_connection(domain, 443), timeout=10)
+            asyncio.open_connection(domain, port), timeout=10)
     except Exception as exc:
-        log.warning("[%s] masking: cannot connect to %s:443: %s",
-                  label, domain, repr(exc))
+        log.warning("[%s] masking: cannot connect to %s:%d: %s",
+                  label, domain, port, repr(exc))
         return
 
-    log.debug("[%s] masking -> %s:443", label, domain)
+    log.debug("[%s] masking -> %s:%d", label, domain, port)
     stats.connections_masked += 1
 
+    tasks = []
     try:
+        # A cover domain pointing at this listener must use a separate backend.
+        # Check before forwarding any bytes, otherwise recursive proxying occurs.
+        local = writer.get_extra_info('sockname')
+        remote = up_writer.get_extra_info('peername')
+        if isinstance(local, tuple) and isinstance(remote, tuple):
+            local_ip = ipaddress.ip_address(local[0].split('%')[0])
+            remote_ip = ipaddress.ip_address(remote[0].split('%')[0])
+            local_ip = getattr(local_ip, 'ipv4_mapped', None) or local_ip
+            remote_ip = getattr(remote_ip, 'ipv4_mapped', None) or remote_ip
+            if local_ip == remote_ip and local[1] == remote[1]:
+                log.warning("[%s] masking backend points to this listener; "
+                            "configure --fake-tls-mask-host/--fake-tls-mask-port", label)
+                return
         if initial_data:
             up_writer.write(initial_data)
-            await up_writer.drain()
+            await asyncio.wait_for(up_writer.drain(), MASK_IDLE_TIMEOUT)
 
         async def _relay(src, dst):
             try:
                 while True:
-                    chunk = await src.read(16384)
+                    chunk = await asyncio.wait_for(src.read(16384), MASK_IDLE_TIMEOUT)
                     if not chunk:
-                        break
+                        # Preserve a client's TCP half-close: a real HTTPS
+                        # backend may still have a response to send.
+                        if dst.can_write_eof():
+                            dst.write_eof()
+                            await asyncio.wait_for(dst.drain(), MASK_IDLE_TIMEOUT)
+                        return True
                     dst.write(chunk)
-                    await dst.drain()
-            except (ConnectionResetError, BrokenPipeError, OSError,
-                    asyncio.CancelledError):
-                pass
-            finally:
-                try:
-                    dst.close()
-                    await dst.wait_closed()
-                except Exception:
-                    pass
+                    await asyncio.wait_for(dst.drain(), MASK_IDLE_TIMEOUT)
+            except (ConnectionResetError, BrokenPipeError, OSError, asyncio.TimeoutError):
+                return False
 
-        await asyncio.gather(
-            _relay(reader, up_writer),
-            _relay(up_reader, writer),
-        )
+        upload = asyncio.create_task(_relay(reader, up_writer))
+        download = asyncio.create_task(_relay(up_reader, writer))
+        tasks = [upload, download]
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        if upload in done and upload.result():
+            await download
     except Exception:
         pass
     finally:
-        try:
-            up_writer.close()
-        except Exception:
-            pass
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for stream in (up_writer, writer):
+            try:
+                stream.close()
+                await stream.wait_closed()
+            except Exception:
+                pass

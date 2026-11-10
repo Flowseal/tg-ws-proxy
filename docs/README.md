@@ -53,6 +53,7 @@
 - [Настройка Cloudflare-домена (CF-прокси)](./RU/CfProxy.md)
 - [Тестовое окружение Telegram (тестовые DC)](./RU/TestDc.md)
 - [Fake TLS + upstream в Nginx](./RU/FakeTlsNginx.md)
+- [Защита клиент ↔ VPS: Fake TLS, DRS, TCPMSS и nfqws](./RU/ClientDpi.md)
 - [Файлы конфигурации Tray-приложения](./RU/TrayConfig.md)
 - [Установка из исходников](./RU/BuildFromSource.md)
 - [Руководство для контрибьюторов](./CONTRIBUTING.md)

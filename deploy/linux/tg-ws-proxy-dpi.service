@@ -1,0 +1,18 @@
+[Unit]
+Description=TG WS Proxy TCPMSS and downstream NFQUEUE rules
+Requires=tg-ws-proxy-nfqws.service
+After=network.target tg-ws-proxy-nfqws.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Adjust repository path and PUBLIC port. Add --ipv6 to both commands if used.
+ExecStart=/usr/bin/python3 /opt/tg-ws-proxy/deploy/linux/dpi.py apply --port 443 --mss 88 --nfqueue
+ExecStop=/usr/bin/python3 /opt/tg-ws-proxy/deploy/linux/dpi.py remove --port 443
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

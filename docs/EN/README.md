@@ -53,6 +53,7 @@
 - [Cloudflare Domain Setup (CF proxy)](./CfProxy.md)
 - [Telegram Test Environment (Test DCs)](./TestDc.md)
 - [Fake TLS + upstream in Nginx](./FakeTlsNginx.md)
+- [Client ↔ VPS protection: Fake TLS, DRS, TCPMSS and nfqws](./ClientDpi.md)
 - [Tray Application Configuration Files](./TrayConfig.md)
 - [Building from Source](./BuildFromSource.md)
 - [Contributor Guide](./CONTRIBUTING.md)

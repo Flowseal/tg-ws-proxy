@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import sys
 import time
-import random
 import struct
 import asyncio
 import hashlib
@@ -28,7 +27,7 @@ from .raw_websocket import set_sock_opts
 from .fake_tls import (
     proxy_to_masking_domain, verify_client_hello, parse_client_hello, build_server_hello,
     probe_appdata_len, set_profiled_appdata_len, FakeTlsStream, TLS_RECORD_HANDSHAKE,
-    SERVER_HELLO_DELAY, replay_cache,
+    replay_cache, send_server_hello,
 )
 from .balancer import balancer
 from .pool import ws_pool, cf_worker_pool
@@ -112,6 +111,8 @@ def _generate_relay_init(proto_tag: bytes, dc_idx: int) -> bytes:
 
 
 async def _read_client_init(reader, writer, secret, label, masking):
+    mask_host = proxy_config.fake_tls_mask_host or masking
+    mask_port = proxy_config.fake_tls_mask_port
     if proxy_config.proxy_protocol:
         try:
             pp_line = await asyncio.wait_for(
@@ -157,10 +158,13 @@ async def _read_client_init(reader, writer, secret, label, masking):
         client_hello = tls_header + record_body
 
         tls_result = verify_client_hello(client_hello, secret)
-        # A recorded hello stays valid for minutes; answering it again would
-        # tell an active prober that this is a proxy, not the masking site
+        hello_info = parse_client_hello(client_hello)
+        if hello_info.server_name != masking.lower():
+            tls_result = None
+        # An observer can modify the timestamp XOR bytes without the secret.
+        # Key on the authenticated prefix so all time variants hit one entry.
         replayed = (tls_result is not None
-                    and not replay_cache.first_seen(tls_result[0]))
+                    and not replay_cache.first_seen(tls_result[0][:28]))
 
         if tls_result is None or replayed:
             log.debug("[%s] Fake TLS %s (size=%d rec=%d) "
@@ -168,19 +172,20 @@ async def _read_client_init(reader, writer, secret, label, masking):
                       label, "hello replayed" if replayed else "verify failed",
                       len(client_hello), record_len)
             await proxy_to_masking_domain(
-                reader, writer, client_hello, masking, label)
+                reader, writer, client_hello, mask_host, label, port=mask_port)
             return None
 
         client_random, session_id, ts = tls_result
         log.debug("[%s] Fake TLS handshake ok (ts=%d)", label, ts)
 
         server_hello = build_server_hello(
-            secret, client_random, session_id, parse_client_hello(client_hello))
-        await asyncio.sleep(random.uniform(*SERVER_HELLO_DELAY))
-        writer.write(server_hello)
-        await writer.drain()
+            secret, client_random, session_id, hello_info)
+        await send_server_hello(
+            writer, server_hello, split=proxy_config.fake_tls_split,
+            delay_ms=proxy_config.fake_tls_split_delay_ms,
+            jitter_ms=proxy_config.fake_tls_split_jitter_ms)
 
-        tls_stream = FakeTlsStream(reader, writer)
+        tls_stream = FakeTlsStream(reader, writer, drs=proxy_config.fake_tls_drs)
 
         try:
             handshake = await asyncio.wait_for(
@@ -192,16 +197,10 @@ async def _read_client_init(reader, writer, secret, label, masking):
         return handshake, tls_stream, tls_stream, label
 
     elif masking:
-        log.debug("[%s] non-TLS byte 0x%02X -> HTTP redirect", label,
+        log.debug("[%s] non-TLS byte 0x%02X -> masking", label,
                   first_byte[0])
-        redirect = (
-            f"HTTP/1.1 301 Moved Permanently\r\n"
-            f"Location: https://{masking}/\r\n"
-            f"Content-Length: 0\r\n"
-            f"Connection: close\r\n\r\n"
-        ).encode()
-        writer.write(redirect)
-        await writer.drain()
+        await proxy_to_masking_domain(
+            reader, writer, first_byte, mask_host, label, port=mask_port)
         return None
 
     else:
@@ -407,7 +406,9 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     # fast instead of answering itself
     set_profiled_appdata_len(None)
     if proxy_config.fake_tls_domain:
-        appdata_len = await probe_appdata_len(proxy_config.fake_tls_domain)
+        appdata_len = await probe_appdata_len(
+            proxy_config.fake_tls_mask_host or proxy_config.fake_tls_domain,
+            proxy_config.fake_tls_mask_port, server_name=proxy_config.fake_tls_domain)
         set_profiled_appdata_len(appdata_len)
         if appdata_len is None:
             log.warning("Fake TLS profile unavailable, ServerHello uses "
@@ -451,6 +452,11 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     log.info("  Secret:        %s", proxy_config.secret)
     if ftls:
         log.info("  Fake TLS:      %s", ftls)
+        log.info("  TLS masking:   %s:%d", proxy_config.fake_tls_mask_host or ftls,
+                 proxy_config.fake_tls_mask_port)
+        log.info("  TLS shaping:   DRS=%s, ServerHello split=%s (delay=%d+0..%d ms)",
+                 proxy_config.fake_tls_drs, proxy_config.fake_tls_split,
+                 proxy_config.fake_tls_split_delay_ms, proxy_config.fake_tls_split_jitter_ms)
     log.info("  Target DC IPs:")
     for dc in sorted(proxy_config.dc_redirects.keys()):
         ip = proxy_config.dc_redirects.get(dc)
@@ -641,6 +647,19 @@ def main():
                     metavar='DOMAIN',
                     help='Enable Fake TLS (ee-secret) masking with the given '
                          'SNI domain, e.g. example.com')
+    ap.add_argument('--fake-tls-mask-host', default='', metavar='HOST',
+                    help='HTTPS cover backend (default: Fake TLS domain); '
+                         'use a separate local backend for your own domain')
+    ap.add_argument('--fake-tls-mask-port', type=int, default=443, metavar='PORT',
+                    help='HTTPS cover backend port (default 443)')
+    ap.add_argument('--no-fake-tls-drs', action='store_true',
+                    help='Disable downstream dynamic TLS record sizing')
+    ap.add_argument('--no-fake-tls-split', action='store_true',
+                    help='Disable first-byte split of the Fake TLS ServerHello')
+    ap.add_argument('--fake-tls-split-delay-ms', type=int, default=5, metavar='MS',
+                    help='ServerHello split base delay (default 5 ms)')
+    ap.add_argument('--fake-tls-split-jitter-ms', type=int, default=10, metavar='MS',
+                    help='Additional random split delay (default 0..10 ms)')
     ap.add_argument('--force-test-dc', action='store_true',
                     help='Force ALL traffic to Telegram TEST datacenters. '
                          'Not needed for Telegram Desktop (test DCs 10001+ '
@@ -650,6 +669,19 @@ def main():
                     help='Accept PROXY protocol v1 header '
                          '(for use behind nginx/haproxy with proxy_protocol on)')
     args = ap.parse_args()
+    if not 1 <= args.fake_tls_mask_port <= 65535:
+        ap.error('--fake-tls-mask-port must be between 1 and 65535')
+    for name in ('fake_tls_split_delay_ms', 'fake_tls_split_jitter_ms'):
+        if not 0 <= getattr(args, name) <= 1000:
+            ap.error('--' + name.replace('_', '-') + ' must be between 0 and 1000')
+    if args.fake_tls_domain:
+        from .config import _is_valid_domain
+        domain = args.fake_tls_domain.strip().lower()
+        if not domain.isascii() or not _is_valid_domain(domain):
+            ap.error('--fake-tls-domain must be an ASCII DNS name (use punycode for IDNs)')
+        args.fake_tls_domain = domain
+    elif args.fake_tls_mask_host or args.fake_tls_mask_port != 443:
+        ap.error('--fake-tls-mask-host/--fake-tls-mask-port require --fake-tls-domain')
 
     if args.dc_ip is None:
         args.dc_ip = [
@@ -691,6 +723,12 @@ def main():
     proxy_config.cfproxy_h2_media = not args.no_h2
     proxy_config.disable_secure = args.no_secure
     proxy_config.fake_tls_domain = args.fake_tls_domain.strip()
+    proxy_config.fake_tls_mask_host = args.fake_tls_mask_host.strip()
+    proxy_config.fake_tls_mask_port = args.fake_tls_mask_port
+    proxy_config.fake_tls_drs = not args.no_fake_tls_drs
+    proxy_config.fake_tls_split = not args.no_fake_tls_split
+    proxy_config.fake_tls_split_delay_ms = args.fake_tls_split_delay_ms
+    proxy_config.fake_tls_split_jitter_ms = args.fake_tls_split_jitter_ms
     proxy_config.proxy_protocol = args.proxy_protocol
     proxy_config.force_test_dc = args.force_test_dc
 
