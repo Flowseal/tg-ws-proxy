@@ -305,6 +305,8 @@ def load_icon():
 
 _proxy_thread: Optional[threading.Thread] = None
 _async_stop: Optional[Tuple[asyncio.AbstractEventLoop, asyncio.Event]] = None
+# Only lifecycle callers take this lock; the worker must be able to exit during join.
+_proxy_lock = threading.RLock()
 
 
 def _run_proxy_thread(show_error: Callable[[str], None]) -> None:
@@ -378,7 +380,8 @@ def apply_proxy_config(cfg: dict) -> bool:
     return True
 
 
-def start_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
+def _start_proxy(cfg: dict, on_error: Callable[[str], None]) -> Optional[str]:
+    """Start under _proxy_lock, returning config errors for the caller to report."""
     global _proxy_thread
     if _proxy_thread and _proxy_thread.is_alive():
         log.info("Proxy already running")
@@ -386,8 +389,7 @@ def start_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
 
     if not apply_proxy_config(cfg):
         from ui.i18n import t
-        on_error(t("error.dc_config"))
-        return
+        return t("error.dc_config")
 
     pc = proxy_config
     log.info("Starting proxy on %s:%d ...", pc.host, pc.port)
@@ -397,25 +399,45 @@ def start_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
     _proxy_thread.start()
 
 
-def stop_proxy() -> None:
+def start_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
+    with _proxy_lock:
+        error = _start_proxy(cfg, on_error)
+    if error:
+        on_error(error)
+
+
+def stop_proxy() -> bool:
     global _proxy_thread, _async_stop
-    if _async_stop:
-        loop, stop_ev = _async_stop
-        loop.call_soon_threadsafe(stop_ev.set)
-        if _proxy_thread:
-            _proxy_thread.join(timeout=5)
-            if _proxy_thread.is_alive():
+    with _proxy_lock:
+        thread = _proxy_thread
+        stop = _async_stop
+        if thread:
+            if thread.is_alive() and stop:
+                loop, stop_ev = stop
+                try:
+                    loop.call_soon_threadsafe(stop_ev.set)
+                except RuntimeError:
+                    # The worker may have closed its loop since we read _async_stop.
+                    log.warning("Proxy event loop closed before stop could be signaled")
+            thread.join(timeout=5)
+            if thread.is_alive():
                 log.warning("Proxy thread did not stop within timeout; "
                             "port may still be in use")
-    _proxy_thread = None
-    log.info("Proxy stopped")
+                return False
+        _proxy_thread = None
+        _async_stop = None
+        log.info("Proxy stopped")
+        return True
 
 
 def restart_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
-    log.info("Restarting proxy...")
-    stop_proxy()
-    time.sleep(1.0)
-    start_proxy(cfg, on_error)
+    with _proxy_lock:
+        log.info("Restarting proxy...")
+        if not stop_proxy():
+            return
+        error = _start_proxy(cfg, on_error)
+    if error:
+        on_error(error)
 
 
 def tg_proxy_url(cfg: dict) -> str:
