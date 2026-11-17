@@ -393,6 +393,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     reset_tcp_backoff()
     ws_pool.reset()
     cf_worker_pool.reset()
+    balancer.reset_health()
     _client_tasks.clear()
     cf_h2_pool = CfH2Pool() if proxy_config.h2_enabled else None
 

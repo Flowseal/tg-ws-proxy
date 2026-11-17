@@ -3,10 +3,11 @@ import asyncio
 import time
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 from unittest.mock import AsyncMock, Mock
 
 from proxy._aes import Cipher, algorithms, modes
-from proxy.bridge import MsgSplitter, bridge_ws_reencrypt
+from proxy.bridge import MsgSplitter, bridge_ws_reencrypt, _cfproxy_fallback
 from proxy.network_debug import WsActivity, log_ws_flow
 from proxy.utils import (
     PROTO_ABRIDGED_INT,
@@ -253,6 +254,108 @@ class WsDiagnosticsTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('WS FLOW DC203', output)
         self.assertIn('WS END DC203', output)
         self.assertNotIn('private-', output)
+
+
+class CfProxyAttemptBudgetTest(unittest.IsolatedAsyncioTestCase):
+    def _patch_balancer(self, domains):
+        fake = Mock()
+        fake.get_domains_for_dc.return_value = iter(domains)
+        fake.report_failure.return_value = 30.0
+        return mock.patch('proxy.bridge.balancer', fake), fake
+
+    async def test_stops_walking_pool_when_budget_is_spent(self):
+        calls = []
+
+        async def fake_connect(domain, *args, **kwargs):
+            calls.append(domain)
+            await asyncio.sleep(0.4)
+            raise OSError('blocked')
+
+        balancer_patch, fake_balancer = self._patch_balancer(
+            ['a.com', 'b.com', 'c.com', 'd.com'])
+        started = time.monotonic()
+        with balancer_patch, \
+                mock.patch('proxy.bridge.RawWebSocket',
+                           SimpleNamespace(connect=fake_connect)), \
+                mock.patch('proxy.bridge.CFPROXY_ATTEMPT_BUDGET', 1.0), \
+                mock.patch('proxy.bridge.CFPROXY_ATTEMPT_MIN', 0.3):
+            ok = await _cfproxy_fallback(
+                None, None, b'', 'budget-test', None, dc=2, is_media=False)
+
+        self.assertFalse(ok)
+        self.assertEqual(len(calls), 2)
+        self.assertLess(time.monotonic() - started, 1.2)
+        self.assertEqual(fake_balancer.report_failure.call_count, 2)
+        self.assertEqual(fake_balancer.report_success.call_count, 0)
+
+    async def test_cooled_down_pool_is_skipped_without_connecting(self):
+        calls = []
+
+        async def fake_connect(domain, *args, **kwargs):
+            calls.append(domain)
+            raise AssertionError('must not connect')
+
+        balancer_patch, _ = self._patch_balancer([])
+        with balancer_patch, \
+                mock.patch('proxy.bridge.RawWebSocket',
+                           SimpleNamespace(connect=fake_connect)):
+            ok = await _cfproxy_fallback(
+                None, None, b'', 'cooldown-test', None, dc=2, is_media=False)
+
+        self.assertFalse(ok)
+        self.assertEqual(calls, [])
+
+    async def test_hanging_attempt_is_cancelled_at_the_budget(self):
+        cancelled = []
+
+        async def fake_connect(domain, *args, **kwargs):
+            try:
+                await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+
+        balancer_patch, fake_balancer = self._patch_balancer(
+            ['a.com', 'b.com'])
+        started = time.monotonic()
+        with balancer_patch, \
+                mock.patch('proxy.bridge.RawWebSocket',
+                           SimpleNamespace(connect=fake_connect)), \
+                mock.patch('proxy.bridge.CFPROXY_ATTEMPT_BUDGET', 0.5), \
+                mock.patch('proxy.bridge.CFPROXY_ATTEMPT_MIN', 0.1):
+            ok = await _cfproxy_fallback(
+                None, None, b'', 'hang-test', None, dc=2, is_media=False)
+
+        self.assertFalse(ok)
+        self.assertEqual(cancelled, [True])
+        self.assertLess(time.monotonic() - started, 1.5)
+        # A domain cancelled by the budget was never proven broken.
+        fake_balancer.report_failure.assert_not_called()
+
+    async def test_success_is_reported_and_domain_selected(self):
+        sent = []
+
+        class FakeWebSocket:
+            async def send(self, data):
+                sent.append(data)
+
+        async def fake_connect(domain, *args, **kwargs):
+            return FakeWebSocket()
+
+        balancer_patch, fake_balancer = self._patch_balancer(['a.com'])
+        with balancer_patch, \
+                mock.patch('proxy.bridge.RawWebSocket',
+                           SimpleNamespace(connect=fake_connect)), \
+                mock.patch('proxy.bridge.bridge_ws_reencrypt',
+                           AsyncMock(return_value=True)):
+            ok = await _cfproxy_fallback(
+                None, None, b'init', 'success-test', None, dc=2, is_media=False)
+
+        self.assertTrue(ok)
+        self.assertEqual(sent, [b'init'])
+        fake_balancer.report_success.assert_called_once_with('a.com')
+        fake_balancer.report_failure.assert_not_called()
+        fake_balancer.update_domain_for_dc.assert_called_once_with(2, 'a.com')
 
 
 if __name__ == '__main__':

@@ -21,6 +21,12 @@ _st_I_le = struct.Struct('<I')
 
 TCP_BACKOFF_INITIAL = 30.0
 TCP_BACKOFF_MAX = 3600.0
+
+CFPROXY_ATTEMPT_TIMEOUT = 10.0
+CFPROXY_ATTEMPT_MIN = 2.0
+# A blocked CF domain answers with a timeout, so walking the whole pool for
+# every client connection can take minutes and looks like an endless spinner.
+CFPROXY_ATTEMPT_BUDGET = 15.0
 _tcp_failures: Dict[Tuple[str, int], int] = {}
 _tcp_retry_after: Dict[Tuple[str, int], float] = {}
 _tcp_connecting: Set[Tuple[str, int]] = set()
@@ -245,18 +251,50 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
             label, dc, media_tag)
     connect_started = time.monotonic()
     secure = not proxy_config.disable_secure
+    deadline = connect_started + CFPROXY_ATTEMPT_BUDGET
+    attempted = False
 
     for base_domain in balancer.get_domains_for_dc(dc):
+        remaining = deadline - time.monotonic()
+        if remaining < CFPROXY_ATTEMPT_MIN:
+            log.warning("[%s] DC%d%s CF proxy attempt budget exhausted",
+                        label, dc, media_tag)
+            break
+        attempted = True
         domain = f'kws{dc}.{base_domain}'
+        attempt = asyncio.ensure_future(RawWebSocket.connect(
+            domain, domain,
+            timeout=min(CFPROXY_ATTEMPT_TIMEOUT, remaining),
+            secure=secure))
         try:
-            ws = await RawWebSocket.connect(domain, domain, timeout=10.0, secure=secure)
+            done, _ = await asyncio.wait({attempt}, timeout=remaining)
+        except asyncio.CancelledError:
+            attempt.cancel()
+            raise
+        if not done:
+            # Strict budget: connect() bounds TCP/TLS and the WS handshake
+            # separately, so without this an attempt can run twice as long.
+            attempt.cancel()
+            await asyncio.gather(attempt, return_exceptions=True)
+            log.warning("[%s] DC%d%s CF proxy attempt budget exhausted",
+                        label, dc, media_tag)
+            break
+        try:
+            ws = attempt.result()
+            balancer.report_success(base_domain)
             chosen_domain = base_domain
             break
         except Exception as exc:
-            log.warning("[%s] DC%d%s CF proxy failed: %r (host=%s port=%d)",
-                        label, dc, media_tag, exc, domain, 443 if secure else 80)
+            delay = balancer.report_failure(base_domain)
+            log.warning(
+                "[%s] DC%d%s CF proxy failed: %r (host=%s port=%d, "
+                "domain paused for %.0fs)",
+                label, dc, media_tag, exc, domain, 443 if secure else 80, delay)
 
     if ws is None:
+        if not attempted:
+            log.debug("[%s] DC%d%s CF proxy skipped: all domains cooling down",
+                      label, dc, media_tag)
         return False
 
     log.debug('[%s] WS CONNECT DC%d%s route=cf setup_ms=%.0f',
