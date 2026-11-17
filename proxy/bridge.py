@@ -244,17 +244,17 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
     log.info("[%s] DC%d%s -> trying CF proxy",
             label, dc, media_tag)
     connect_started = time.monotonic()
+    secure = not proxy_config.disable_secure
 
     for base_domain in balancer.get_domains_for_dc(dc):
         domain = f'kws{dc}.{base_domain}'
         try:
-            ws = await RawWebSocket.connect(domain, domain, timeout=10.0, 
-                                            secure=not proxy_config.disable_secure)
+            ws = await RawWebSocket.connect(domain, domain, timeout=10.0, secure=secure)
             chosen_domain = base_domain
             break
         except Exception as exc:
-            log.warning("[%s] DC%d%s CF proxy failed: %s",
-                        label, dc, media_tag, repr(exc))
+            log.warning("[%s] DC%d%s CF proxy failed: %r (host=%s port=%d)",
+                        label, dc, media_tag, exc, domain, 443 if secure else 80)
 
     if ws is None:
         return False

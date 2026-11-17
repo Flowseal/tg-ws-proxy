@@ -98,20 +98,14 @@ class RawWebSocket:
         if sni is None:
             sni = domain
 
-        reader, writer = await asyncio.wait_for(
-            (
-                asyncio.open_connection(
-                    host, 443,
-                    ssl=ssl_context,
-                    server_hostname=sni,
-                )
-                if secure
-                else asyncio.open_connection(host, 80)
-            ),
-            timeout=min(timeout, 10),
-        )
-        
+        port = 443 if secure else 80
+        tls_options = {'ssl': ssl_context, 'server_hostname': sni} if secure else {}
+        writer = None
         try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port, **tls_options),
+                timeout=min(timeout, 10),
+            )
             set_sock_opts(writer.transport, proxy_config.buffer_size)
 
             ws_key = base64.b64encode(os.urandom(16)).decode()
@@ -160,8 +154,21 @@ class RawWebSocket:
 
             raise WsHandshakeError(status_code, first_line, headers,
                                     location=headers.get('location'))
-        except BaseException:
-            writer.close()
+        except BaseException as exc:
+            if writer is not None:
+                writer.close()
+            if isinstance(exc, Exception) and log.isEnabledFor(logging.DEBUG):
+                if writer is not None:
+                    stage = 'ws_upgrade'
+                    local = writer.get_extra_info('sockname')
+                    remote = writer.get_extra_info('peername')
+                else:
+                    stage = 'tcp/tls' if secure else 'tcp'
+                    if isinstance(exc, _socket.gaierror):
+                        stage = 'dns'
+                    local = remote = None
+                log.debug('WS setup failed: host=%s port=%d stage=%s local=%s remote=%s error=%r',
+                          host, port, stage, local, remote, exc)
             raise
 
     async def send(self, data: bytes):
