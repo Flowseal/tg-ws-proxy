@@ -4,9 +4,40 @@ import signal
 import socket
 import sys
 import threading
+from contextlib import suppress
 
 
 log = logging.getLogger('tg-mtproto-proxy')
+
+
+def _close_proactor_socket(transport, exc):
+    sock = transport._sock
+    if sock is None:
+        return
+    try:
+        transport._protocol.connection_lost(exc)
+    finally:
+        try:
+            if sock.fileno() != -1:
+                with suppress(ConnectionResetError):
+                    sock.shutdown(socket.SHUT_RDWR)
+        finally:
+            sock.close()
+            transport._sock = None
+            transport._called_connection_lost = True
+            server, transport._server = transport._server, None
+            if server is not None:
+                if sys.version_info >= (3, 13):
+                    server._detach(transport)
+                else:
+                    server._detach()
+
+
+def install_proactor_socket_guard(loop):
+    # https://github.com/Flowseal/tg-ws-proxy/issues/1614
+    if sys.platform == 'win32' and isinstance(loop, asyncio.ProactorEventLoop):
+        from asyncio.proactor_events import _ProactorSocketTransport
+        _ProactorSocketTransport._call_connection_lost = _close_proactor_socket
 
 
 def _replace_self_pipe(loop):
