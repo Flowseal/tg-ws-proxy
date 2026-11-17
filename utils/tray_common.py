@@ -20,7 +20,7 @@ from proxy.utils import DomainCensorFilter
 from proxy.tg_ws_proxy import _run
 from utils.default_config import default_tray_config
 from utils.diagnostics import diagnose_listen_error
-from utils.logging_setup import build_log_handler
+from utils.logging_setup import build_log_handler, set_verbose_logging
 
 log = logging.getLogger("tg-ws-tray")
 
@@ -230,9 +230,8 @@ _LOG_FMT_CONSOLE = "%(asctime)s  %(levelname)-5s  %(message)s"
 
 def setup_logging(verbose: bool = False, log_max_mb: float = 5) -> None:
     ensure_dirs()
-    level = logging.DEBUG if verbose else logging.INFO
+    set_verbose_logging(verbose)
     root = logging.getLogger()
-    root.setLevel(level)
     logging.getLogger('asyncio').setLevel(logging.WARNING)
 
     fh = build_log_handler(str(LOG_FILE), log_max_mb=log_max_mb, backups=1)
@@ -242,7 +241,7 @@ def setup_logging(verbose: bool = False, log_max_mb: float = 5) -> None:
 
     if not IS_FROZEN:
         ch = logging.StreamHandler(sys.stdout)
-        ch.setLevel(level)
+        ch.setLevel(logging.DEBUG)
         ch.setFormatter(logging.Formatter(_LOG_FMT_CONSOLE, datefmt="%H:%M:%S"))
         ch.addFilter(DomainCensorFilter())
         root.addHandler(ch)

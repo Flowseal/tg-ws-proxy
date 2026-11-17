@@ -1,4 +1,4 @@
-"""Shared construction and formatting of the rotating log file handler.
+"""Shared logging setup for the tray and CLI.
 
 Centralizes the rotation invariant so both the tray and the CLI log paths
 behave identically and the file can never grow without bound (issue #885).
@@ -16,6 +16,10 @@ import logging.handlers
 
 _MIN_BYTES = 32 * 1024
 _MIN_BACKUPS = 1
+
+
+def set_verbose_logging(verbose: bool) -> None:
+    logging.getLogger().setLevel(logging.DEBUG if verbose else logging.INFO)
 
 
 def build_log_handler(
