@@ -237,6 +237,7 @@ class _CfWorkerPool:
     PER_DC_LIMIT = 1
     REFILL_BACKOFF_INITIAL = 1.0
     REFILL_BACKOFF_MAX = 3600.0
+    FAILURE_COOLDOWN = 60.0
 
     def __init__(self):
         self._idle: Dict[int, deque] = {}
@@ -404,17 +405,32 @@ class _CfWorkerPool:
         return domains
 
     def report_failure(self, worker_domain: str, exc: Exception) -> None:
-        return  # TODO: check status code after daily limit reached
-        if not isinstance(exc, WsHandshakeError) or exc.status_code != 429:
-            return
-
         now = time.time()
         if self._exhausted_until.get(worker_domain, 0) > now:
             return
-        exhausted_until = now + (86400 - (now % 86400))
+
+        if isinstance(exc, WsHandshakeError):
+            if exc.status_code == 429:
+                # Workers free plan reports the daily request limit as 429.
+                exhausted_until = now + (86400 - (now % 86400))
+                reason = 'daily request limit'
+            elif exc.status_code >= 500:
+                exhausted_until = now + self.FAILURE_COOLDOWN
+                reason = 'HTTP %d' % exc.status_code
+            else:
+                # A challenge or a misconfigured route is not a reason to
+                # disable the whole domain.
+                return
+        elif isinstance(exc, (OSError, asyncio.TimeoutError)):
+            exhausted_until = now + self.FAILURE_COOLDOWN
+            reason = repr(exc)
+        else:
+            return
+
         self._exhausted_until[worker_domain] = exhausted_until
         log.warning(
-            "CF worker %s reached its request limit, disabled for %d seconds", worker_domain, int(exhausted_until - now))
+            "CF worker %s disabled for %d seconds: %s",
+            worker_domain, max(1, int(exhausted_until - now)), reason)
 
     async def _quiet_close(self, ws):
         try:
