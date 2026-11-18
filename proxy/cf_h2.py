@@ -612,6 +612,7 @@ class _HttpChannel:
                      self.replay_requests, self.replay_rotations, self.capacity_rotations, self.up, self.down, self.quick_requests,
                      time.monotonic() - self.started, len(self.lane.channels), waiting)
 
+
 class _HttpLane:
     def __init__(self, host: str, lane_id: int):
         self.host, self.lane_id = host, lane_id
@@ -742,7 +743,10 @@ class _HttpLane:
                     raise ValueError('CF /api returned HTML instead of MTProto')
                 response_started()
                 length_header = response.headers.get('content-length')
-                declared_length = int(length_header) if length_header is not None else None
+                try:
+                    declared_length = int(length_header) if length_header is not None else None
+                except ValueError:
+                    raise ValueError('invalid Content-Length header: %r' % length_header) from None
                 if declared_length is not None and not 0 <= declared_length <= MAX_PACKET:
                     raise BufferError('H2 response Content-Length exceeds native packet bound')
                 content = bytearray()
@@ -983,6 +987,10 @@ async def bridge_h2(reader, writer, channel: _HttpChannel, ctx, tag: bytes) -> N
             await write_native(_encode_reply(struct.pack('<i', channel.transport_error), tag))
             channel.down += 4
             stats.bytes_down += 4
+            for task in done:
+                if task.exception() and not isinstance(task.exception(), asyncio.CancelledError):
+                    log.debug('[%s] H2 channel=%d secondary task error during transport close: %r',
+                              channel.label, channel.channel_id, task.exception())
         else:
             for task in done:
                 task.result()

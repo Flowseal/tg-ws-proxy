@@ -115,6 +115,8 @@ class _WsPool:
                     dc, 't' if is_test_dc else '', 'm' if is_media else '', delay)
             log.debug("WS pool refilled DC%d%s%s: %d ready",
                       dc, 't' if is_test_dc else '', 'm' if is_media else '', len(bucket))
+        except Exception as exc:
+            log.error("WS pool refill error for DC%d: %r", dc, exc)
         finally:
             for task in tasks:
                 if not task.done():
@@ -325,6 +327,8 @@ class _CfWorkerPool:
                          dc, delay)
             log.debug("CF worker pool refilled DC%d: %d ready",
                       dc, len(bucket))
+        except Exception as exc:
+            log.error("CF worker pool refill error for DC%d: %r", dc, exc)
         finally:
             if self._refilling.get(dc) is asyncio.current_task():
                 self._refilling.pop(dc, None)
@@ -404,7 +408,6 @@ class _CfWorkerPool:
         return domains
 
     def report_failure(self, worker_domain: str, exc: Exception) -> None:
-        return  # TODO: check status code after daily limit reached
         if not isinstance(exc, WsHandshakeError) or exc.status_code != 429:
             return
 

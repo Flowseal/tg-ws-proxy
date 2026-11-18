@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 from contextlib import suppress
 from http.client import HTTPException
 from itertools import zip_longest
@@ -110,8 +111,14 @@ def download_asset(
     path = Path(name)
     try:
         sha = hashlib.sha256()
+        deadline = time.monotonic() + timeout
+        
         with os.fdopen(fd, "wb") as out, build_github_opener().open(url, timeout=timeout) as resp:
             while True:
+                # added a timeout error while downloading asset
+                if time.monotonic() > deadline:
+                    raise TimeoutError("Download timed out (overall limit reached)")
+                    
                 chunk = resp.read(65536)
                 if not chunk:
                     break

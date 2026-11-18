@@ -25,3 +25,4 @@ Desktop.ini
 .DS_Store
 
 /icon.icns
+.venv_dbg/

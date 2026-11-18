@@ -151,10 +151,18 @@ def set_x25519(context: ssl.SSLContext) -> None:
 
 
 def create_ssl_context(*, check_hostname: bool = True) -> ssl.SSLContext:
+    #changed (merge) this for close issue #1550 + #1348 (commit: e519c4d)
     bundle_dir = getattr(sys, '_MEIPASS', None)
     cafile = (os.path.join(bundle_dir, 'certifi', 'cacert.pem')
               if bundle_dir else certifi.where())
-    context = ssl.create_default_context(cafile=cafile)
+    context = ssl.create_default_context()
+    try:
+        context.load_verify_locations(cafile=cafile)
+    except (ssl.SSLError, OSError) as exc:
+        logging.getLogger('tg-mtproto-proxy').warning(
+            "certifi CA bundle could not be loaded (%s), falling back to system store",
+            exc,
+        )
     context.load_default_certs()
     set_x25519(context)
     context.check_hostname = check_hostname

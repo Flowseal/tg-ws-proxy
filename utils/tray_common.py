@@ -198,6 +198,8 @@ def load_config() -> dict:
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            if isinstance(data.get("dc_ip"), str):
+                data["dc_ip"] = [data["dc_ip"]]
             if "cfproxy_user_domain_enabled" not in data:
                 data["cfproxy_user_domain_enabled"] = bool(
                     coerce_domain_list(data.get("cfproxy_user_domain"))
@@ -213,14 +215,22 @@ def load_config() -> dict:
             log.warning("Failed to load config: %s", repr(exc))
     if cfg is None:
         cfg = deepcopy(DEFAULT_CONFIG)
-    _apply_ui_language(cfg)
+    
+    try:
+        _apply_ui_language(cfg)
+    except Exception as exc:
+        log.warning("Failed to apply UI language: %s", repr(exc))
+        
     return cfg
 
 
 def save_config(cfg: dict) -> None:
     ensure_dirs()
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+    except OSError as exc:
+        log.error("Failed to save config: %s", repr(exc))
 
 
 # logging
@@ -406,7 +416,10 @@ def stop_proxy() -> None:
             if _proxy_thread.is_alive():
                 log.warning("Proxy thread did not stop within timeout; "
                             "port may still be in use")
+                _async_stop = None
+                return
     _proxy_thread = None
+    _async_stop = None
     log.info("Proxy stopped")
 
 

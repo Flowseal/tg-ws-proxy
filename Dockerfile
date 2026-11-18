@@ -39,6 +39,7 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY proxy ./proxy
 COPY utils ./utils
+COPY ui ./ui
 COPY docs/README.md LICENSE ./
 
 USER app
