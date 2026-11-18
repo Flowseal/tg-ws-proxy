@@ -25,11 +25,21 @@ _tcp_failures: Dict[Tuple[str, int], int] = {}
 _tcp_retry_after: Dict[Tuple[str, int], float] = {}
 _tcp_connecting: Set[Tuple[str, int]] = set()
 
+_cf_failures = 0
+_cf_retry_after = 0.0
+_CF_MAX_DOMAINS = 5
+_CF_TIMEOUT = 5.0
+_CF_BACKOFF_INITIAL = 5.0
+_CF_BACKOFF_MAX = 60.0
+
 
 def reset_tcp_backoff() -> None:
+    global _cf_failures, _cf_retry_after
     _tcp_failures.clear()
     _tcp_retry_after.clear()
     _tcp_connecting.clear()
+    _cf_failures = 0
+    _cf_retry_after = 0.0
 
 
 class CryptoCtx:
@@ -154,32 +164,41 @@ async def do_fallback(reader, writer, relay_init, label,
 
     for method in methods:
         if method == 'cf_worker' and fallback_dst:
-            ok = await _cfproxy_worker_fallback(
-                reader, writer, relay_init, label, ctx,
-                dc=dc, is_test_dc=is_test_dc, is_media=is_media,
-                fallback_dst=fallback_dst, splitter=splitter)
-            if ok:
-                return True
-        elif method == 'cf':
-            if is_media and h2_pool is not None and proto_tag is not None:
-                channel = await h2_pool.open(dc, label)
-                if channel is not None:
-                    stats.connections_h2 += 1
-                    stats.connections_cfproxy += 1
-                    await bridge_h2(reader, writer, channel, ctx, proto_tag)
+            try:
+                ok = await _cfproxy_worker_fallback(
+                    reader, writer, relay_init, label, ctx,
+                    dc=dc, is_test_dc=is_test_dc, is_media=is_media,
+                    fallback_dst=fallback_dst, splitter=splitter)
+                if ok:
                     return True
-            ok = await _cfproxy_fallback(
-                reader, writer, relay_init, label, ctx,
-                dc=dc, is_media=is_media,
-                splitter=splitter)
-            if ok:
-                return True
+            except Exception as exc:
+                log.warning("[%s] CF worker fallback failed: %r", label, exc)
+        elif method == 'cf':
+            try:
+                if is_media and h2_pool is not None and proto_tag is not None:
+                    channel = await h2_pool.open(dc, label)
+                    if channel is not None:
+                        stats.connections_h2 += 1
+                        stats.connections_cfproxy += 1
+                        await bridge_h2(reader, writer, channel, ctx, proto_tag)
+                        return True
+                ok = await _cfproxy_fallback(
+                    reader, writer, relay_init, label, ctx,
+                    dc=dc, is_media=is_media,
+                    splitter=splitter)
+                if ok:
+                    return True
+            except Exception as exc:
+                log.warning("[%s] CF proxy fallback failed: %r", label, exc)
         elif method == 'tcp' and fallback_dst:
-            ok = await _tcp_fallback(
-                reader, writer, fallback_dst, 443,
-                relay_init, label, ctx)
-            if ok:
-                return True
+            try:
+                ok = await _tcp_fallback(
+                    reader, writer, fallback_dst, 443,
+                    relay_init, label, ctx)
+                if ok:
+                    return True
+            except Exception as exc:
+                log.warning("[%s] TCP fallback failed: %r", label, exc)
     return False
 
 
@@ -237,19 +256,27 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
                             ctx: CryptoCtx,
                             dc: int, is_media: bool,
                             splitter=None):
+    global _cf_failures, _cf_retry_after
+    #changed: may close issue: #1539
     media_tag = ' media' if is_media else ''
+    now = time.monotonic()
+    if now < _cf_retry_after:
+        log.debug("[%s] DC%d%s CF proxy skipped (backoff until %.0f)",
+                  label, dc, media_tag, _cf_retry_after - now)
+        return False
+
+    log.info("[%s] DC%d%s -> trying CF proxy", label, dc, media_tag)
+    connect_started = time.monotonic()
     ws = None
     chosen_domain = None
-
-    log.info("[%s] DC%d%s -> trying CF proxy",
-            label, dc, media_tag)
-    connect_started = time.monotonic()
     secure = not proxy_config.disable_secure
+    domains = list(balancer.get_domains_for_dc(dc))[:_CF_MAX_DOMAINS]
 
-    for base_domain in balancer.get_domains_for_dc(dc):
+    for base_domain in domains:
         domain = f'kws{dc}.{base_domain}'
         try:
-            ws = await RawWebSocket.connect(domain, domain, timeout=10.0, secure=secure)
+            ws = await RawWebSocket.connect(domain, domain, timeout=_CF_TIMEOUT,
+                                            secure=secure)
             chosen_domain = base_domain
             break
         except Exception as exc:
@@ -257,7 +284,16 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
                         label, dc, media_tag, exc, domain, 443 if secure else 80)
 
     if ws is None:
+        _cf_failures += 1
+        delay = min(_CF_BACKOFF_INITIAL * (2 ** min(_cf_failures - 1, 4)),
+                    _CF_BACKOFF_MAX)
+        _cf_retry_after = time.monotonic() + delay
+        log.warning("CF proxy circuit open %.0fs (failures=%d)",
+                    delay, _cf_failures)
         return False
+
+    _cf_failures = 0
+    _cf_retry_after = 0.0
 
     log.debug('[%s] WS CONNECT DC%d%s route=cf setup_ms=%.0f',
               label, dc, media_tag, (time.monotonic() - connect_started) * 1000)
@@ -309,8 +345,8 @@ async def _tcp_fallback(reader, writer, dst, port, relay_init, label, ctx: Crypt
         if rw is not None:
             rw.close()
             try:
-                await rw.wait_closed()
-            except (OSError, ConnectionError):
+                await asyncio.wait_for(rw.wait_closed(), timeout=2.0)
+            except (OSError, ConnectionError, asyncio.TimeoutError):
                 pass
 
 
@@ -334,6 +370,7 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
     activity = WsActivity(label, dc_tag) if log.isEnabledFor(logging.DEBUG) else None
 
     async def tcp_to_ws():
+        #changes may close issue #1537
         nonlocal up_bytes, up_packets, close_reason
         try:
             while True:
@@ -344,7 +381,11 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
                         if tail:
                             if activity is not None:
                                 activity.send_started()
-                            await ws.send(tail[0])
+                            try:
+                                await ws.send(tail[0])
+                            except (ConnectionError, OSError) as e:
+                                close_reason = f"upstream: {type(e).__name__}"
+                                return
                             if activity is not None:
                                 activity.sent(len(tail[0]))
                     break
@@ -356,33 +397,39 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
                 up_packets += 1
                 plain = ctx.clt_dec.update(chunk)
                 chunk = ctx.tg_enc.update(plain)
-                if splitter:
-                    parts = splitter.split(chunk, plain)
-                    if not parts:
-                        continue
-                    if activity is not None:
-                        activity.send_started()
-                    if len(parts) > 1:
-                        await ws.send_batch(parts)
+                try:
+                    if splitter:
+                        parts = splitter.split(chunk, plain)
+                        if not parts:
+                            continue
+                        if activity is not None:
+                            activity.send_started()
+                        if len(parts) > 1:
+                            await ws.send_batch(parts)
+                        else:
+                            await ws.send(parts[0])
+                        if activity is not None:
+                            activity.sent(sum(map(len, parts)))
                     else:
-                        await ws.send(parts[0])
-                    if activity is not None:
-                        activity.sent(sum(map(len, parts)))
-                else:
-                    if activity is not None:
-                        activity.send_started()
-                    await ws.send(chunk)
-                    if activity is not None:
-                        activity.sent(len(chunk))
+                        if activity is not None:
+                            activity.send_started()
+                        await ws.send(chunk)
+                        if activity is not None:
+                            activity.sent(len(chunk))
+                except (ConnectionError, OSError) as e:
+                    close_reason = f"upstream: {type(e).__name__}"
+                    return
         except asyncio.CancelledError:
-            return
+            raise
         except (ConnectionError, OSError) as e:
             close_reason = f"client: {type(e).__name__}"
         except Exception as e:
             close_reason = f"client: {type(e).__name__}: {e}"
             log.debug("[%s] tcp->ws ended: %s", label, e)
 
+
     async def ws_to_tcp():
+        #changes may close issue #1537
         nonlocal down_bytes, down_packets, close_reason
         try:
             while True:
@@ -399,12 +446,16 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
                 down_packets += 1
                 plain = ctx.tg_dec.update(data)
                 data = ctx.clt_enc.update(plain)
-                writer.write(data)
-                await writer.drain()
+                try:
+                    writer.write(data)
+                    await writer.drain()
+                except (ConnectionError, OSError) as e:
+                    close_reason = f"client: {type(e).__name__}"
+                    return
                 if activity is not None:
                     activity.delivered(n)
         except asyncio.CancelledError:
-            return
+            raise
         except (ConnectionError, OSError) as e:
             close_reason = f"upstream: {type(e).__name__}"
         except asyncio.IncompleteReadError:
@@ -440,7 +491,7 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
             pass
         try:
             writer.close()
-            await writer.wait_closed()
+            await asyncio.wait_for(writer.wait_closed(), timeout=2.0)
         except BaseException:
             pass
 
@@ -467,7 +518,7 @@ async def _bridge_tcp_reencrypt(reader, writer, remote_reader, remote_writer,
                 dst_w.write(data)
                 await dst_w.drain()
         except asyncio.CancelledError:
-            pass
+            raise
         except Exception as e:
             log.debug("[%s] forward ended: %s", label, e)
 
@@ -488,6 +539,6 @@ async def _bridge_tcp_reencrypt(reader, writer, remote_reader, remote_writer,
         for w in (writer, remote_writer):
             try:
                 w.close()
-                await w.wait_closed()
+                await asyncio.wait_for(w.wait_closed(), timeout=2.0)
             except BaseException:
                 pass

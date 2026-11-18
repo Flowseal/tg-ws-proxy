@@ -205,6 +205,8 @@ def start_cfproxy_domain_refresh() -> None:
 
 
 def parse_dc_ip_list(dc_ip_list: List[str]) -> Dict[int, str]:
+    if isinstance(dc_ip_list, str):
+        dc_ip_list = [dc_ip_list]
     dc_redirects: Dict[int, str] = {}
     for entry in dc_ip_list:
         if ':' not in entry:
@@ -214,13 +216,34 @@ def parse_dc_ip_list(dc_ip_list: List[str]) -> Dict[int, str]:
             err.kind = "format"
             raise err
         dc_s, ip_s = entry.split(':', 1)
+        
+        if not dc_s.strip():
+            err = ValueError(f"Empty DC number in {entry!r}")
+            err.entry = entry
+            err.kind = "invalid"
+            raise err
+            
         try:
             dc_n = int(dc_s)
-            _socket.inet_pton(_socket.AF_INET, ip_s)
-        except (ValueError, OSError):
-            err = ValueError(f"Invalid --dc-ip {entry!r}")
+        except ValueError:
+            err = ValueError(f"Invalid DC number {dc_s!r} in {entry!r}")
             err.entry = entry
             err.kind = "invalid"
             raise err from None
+            
+        if not ip_s.strip():
+            err = ValueError(f"Empty IP address in {entry!r}")
+            err.entry = entry
+            err.kind = "invalid"
+            raise err
+            
+        try:
+            _socket.inet_pton(_socket.AF_INET, ip_s)
+        except OSError:
+            err = ValueError(f"Invalid IP address {ip_s!r} in {entry!r}")
+            err.entry = entry
+            err.kind = "invalid"
+            raise err from None
+            
         dc_redirects[dc_n] = ip_s
     return dc_redirects

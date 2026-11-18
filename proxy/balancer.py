@@ -13,7 +13,11 @@ class _Balancer:
         if Counter(self.domains) == Counter(domains_list):
             return
         
-        self.domains = domains_list[:]
+        self.domains = list(dict.fromkeys(domains_list))
+        
+        if not self.domains:
+            self._dc_to_domain = {}
+            return
 
         self._dc_to_domain = {
             dc_id: random.choice(self.domains)

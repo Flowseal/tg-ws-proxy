@@ -238,7 +238,10 @@ def _create_dc(ctk, frame, theme, cfg, default_config):
         border_width=1, text_color=theme.text_primary,
     )
     dc_textbox.pack(fill="x")
-    dc_textbox.insert("1.0", "\n".join(cfg.get("dc_ip", default_config["dc_ip"])))
+    dc_ip_val = cfg.get("dc_ip", default_config["dc_ip"])
+    if isinstance(dc_ip_val, str):
+        dc_ip_val = [dc_ip_val]
+    dc_textbox.insert("1.0", "\n".join(dc_ip_val))
     attach_tooltip_to_widgets([dc_lbl, dc_textbox], t("tip.dc"))
     return dc_textbox
 
@@ -615,5 +618,3 @@ def validate_config_form(
     if widgets.language_var is not None:
         values["language"] = language_from_label(widgets.language_var.get()).value
     return validate_settings(values, default_config)
-
-

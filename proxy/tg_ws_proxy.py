@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import math
 import random
 import struct
 import asyncio
@@ -22,7 +23,10 @@ if __name__ == '__main__' and (__package__ is None or __package__ == ''):
 
 from .utils import *
 from .stats import stats
-from .config import proxy_config, parse_dc_ip_list, start_cfproxy_domain_refresh, coerce_domain_list
+from .config import (
+    proxy_config, parse_dc_ip_list, start_cfproxy_domain_refresh, 
+    coerce_domain_list, _is_valid_domain
+)
 from .bridge import MsgSplitter, CryptoCtx, do_fallback, bridge_ws_reencrypt, reset_tcp_backoff
 from .raw_websocket import set_sock_opts
 from .fake_tls import (
@@ -106,9 +110,6 @@ def _generate_relay_init(proto_tag: bytes, dc_idx: int) -> bytes:
     result = bytearray(rnd_bytes)
     result[PROTO_TAG_POS:HANDSHAKE_LEN] = encrypted_tail
     return bytes(result)
-
-
-
 
 
 async def _read_client_init(reader, writer, secret, label, masking):
@@ -596,14 +597,16 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
 def run_proxy(stop_event: Optional[asyncio.Event] = None):
     asyncio.run(_run(stop_event,))
 
+
 def _port_type(value: str) -> int:
     try:
         ivalue = int(value)
     except ValueError:
         raise argparse.ArgumentTypeError(f"invalid int value: '{value}'") from None
-    if not 0 <= ivalue <= 65535:
-        raise argparse.ArgumentTypeError(f"port must be between 0 and 65535, got {ivalue}")
+    if not 1 <= ivalue <= 65535:
+        raise argparse.ArgumentTypeError(f"port must be between 1 and 65535, got {ivalue}")
     return ivalue
+
 
 def _log_backups_type(value: str) -> int:
     try:
@@ -614,14 +617,16 @@ def _log_backups_type(value: str) -> int:
         raise argparse.ArgumentTypeError(f"log backups must be at least 1, got {ivalue}")
     return ivalue
 
+
 def _log_max_mb_type(value: str) -> float:
     try:
         fvalue = float(value)
     except ValueError:
         raise argparse.ArgumentTypeError(f"invalid float value: '{value}'") from None
-    if fvalue <= 0:
-        raise argparse.ArgumentTypeError(f"log max size must be > 0, got {fvalue}")
+    if not math.isfinite(fvalue) or fvalue <= 0 or fvalue > 100:
+        raise argparse.ArgumentTypeError(f"log max size must be finite, > 0 and <= 100 MB, got {fvalue}")
     return fvalue
+
 
 def main():
     ap = argparse.ArgumentParser(
@@ -685,7 +690,7 @@ def main():
             '4:149.154.167.220',
         ]
     elif None in args.dc_ip:
-        args.dc_ip = []
+        args.dc_ip = [ip for ip in args.dc_ip if ip is not None]
 
     try:
         dc_redirects = parse_dc_ip_list(args.dc_ip)
@@ -698,14 +703,17 @@ def main():
         if len(secret_hex) != 32:
             log.error("Secret must be exactly 32 hex characters")
             sys.exit(1)
-        try:
-            bytes.fromhex(secret_hex)
-        except ValueError:
+        if not all(c in "0123456789abcdefABCDEF" for c in secret_hex):
             log.error("Secret must be valid hex")
             sys.exit(1)
     else:
         secret_hex = os.urandom(16).hex()
         log.info("Generated secret: %s", secret_hex)
+
+    ftls = args.fake_tls_domain.strip()
+    if ftls and not _is_valid_domain(ftls):
+        log.error("Invalid --fake-tls-domain format")
+        sys.exit(1)
 
     proxy_config.port = args.port
     proxy_config.host = args.host
@@ -718,7 +726,7 @@ def main():
     proxy_config.cfproxy_worker_domains = coerce_domain_list(args.cfproxy_worker_domain)
     proxy_config.cfproxy_h2_media = not args.no_h2
     proxy_config.disable_secure = args.no_secure
-    proxy_config.fake_tls_domain = args.fake_tls_domain.strip()
+    proxy_config.fake_tls_domain = ftls
     proxy_config.proxy_protocol = args.proxy_protocol
     proxy_config.force_test_dc = args.force_test_dc
 
@@ -752,8 +760,8 @@ def main():
     except KeyboardInterrupt:
         log.info("Shutting down. Final stats: %s", stats.summary())
     except OSError as exc:
-        from utils.diagnostics import diagnoze_listen_error
-        msg, _ = diagnoze_listen_error(exc)
+        from utils.diagnostics import diagnose_listen_error
+        msg, _ = diagnose_listen_error(exc)
         log.error("%s", msg or f"Failed to start proxy: {exc!r}")
         sys.exit(1)
 

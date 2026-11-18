@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from typing import Any, Callable, Tuple
 
 from proxy import get_link_host
@@ -12,6 +13,55 @@ from ui.settings_form import (
     install_tray_config_form as install_tray_config_form,
     validate_config_form as validate_config_form,
 )
+
+
+def _install_scroll_fix(scroll: Any) -> None:
+    if not sys.platform.startswith("win"):
+        return
+    canvas = scroll._parent_canvas
+
+    try:
+        canvas.configure(yscrollincrement=20)
+    except Exception:
+        pass
+
+    original_wheel = scroll._mouse_wheel_all
+    state = {"pending": 0, "scheduled": False}
+    STEP = 0.04
+    FRAME_MS = 10
+
+    def _apply() -> None:
+        state["scheduled"] = False
+        delta = state["pending"]
+        state["pending"] = 0
+        if not delta:
+            return
+        try:
+            first, last = canvas.yview()
+            view_h = last - first
+            max_top = max(0.0, 1.0 - view_h)
+            new_top = max(0.0, min(max_top, first + delta * STEP))
+            canvas.yview_moveto(new_top)
+            canvas.update_idletasks()
+        except Exception:
+            pass
+
+    def _on_wheel(event: Any) -> None:
+        try:
+            if scroll._shift_pressed:
+                return original_wheel(event)
+            if event.delta % 120 == 0:
+                delta = -int(event.delta / 120) or (-1 if event.delta > 0 else 1)
+            else:
+                delta = -1 if event.delta > 0 else 1
+            state["pending"] += delta
+            if not state["scheduled"]:
+                state["scheduled"] = True
+                canvas.after(FRAME_MS, _apply)
+        except Exception:
+            return original_wheel(event)
+
+    scroll._mouse_wheel_all = _on_wheel
 
 
 def tray_settings_scroll_and_footer(
@@ -33,6 +83,7 @@ def tray_settings_scroll_and_footer(
         scroll._parent_canvas.configure(yscrollincrement=4)
     except Exception:
         pass
+    _install_scroll_fix(scroll)
     return scroll, footer
 
 

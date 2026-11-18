@@ -77,8 +77,12 @@ class _ResponseStream(httpx.AsyncByteStream):
 
     async def aclose(self):
         if not self.closed:
+            if self.chunks and self.connection.error is None:
+                credit = sum(c for _, c in self.chunks)
+                self.chunks.clear()
+                if credit:
+                    self.connection.consumed(self, credit)
             self.closed = True
-            self.chunks.clear()
             self.connection.release(self)
             self.changed.set()
 
@@ -142,7 +146,7 @@ class _Connection:
                 if not data:
                     raise httpx.ReadError('H2 peer closed the connection')
                 events = self.h2.receive_data(data)
-                terminated = any(isinstance(e, ConnectionTerminated) for e in events)
+                terminated = None
                 connection_credit = 0
                 for event in events:
                     if isinstance(event, RemoteSettingsChanged):
@@ -151,17 +155,16 @@ class _Connection:
                     elif isinstance(event, WindowUpdated):
                         self.changed.set()
                     elif isinstance(event, ConnectionTerminated):
-                        raise httpx.RemoteProtocolError('H2 GOAWAY error=%s last_stream=%s' % (
-                            event.error_code, event.last_stream_id))
+                        terminated = event
                     else:
                         stream = self.streams.get(getattr(event, 'stream_id', None))
                         if isinstance(event, DataReceived):
-                            if event.flow_controlled_length and not terminated:
+                            if event.flow_controlled_length:
                                 connection_credit += event.flow_controlled_length
                             if stream is not None:
                                 if event.data:
                                     stream.chunks.append((event.data, event.flow_controlled_length))
-                                elif not terminated:
+                                elif terminated is None:
                                     self.consumed(stream, event.flow_controlled_length)
                         elif stream is not None:
                             if isinstance(event, ResponseReceived):
@@ -180,6 +183,9 @@ class _Connection:
                     self.h2.increment_flow_control_window(connection_credit)
                 if self.flush():
                     await self.drain()
+                if terminated is not None:
+                    raise httpx.RemoteProtocolError('H2 GOAWAY error=%s last_stream=%s' % (
+                        terminated.error_code, terminated.last_stream_id))
         except asyncio.CancelledError:
             self.fail(httpx.ReadError('H2 reader stopped'))
             raise
@@ -268,10 +274,16 @@ class _Connection:
                                                   if not k.startswith(b':')],
                                   stream=stream, extensions=stream.extensions)
         except H2Error as exc:
-            await stream.aclose()
+            try:
+                await stream.aclose()
+            except Exception:
+                pass
             raise httpx.LocalProtocolError(str(exc)) from exc
         except BaseException:
-            await stream.aclose()
+            try:
+                await stream.aclose()
+            except Exception:
+                pass
             raise
 
     def consumed(self, stream, credit):
@@ -332,6 +344,7 @@ class H2Transport(httpx.AsyncBaseTransport):
             if self.connection is None or self.connection.error is not None:
                 if self.connection is not None:
                     await self.connection.aclose()
+                    self.connection = None
                 timeouts = request.extensions.get('timeout', {})
                 trace = request.extensions.get('trace')
                 if trace:

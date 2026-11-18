@@ -352,6 +352,10 @@ async def probe_appdata_len(domain: str, port: int = 443,
     finally:
         if writer is not None:
             writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
 
 
 def wrap_tls_record(data: bytes) -> bytes:
@@ -420,6 +424,8 @@ class FakeTlsStream:
 
             if rtype != TLS_RECORD_APPDATA:
                 return b''
+            if rec_len == 0:
+                continue
 
             data = await self._reader.read(min(rec_len, 65536))
             if not data:
@@ -478,8 +484,7 @@ async def proxy_to_masking_domain(reader, writer, initial_data: bytes,
                         break
                     dst.write(chunk)
                     await dst.drain()
-            except (ConnectionResetError, BrokenPipeError, OSError,
-                    asyncio.CancelledError):
+            except (ConnectionResetError, BrokenPipeError, OSError):
                 pass
             finally:
                 try:
@@ -488,14 +493,21 @@ async def proxy_to_masking_domain(reader, writer, initial_data: bytes,
                 except Exception:
                     pass
 
-        await asyncio.gather(
-            _relay(reader, up_writer),
-            _relay(up_reader, writer),
-        )
+        tasks = [
+            asyncio.create_task(_relay(reader, up_writer)),
+            asyncio.create_task(_relay(up_reader, writer))
+        ]
+        try:
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
     except Exception:
         pass
     finally:
         try:
             up_writer.close()
+            await up_writer.wait_closed()
         except Exception:
             pass

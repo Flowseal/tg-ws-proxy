@@ -5,6 +5,7 @@ import os
 import sys
 import threading
 import time
+import traceback
 import webbrowser
 import winreg
 
@@ -56,6 +57,43 @@ from ui.ctk_theme import (
 )
 from ui.i18n import t
 from ui.settings_dialog import SettingsDialog
+
+
+def _install_crash_hook() -> None:
+    def _hook(exc_type, exc_value, exc_tb) -> None:
+        try:
+            import platform
+            import tempfile
+            from datetime import datetime
+
+            log_path = Path(tempfile.gettempdir()) / "tgws_crash.log"
+            with open(log_path, "a", encoding="utf-8") as fh:
+                fh.write(f"\n--- {datetime.now().isoformat()} ---\n")
+                fh.write(f"python: {sys.version}\n")
+                fh.write(f"platform: {platform.platform()}\n")
+                fh.write(f"frozen: {getattr(sys, 'frozen', False)}\n")
+                fh.write(f"executable: {sys.executable}\n")
+                fh.write(f"meipass: {getattr(sys, '_MEIPASS', None)}\n")
+                fh.write(f"cwd: {os.getcwd()}\n")
+                traceback.print_exception(exc_type, exc_value, exc_tb, file=fh)
+        except Exception:
+            pass
+        try:
+            ctypes.windll.user32.MessageBoxW(
+                None,
+                f"Приложение завершилось с ошибкой.\n\n"
+                f"{exc_type.__name__}: {exc_value}\n\n"
+                f"Лог: %TEMP%\\tgws_crash.log — приложите его при обращении в Issues.",
+                "TG WS Proxy — критическая ошибка",
+                0x10,
+            )
+        except Exception:
+            pass
+
+    sys.excepthook = _hook
+
+
+_install_crash_hook()
 
 _tray_icon: Optional[object] = None
 _config: dict = {}
@@ -401,8 +439,9 @@ def _on_exit(icon=None, item=None) -> None:
     log.info("User requested exit")
     quit_ctk()
     threading.Thread(target=lambda: (time.sleep(3), os._exit(0)), daemon=True, name="force-exit").start()
-    if icon:
-        icon.stop()
+    target_icon = icon if icon is not None else _tray_icon
+    if target_icon:
+        target_icon.stop()
 
 
 # settings dialog
@@ -526,6 +565,30 @@ def _build_menu():
 
 
 # entry point
+_ctrl_handler_ptr = None
+
+
+def _install_console_ctrl_handler() -> None:
+    global _ctrl_handler_ptr
+    if _ctrl_handler_ptr is not None:
+        return
+    try:
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
+        def _handler(ctrl_type: int) -> bool:
+            if ctrl_type == 0:  # CTRL_C_EVENT
+                threading.Thread(
+                    target=_on_exit, daemon=True, name="ctrl-c-exit"
+                ).start()
+                return True
+            return False
+
+        if not ctypes.windll.kernel32.SetConsoleCtrlHandler(_handler, True):
+            log.warning("SetConsoleCtrlHandler failed")
+            return
+        _ctrl_handler_ptr = _handler
+    except Exception as exc:
+        log.warning("Failed to install console ctrl handler: %r", exc)
+        
 
 def run_tray() -> None:
     global _tray_icon, _config
@@ -554,15 +617,30 @@ def run_tray() -> None:
 
     _tray_icon = pystray.Icon(APP_NAME, load_icon(), t("app.name"), menu=_build_menu())
     log.info("Tray icon running")
-    _tray_icon.run()
-
-    stop_proxy()
-    log.info("Tray app exited")
-
+    _install_console_ctrl_handler()
+    try:
+        _tray_icon.run()
+    except KeyboardInterrupt:
+        _on_exit()
+    finally:
+        if _tray_icon:
+            _tray_icon.stop()
+        stop_proxy()
+        log.info("Tray app exited")
 
 def main() -> None:
+    #added crash log, can help for close issue #1546
     if (mutex_result := _acquire_win_mutex()) is False or mutex_result is None and not acquire_lock():
         _show_info(t("dialog.already_running"), os.path.basename(sys.argv[0]))
+        return
+
+    try:
+        from utils.tray_common import ensure_dirs
+        ensure_dirs()
+    except OSError as exc:
+        sys.excepthook(
+            type(exc), exc, exc.__traceback__
+        )
         return
 
     if IS_FROZEN:

@@ -56,6 +56,12 @@ chmod +x TgWsProxy_linux_amd64
 
 Подробная инструкция: [BuildFromSource.md](./BuildFromSource.md)
 
+Требуются: `dbus, libappindicator-gtk3, libnotify.`
+Если трей не появляется - запускать через:
+```bash
+dbus-run-session -- tg-ws-proxy-tray-linux
+```
+
 ```bash
 pip install -e .
 tg-ws-proxy-tray-linux
