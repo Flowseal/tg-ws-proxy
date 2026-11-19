@@ -240,6 +240,93 @@ class WsPoolTest(unittest.IsolatedAsyncioTestCase):
         ready.writer.close.assert_called_once()
         idle.writer.close.assert_called_once()
 
+class CfWorkerPoolBackoffTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.pool = _CfWorkerPool()
+        self.domain = "worker.example"
+        self.now = [1000.0]
+        self.monotonic = "proxy.pool.time.monotonic"
+        self.time = "proxy.pool.time.time"
+
+    def _ws_err(self, status_code):
+        return WsHandshakeError(status_code,f"HTTP/1.1 {status_code}")
+
+    def test_429_progressive_backoff(self):
+        with mock.patch(self.monotonic, side_effect=lambda: self.now[0]), mock.patch(self.time, return_value=43200.0):  # 43200 - 12 pm utc
+            for expected in (60,300,900,1800,1800):
+                self.pool.report_failure(self.domain, self._ws_err(429))
+                self.assertEqual(self.pool.available_domains([self.domain]), [])
+                self.now[0] += expected-1
+                self.assertEqual(self.pool.available_domains([self.domain]), [])
+                self.now[0] += 2
+                self.assertEqual(self.pool.available_domains([self.domain]), [self.domain])
+
+    def test_429_capped_by_plus_buffer(self):
+        target_time = 86400.0 - 100  # 100secs to midnight
+        with mock.patch(self.monotonic, side_effect=lambda: self.now[0]), mock.patch(self.time, return_value=target_time):
+            self.pool.report_failure(self.domain, self._ws_err(429))  # First, 60 > (120+100) = False => ban 60s
+            self.assertEqual(self.pool._exhausted_until[self.domain], 1060.0)
+
+            self.now[0] = 1061.0
+            self.pool.report_failure(self.domain, self._ws_err(429))  # Second, 300 > (120+100) = True => ban 220s
+            self.assertEqual(self.pool._exhausted_until[self.domain], 1061.0 + 220.0)
+
+    def test_bad_worker_5xx_and_ignored_errors(self):
+        with mock.patch(self.monotonic, return_value=1000.0):
+            # e200/e403/e404 => bad_worker_backoff (300s)
+            for code in (200,403,404):
+                domain = f"bad-{code}.example"
+                self.pool.report_failure(domain, self._ws_err(code))
+                self.assertEqual(self.pool._exhausted_until[domain], 1300.0)
+
+            # e500/e503/e599 => tranisent_backoff (15s)
+            for code in (500, 503, 599):
+                domain = f"err-{code}.example"
+                self.pool.report_failure(domain, self._ws_err(code))
+                self.assertEqual(self.pool._exhausted_until[domain], 1015.0)
+
+            # eTimeout, eOS => tranisent_backoff (15s)
+            self.pool.report_failure(self.domain, asyncio.TimeoutError())
+            self.assertEqual(self.pool._exhausted_until[self.domain], 1015.0)
+            self.pool.report_failure(self.domain, OSError("reset"))
+            self.assertEqual(self.pool._exhausted_until[self.domain], 1015.0)
+
+            # Unsupported status codes and exceptions are ignored
+            for excepted in (self._ws_err(400), self._ws_err(600), ValueError("boom")):
+                domain = "ignored.example"
+                self.pool.report_failure(domain, excepted)
+                self.assertEqual(self.pool.available_domains([domain]), [domain])
+
+    def test_duplicate_failure_during_cooldown_is_ignored(self):
+        with mock.patch(self.monotonic, side_effect=lambda: self.now[0]), mock.patch(self.time, return_value=43200.0):
+            self.pool.report_failure(self.domain, self._ws_err(429))
+            self.now[0] = 1010.0
+            self.pool.report_failure(self.domain, self._ws_err(429))
+
+            self.assertEqual(self.pool._failure_counts[self.domain], 1)
+            self.assertEqual(self.pool._exhausted_until[self.domain], 1060)
+
+    def test_report_success_resets_backoff(self):
+        with mock.patch(self.monotonic, side_effect=lambda: self.now[0]), mock.patch(self.time, return_value=43200.0):
+            self.pool.report_failure(self.domain, self._ws_err(429))
+            self.now[0] = 1061.0
+            self.pool.report_failure(self.domain, self._ws_err(429))  # 2 strikes (300s)
+
+            self.pool.report_success(self.domain)
+            self.assertEqual(self.pool.available_domains([self.domain]), [self.domain])
+
+            # Next failure starts again from step 0 (60s), not step 2 (900s)
+            self.now[0] = 2000.0
+            self.pool.report_failure(self.domain, self._ws_err(429))
+            self.assertEqual(self.pool._exhausted_until[self.domain], 2060.0)
+
+    async def test_reset_clears_backoff_state(self):
+        with mock.patch(self.monotonic, side_effect=lambda: self.now[0]), mock.patch(self.time, return_value=43200.0):
+            self.pool.report_failure(self.domain, self._ws_err(429))
+            self.pool.reset()
+            self.assertEqual(self.pool.available_domains([self.domain]), [self.domain])
+            self.assertEqual(self.pool._failure_counts, {})
+            self.assertEqual(self.pool._exhausted_until, {})
 
 class CfWorkerPoolTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
