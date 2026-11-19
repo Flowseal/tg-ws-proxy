@@ -20,7 +20,7 @@ class _WsPool:
     WS_POOL_CHECK_INTERVAL = 5.0
     REFILL_BACKOFF_INITIAL = 1.0
     REFILL_BACKOFF_MAX = 3600.0
-    
+
     def __init__(self):
         self._idle: Dict[Tuple[int, bool, bool], deque] = {}
         self._refilling: Dict[Tuple[int, bool, bool], asyncio.Task] = {}
@@ -237,6 +237,10 @@ class _CfWorkerPool:
     PER_DC_LIMIT = 1
     REFILL_BACKOFF_INITIAL = 1.0
     REFILL_BACKOFF_MAX = 3600.0
+    RATE_LIMIT_BACKOFF = (60, 300, 900, 1800) # e429: 1m -> 5m -> 15m -> 30m
+    BAD_WORKER_BACKOFF = (300, 900, 1800) # e200/e403/e404: 5m -> 15m -> 30m
+    TRANSIENT_BACKOFF = (15, 60, 300) # e500-e599/timeout/OSError: 15s -> 1m -> 5m
+    UTC_RESET_BUFFER = 120 # из-за возможной рассинхронизации в 00.00 utc (buffer for clock skew around 00.00 utc reset)
 
     def __init__(self):
         self._idle: Dict[int, deque] = {}
@@ -245,6 +249,7 @@ class _CfWorkerPool:
         self._refill_failures: Dict[int, int] = {}
         self._refill_after: Dict[int, float] = {}
         self._exhausted_until: Dict[str, float] = {}
+        self._failure_counts: Dict[str, int] = {}
 
     async def get(self, dc: int, fallback_dst: str,
                   worker_domains: List[str]
@@ -381,6 +386,7 @@ class _CfWorkerPool:
                 ws = await RawWebSocket.connect(
                     worker_domain, worker_domain, timeout=8, path=path,
                     secure=not proxy_config.disable_secure)
+                self.report_success(worker_domain)
                 return ws, worker_domain
             except Exception as exc:
                 log.debug("CF worker pool connect DC%d via %s for %s failed: %r",
@@ -389,7 +395,7 @@ class _CfWorkerPool:
         return None
 
     def available_domains(self, worker_domains: List[str]) -> List[str]:
-        now = time.time()
+        now = time.monotonic()
         domains = []
         for domain in worker_domains:
             if domain in domains:
@@ -404,17 +410,48 @@ class _CfWorkerPool:
         return domains
 
     def report_failure(self, worker_domain: str, exc: Exception) -> None:
-        return  # TODO: check status code after daily limit reached
-        if not isinstance(exc, WsHandshakeError) or exc.status_code != 429:
+        if isinstance(exc, WsHandshakeError):
+            if exc.status_code == 429:
+                steps = self.RATE_LIMIT_BACKOFF
+                reason = "HTTP 429"
+            elif exc.status_code in (200, 403, 404):
+                steps = self.BAD_WORKER_BACKOFF
+                reason = f"HTTP {exc.status_code}"
+            elif 500 <= exc.status_code < 600:
+                steps = self.TRANSIENT_BACKOFF
+                reason = f"HTTP {exc.status_code}"
+            else:
+                return
+        elif isinstance(exc, (asyncio.TimeoutError, OSError)):
+            steps = self.TRANSIENT_BACKOFF
+            reason = type(exc).__name__
+        else:
             return
 
-        now = time.time()
+        now = time.monotonic()
         if self._exhausted_until.get(worker_domain, 0) > now:
             return
-        exhausted_until = now + (86400 - (now % 86400))
+
+        strikes = self._failure_counts.get(worker_domain, 0)
+        self._failure_counts[worker_domain] = strikes + 1
+        cooldown = float(steps[min(strikes, len(steps) - 1)])
+
+        if isinstance(exc, WsHandshakeError) and exc.status_code == 429:
+            until_utc_midnight = (86400.0 - (time.time() % 86400.0)) + self.UTC_RESET_BUFFER
+            cooldown = min(cooldown, until_utc_midnight)
+
+        exhausted_until = now + cooldown
         self._exhausted_until[worker_domain] = exhausted_until
         log.warning(
-            "CF worker %s reached its request limit, disabled for %d seconds", worker_domain, int(exhausted_until - now))
+            "CF worker %s failed (%s), disabled for %d seconds",
+            worker_domain,
+            reason,
+            int(cooldown),
+        )
+
+    def report_success(self, worker_domain: str) -> None:
+        self._failure_counts.pop(worker_domain, None)
+        self._exhausted_until.pop(worker_domain, None)
 
     async def _quiet_close(self, ws):
         try:
@@ -455,6 +492,7 @@ class _CfWorkerPool:
         self._refill_failures.clear()
         self._refill_after.clear()
         self._exhausted_until.clear()
+        self._failure_counts.clear()
 
     async def close(self):
         tasks = list(self._rotating.values()) + list(self._refilling.values())
