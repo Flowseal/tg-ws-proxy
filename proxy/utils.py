@@ -151,13 +151,33 @@ def set_x25519(context: ssl.SSLContext) -> None:
 
 
 def create_ssl_context(*, check_hostname: bool = True) -> ssl.SSLContext:
+    logger = logging.getLogger('tg-mtproto-proxy')
     bundle_dir = getattr(sys, '_MEIPASS', None)
     cafile = (os.path.join(bundle_dir, 'certifi', 'cacert.pem')
               if bundle_dir else certifi.where())
-    context = ssl.create_default_context(cafile=cafile)
-    context.load_default_certs()
-    set_x25519(context)
+
+    try:
+        context = ssl.create_default_context(cafile=cafile)
+        try:
+            context.load_default_certs()
+        except Exception:
+            pass
+        set_x25519(context)
+    except Exception as exc:
+        logger.warning("SSL context init failed (%s), using fallback context", exc)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        try:
+            context.load_verify_locations(cafile=cafile)
+        except Exception:
+            context.load_default_certs()
+        else:
+            try:
+                context.load_default_certs()
+            except Exception:
+                pass
+
     context.check_hostname = check_hostname
+    context.verify_mode = ssl.CERT_REQUIRED
     return context
 
 
