@@ -64,6 +64,16 @@ a = Analysis(
 
 a.datas += [('certifi/cacert.pem', certifi_cafile, 'DATA')]
 
+# Ensure Tcl/Tk script libraries are bundled (required for tkinter/customtkinter UI).
+try:
+    from PyInstaller.utils.hooks.tcl_tk import tcltk_info
+    _existing_datas = {name for name, _, _ in a.datas}
+    for _name, _src, _type in tcltk_info.data_files:
+        if _name not in _existing_datas and os.path.exists(_src):
+            a.datas.append((_name, _src, _type))
+except Exception:
+    pass
+
 _required_libraries = {
     'libglib-2.0.so.0', 'libgobject-2.0.so.0', 'libgio-2.0.so.0',
     'libgtk-3.so.0', 'libappindicator3.so.1',
