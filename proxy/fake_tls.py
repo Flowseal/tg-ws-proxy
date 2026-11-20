@@ -310,7 +310,10 @@ async def probe_appdata_len(domain: str, port: int = 443,
 
     writer = None
     try:
-        ctx = ssl.create_default_context()
+        try:
+            ctx = ssl.create_default_context()
+        except Exception:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         set_x25519(ctx)
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
