@@ -1,13 +1,14 @@
 import os
 import logging
 import base64
+import hashlib
 import struct
 import asyncio
 import socket as _socket
 
 from typing import List, Optional, Tuple
 from .config import proxy_config
-from .utils import create_ssl_context
+from .utils import STREAM_CLOSE_TIMEOUT, close_stream, create_ssl_context
 
 log = logging.getLogger('tg-mtproto-proxy')
 
@@ -22,6 +23,9 @@ _st_H = struct.Struct('>H')
 _st_Q = struct.Struct('>Q')
 
 _XOR_TABLES = tuple(bytes(value ^ key for value in range(256)) for key in range(256))
+
+_MAX_UPGRADE_HEADERS = 32 * 1024
+_WS_ACCEPT_GUID = b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
 _ssl_ctx = create_ssl_context()
 _ssl_ctx_fronting = create_ssl_context(check_hostname=False)
@@ -71,6 +75,27 @@ def set_sock_opts(transport, buffer_size):
         pass
 
 
+async def _read_upgrade_response(reader, writer, request: bytes) -> List[str]:
+    writer.write(request)
+    await writer.drain()
+
+    lines = []
+    remaining = _MAX_UPGRADE_HEADERS
+    while True:
+        try:
+            line = await reader.readline()
+        except ValueError as exc:
+            raise WsHandshakeError(0, 'response header line too large') from exc
+        remaining -= len(line)
+        if remaining < 0:
+            raise WsHandshakeError(0, 'response headers too large')
+        if line in (b'\r\n', b'\n'):
+            return lines
+        if not line.endswith(b'\n'):
+            raise WsHandshakeError(0, 'incomplete response headers')
+        lines.append(line.decode('utf-8', errors='replace').strip())
+
+
 class RawWebSocket:
     __slots__ = ('reader', 'writer', '_closed', '_frag')
 
@@ -101,6 +126,8 @@ class RawWebSocket:
         port = 443 if secure else 80
         tls_options = {'ssl': ssl_context, 'server_hostname': sni} if secure else {}
         writer = None
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(host, port, **tls_options),
@@ -121,17 +148,8 @@ class RawWebSocket:
                 f'\r\n'
             )
 
-            writer.write(req.encode())
-            await writer.drain()
-
-            response_lines: list[str] = []
-            while True:
-                line = await asyncio.wait_for(reader.readline(),
-                                              timeout=timeout)
-                if line in (b'\r\n', b'\n', b''):
-                    break
-                response_lines.append(
-                    line.decode('utf-8', errors='replace').strip())
+            response_lines = await asyncio.wait_for(
+                _read_upgrade_response(reader, writer, req.encode()), deadline - loop.time())
 
             if not response_lines:
                 raise WsHandshakeError(0, 'empty response')
@@ -143,14 +161,24 @@ class RawWebSocket:
             except ValueError:
                 status_code = 0
 
-            if status_code == 101:
-                return RawWebSocket(reader, writer)
-
             headers: dict[str, str] = {}
             for hl in response_lines[1:]:
                 if ':' in hl:
                     k, v = hl.split(':', 1)
-                    headers[k.strip().lower()] = v.strip()
+                    name = k.strip().lower()
+                    value = v.strip()
+                    headers[name] = f'{headers[name]}, {value}' if name in headers else value
+
+            if status_code == 101:
+                upgrade = {token.strip() for token in headers.get('upgrade', '').lower().split(',')}
+                connection = {token.strip() for token in headers.get('connection', '').lower().split(',')}
+                accept = base64.b64encode(
+                    hashlib.sha1(ws_key.encode('ascii') + _WS_ACCEPT_GUID).digest()
+                ).decode('ascii')
+                if ('websocket' not in upgrade or 'upgrade' not in connection
+                        or headers.get('sec-websocket-accept') != accept):
+                    raise WsHandshakeError(101, 'invalid WebSocket upgrade headers', headers)
+                return RawWebSocket(reader, writer)
 
             raise WsHandshakeError(status_code, first_line, headers,
                                     location=headers.get('location'))
@@ -199,8 +227,8 @@ class RawWebSocket:
                     self.writer.write(self._build_frame(
                         self.OP_CLOSE,
                         payload[:2] if payload else b'', mask=True))
-                    await self.writer.drain()
-                except Exception:
+                    await asyncio.wait_for(self.writer.drain(), STREAM_CLOSE_TIMEOUT)
+                except (OSError, asyncio.TimeoutError):
                     pass
                 return None
 
@@ -232,21 +260,17 @@ class RawWebSocket:
         return None
 
     async def close(self):
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + STREAM_CLOSE_TIMEOUT
         try:
             if not self._closed:
                 self._closed = True
-                try:
-                    self.writer.write(
-                        self._build_frame(self.OP_CLOSE, b'', mask=True))
-                    await self.writer.drain()
-                except Exception:
-                    pass
+                self.writer.write(self._build_frame(self.OP_CLOSE, b'', mask=True))
+                await asyncio.wait_for(self.writer.drain(), deadline - loop.time())
+        except (OSError, asyncio.TimeoutError):
+            pass
         finally:
-            try:
-                self.writer.close()
-                await self.writer.wait_closed()
-            except Exception:
-                pass
+            await close_stream(self.writer, deadline - loop.time())
 
     _WS_CLOSE_REASONS = {
         1000: 'normal', 1001: 'going_away', 1002: 'protocol_error',

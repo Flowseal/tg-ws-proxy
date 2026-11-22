@@ -22,6 +22,7 @@ class _WsPool:
     REFILL_BACKOFF_MAX = 3600.0
     
     def __init__(self):
+        self._refill_ready = {}
         self._idle: Dict[Tuple[int, bool, bool], deque] = {}
         self._refilling: Dict[Tuple[int, bool, bool], asyncio.Task] = {}
         self._rotating: Dict[Tuple[int, bool, bool], asyncio.Task] = {}
@@ -29,33 +30,50 @@ class _WsPool:
         self._refill_after: Dict[Tuple[int, bool, bool], float] = {}
         self.try_fronting_first = False
 
-    async def get(self, dc: int, is_media: bool, *, is_test_dc: bool = False
+    async def get(self, dc: int, is_media: bool, *, is_test_dc: bool = False,
+                  wait_timeout: float = 0
                   ) -> Optional[RawWebSocket]:
         target_ip = proxy_config.dc_redirects.get(dc)
         if not target_ip or proxy_config.pool_size <= 0:
             return None
         key = (dc, is_media, is_test_dc)
         domains = ws_domains(dc, is_media)
-        now = time.monotonic()
+        bucket = self._idle.setdefault(key, deque())
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + wait_timeout
 
-        bucket = self._idle.get(key)
-        if bucket is None:
-            bucket = deque()
-            self._idle[key] = bucket
-        while bucket:
-            ws, created = bucket.popleft()
-            age = now - created
-            if self._is_stale(ws, created, now):
-                asyncio.create_task(self._quiet_close(ws))
-                continue
-            stats.pool_hits += 1
-            log.debug("WS pool hit DC%d%s%s (age=%.1fs, left=%d)",
-                      dc, 't' if is_test_dc else '', 'm' if is_media else '', age, len(bucket))
+        while True:
+            now = time.monotonic()
+            while bucket:
+                ws, created = bucket.popleft()
+                if self._is_stale(ws, created, now):
+                    asyncio.create_task(self._quiet_close(ws))
+                    continue
+                stats.pool_hits += 1
+                log.debug("WS pool hit DC%d%s%s (age=%.1fs, left=%d)",
+                          dc, 't' if is_test_dc else '', 'm' if is_media else '',
+                          now - created, len(bucket))
+                self._schedule_refill(key, target_ip, domains)
+                return ws
+
+            remaining = deadline - loop.time()
+            if remaining <= 0 or self._idle.get(key) is not bucket:
+                break
             self._schedule_refill(key, target_ip, domains)
-            return ws
+            if key not in self._refilling:
+                break
+            ready = self._refill_ready.setdefault(key, asyncio.Event())
+            ready.clear()
+            try:
+                await asyncio.wait_for(ready.wait(), remaining)
+            except asyncio.TimeoutError:
+                break
+            if key not in self._refilling and not bucket:
+                break
 
         stats.pool_misses += 1
-        self._schedule_refill(key, target_ip, domains)
+        if self._idle.get(key) is bucket:
+            self._schedule_refill(key, target_ip, domains)
         return None
 
     def _is_stale(self, ws, created, now):
@@ -94,6 +112,9 @@ class _WsPool:
                         if self._refilling.get(key) is not asyncio.current_task():
                             return
                         bucket.append((ws, time.monotonic()))
+                        ready = self._refill_ready.get(key)
+                        if ready is not None:
+                            ready.set()
                         adopted.add(ws)
                         connected += 1
                 except Exception as exc:
@@ -125,6 +146,9 @@ class _WsPool:
                     await self._quiet_close(ws)
             if self._refilling.get(key) is asyncio.current_task():
                 self._refilling.pop(key, None)
+                ready = self._refill_ready.pop(key, None)
+                if ready is not None:
+                    ready.set()
 
     def _schedule_rotation(self, key, target_ip, domains):
         if key in self._rotating:
@@ -218,6 +242,9 @@ class _WsPool:
                     ws.writer.close()
                 except Exception as exc:
                     log.debug("WS pool close failed: %r", exc)
+        for ready in self._refill_ready.values():
+            ready.set()
+        self._refill_ready.clear()
         self._idle.clear()
         self._refilling.clear()
         self._rotating.clear()

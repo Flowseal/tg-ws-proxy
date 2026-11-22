@@ -1,3 +1,4 @@
+import asyncio
 import socket as _socket
 import urllib.request
 import http.client
@@ -11,6 +12,22 @@ import certifi
 
 from typing import Optional, Dict, List
 from urllib.request import Request
+
+
+STREAM_CLOSE_TIMEOUT = 2.0
+
+
+async def close_stream(writer, timeout=STREAM_CLOSE_TIMEOUT):
+    writer.close()
+    try:
+        await asyncio.wait_for(writer.wait_closed(), timeout)
+    except asyncio.TimeoutError:
+        writer.transport.abort()
+    except asyncio.CancelledError:
+        writer.transport.abort()
+        raise
+    except OSError:
+        pass
 
 
 ZERO_64 = b'\x00' * 64
