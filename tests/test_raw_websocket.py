@@ -144,6 +144,20 @@ class ParseCloseTest(unittest.TestCase):
 
 
 class CloseTest(unittest.IsolatedAsyncioTestCase):
+    async def test_close_aborts_transport_if_either_phase_stalls(self):
+        async def stall():
+            await asyncio.Future()
+
+        for phase in ('drain', 'wait_closed'):
+            with self.subTest(phase=phase):
+                writer = Mock(drain=AsyncMock(), wait_closed=AsyncMock())
+                getattr(writer, phase).side_effect = stall
+                ws = RawWebSocket(asyncio.StreamReader(), writer)
+                with patch('proxy.raw_websocket.STREAM_CLOSE_TIMEOUT', 0.01):
+                    await asyncio.wait_for(ws.close(), 1)
+                writer.close.assert_called_once()
+                writer.transport.abort.assert_called_once()
+
     async def test_peer_close_still_closes_transport_without_another_close_frame(self):
         reader = asyncio.StreamReader()
         reader.feed_data(_raw_frame(RawWebSocket.OP_CLOSE, b'\x03\xe8'))
@@ -199,6 +213,52 @@ class HandshakeErrorTest(unittest.TestCase):
 
 
 class HandshakeCleanupTest(unittest.IsolatedAsyncioTestCase):
+    async def _connect_with_response(self, response, **kwargs):
+        reader = asyncio.StreamReader()
+        reader.feed_data(response)
+        reader.feed_eof()
+        writer = Mock(drain=AsyncMock())
+        with patch('proxy.raw_websocket.asyncio.open_connection',
+                   AsyncMock(return_value=(reader, writer))), \
+                patch('proxy.raw_websocket.os.urandom', return_value=b'the sample nonce'), \
+                patch('proxy.raw_websocket.set_sock_opts'):
+            ws = await RawWebSocket.connect('192.0.2.1', 'example.org', **kwargs)
+        return ws, reader
+
+    async def test_switching_protocols_validates_headers_and_preserves_first_frame(self):
+        response = (b'HTTP/1.1 101 Switching Protocols\r\n'
+                    b'Upgrade: WebSocket\r\n'
+                    b'Connection: keep-alive\r\nConnection: Upgrade\r\n'
+                    b'Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n'
+                    b'\r\n' + _raw_frame(RawWebSocket.OP_BINARY, b'first'))
+        ws, _ = await self._connect_with_response(response)
+        self.assertEqual(await ws.recv(), b'first')
+        for header in (b'WebSocket', b'Connection: Upgrade', b's3pPLMBiTxaQ9kYGzzhZRbK+xOo='):
+            with self.subTest(header=header), self.assertRaises(WsHandshakeError):
+                await self._connect_with_response(response.replace(header, b'invalid', 1))
+
+    async def test_upgrade_rejects_excessive_and_incomplete_headers(self):
+        responses = (
+            b'HTTP/1.1 101 Switching Protocols\r\n' + b'X-Test: data\r\n' * 3000 + b'\r\n',
+            b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n',
+        )
+        for response in responses:
+            with self.assertRaises(WsHandshakeError):
+                await self._connect_with_response(response)
+
+    async def test_upgrade_deadline_includes_write(self):
+        async def stall():
+            await asyncio.Future()
+
+        writer = Mock(drain=AsyncMock(side_effect=stall))
+        with patch('proxy.raw_websocket.asyncio.open_connection',
+                   AsyncMock(return_value=(asyncio.StreamReader(), writer))), \
+                patch('proxy.raw_websocket.set_sock_opts'):
+            with self.assertRaises(asyncio.TimeoutError):
+                await asyncio.wait_for(
+                    RawWebSocket.connect('192.0.2.1', 'example.org', timeout=0.01), 1)
+        writer.close.assert_called_once()
+
     async def test_cancelling_pending_upgrade_closes_socket(self):
         reader = asyncio.StreamReader()
         writer = Mock(drain=AsyncMock())

@@ -1,4 +1,5 @@
 """H2 belongs to CF fallback, never to the direct route."""
+import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -6,6 +7,28 @@ from unittest.mock import AsyncMock, Mock, patch
 from proxy import bridge, tg_ws_proxy
 from proxy.config import proxy_config
 from proxy.utils import PROTO_TAG_INTERMEDIATE
+
+
+class ListenerRestartTest(unittest.IsolatedAsyncioTestCase):
+    async def test_retries_with_capped_backoff_until_bind_succeeds(self):
+        server = Mock()
+        callback = Mock()
+        with patch.object(tg_ws_proxy.asyncio, 'sleep', AsyncMock()) as sleep, \
+                patch.object(tg_ws_proxy, 'LISTENER_RESTART_MAX_DELAY', 2), \
+                patch.object(tg_ws_proxy.asyncio, 'start_server', AsyncMock(
+                    side_effect=[OSError(), OSError(), OSError(), server])) as bind:
+            self.assertIs(await tg_ws_proxy._restart_listener(callback, None), server)
+        self.assertEqual([call.args[0] for call in sleep.await_args_list], [1, 2, 2, 2])
+        self.assertEqual(bind.await_count, 4)
+
+    async def test_stop_interrupts_restart_delay(self):
+        stop = asyncio.Event()
+        with patch.object(tg_ws_proxy.asyncio, 'start_server', AsyncMock()) as bind:
+            restarting = asyncio.create_task(tg_ws_proxy._restart_listener(Mock(), stop))
+            await asyncio.sleep(0)
+            stop.set()
+            self.assertIsNone(await asyncio.wait_for(restarting, 1))
+        bind.assert_not_awaited()
 
 
 class H2RoutingTest(unittest.IsolatedAsyncioTestCase):
@@ -33,7 +56,7 @@ class H2RoutingTest(unittest.IsolatedAsyncioTestCase):
         fallback.assert_not_awaited()
         pool.open.assert_not_awaited()
 
-    async def test_pool_miss_goes_straight_to_fallback_including_test_dcs(self):
+    async def test_pool_miss_goes_to_fallback_including_test_dcs(self):
         for dc, forced, expected_test in [(2, False, False),
                                           (10002, False, True),
                                           (2, True, True)]:
@@ -52,7 +75,8 @@ class H2RoutingTest(unittest.IsolatedAsyncioTestCase):
                         patch('proxy.raw_websocket.RawWebSocket.connect', AsyncMock()) as connect, \
                         patch.object(tg_ws_proxy, 'do_fallback', AsyncMock(return_value=True)) as fallback:
                     await tg_ws_proxy._handle_client(reader, writer, b'')
-                get.assert_awaited_once_with(2, False, is_test_dc=expected_test)
+                get.assert_awaited_once_with(2, False, is_test_dc=expected_test,
+                                             wait_timeout=tg_ws_proxy.WS_POOL_WAIT_TIMEOUT)
                 fallback.assert_awaited_once()
                 self.assertEqual(fallback.call_args.args[4:7], (2, expected_test, False))
                 connect.assert_not_awaited()

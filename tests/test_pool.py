@@ -24,6 +24,29 @@ def _open_ws():
 
 
 class WsPoolRotationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_wait_returns_first_socket_while_refill_is_running(self):
+        pool = _WsPool()
+        first = _open_ws()
+        blocked = asyncio.Event()
+        attempts = iter([first, None])
+
+        async def connect(*_args):
+            ws = next(attempts)
+            if ws is None:
+                await blocked.wait()
+            return ws
+
+        with mock.patch.object(proxy_config, 'pool_size', 2), \
+                mock.patch.object(proxy_config, 'dc_redirects', {2: '192.0.2.2'}), \
+                mock.patch.object(pool, '_connect_one', side_effect=connect):
+            try:
+                self.assertIs(await pool.get(2, False, wait_timeout=1), first)
+                refill = pool._refilling[(2, False, False)]
+                self.assertIsNone(await pool.get(2, False, wait_timeout=0.01))
+                self.assertFalse(refill.done())
+            finally:
+                await pool.close()
+
     async def test_warmup_preserves_media_ws_with_or_without_h2(self):
         for cf, secure, opted_out, media in [(True, True, False, True),
                                             (False, True, False, True),

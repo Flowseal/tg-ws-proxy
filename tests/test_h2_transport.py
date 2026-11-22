@@ -640,7 +640,9 @@ class H2WireTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(direct.await_count, 6)
                 for call in direct.await_args_list:
                     self.assertEqual(call.args, (2, True))
-                    self.assertEqual(call.kwargs, {'is_test_dc': False})
+                    self.assertEqual(call.kwargs, {
+                        'is_test_dc': False, 'wait_timeout': tg_ws_proxy.WS_POOL_WAIT_TIMEOUT,
+                    })
                 self.assertEqual(pool.open.await_count, 6)
                 self.assertTrue(all(channel.close_done and not channel.pending for channel in channels))
                 self.assertTrue(all(channel.quick_requests == 4 for channel in channels))

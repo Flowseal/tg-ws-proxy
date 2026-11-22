@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urlencode
 
 from .utils import *
+from .utils import close_stream
 from .stats import stats
 from .balancer import balancer
 from .config import proxy_config
@@ -226,7 +227,11 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
             return False
 
     stats.connections_cfproxy += 1
-    await ws.send(relay_init)
+    try:
+        await ws.send(relay_init)
+    except BaseException:
+        await ws.close()
+        raise
     await bridge_ws_reencrypt(reader, writer, ws, label, ctx,
                               dc=dc, is_media=is_media,
                               splitter=None)
@@ -265,7 +270,11 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
         log.info("[%s] Switched active CF domain", label)
 
     stats.connections_cfproxy += 1
-    await ws.send(relay_init)
+    try:
+        await ws.send(relay_init)
+    except BaseException:
+        await ws.close()
+        raise
     await bridge_ws_reencrypt(reader, writer, ws, label, ctx,
                                dc=dc, is_media=is_media,
                                splitter=splitter)
@@ -307,11 +316,7 @@ async def _tcp_fallback(reader, writer, dst, port, relay_init, label, ctx: Crypt
         return True
     finally:
         if rw is not None:
-            rw.close()
-            try:
-                await rw.wait_closed()
-            except (OSError, ConnectionError):
-                pass
+            await close_stream(rw)
 
 
 async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
@@ -439,8 +444,7 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
         except BaseException:
             pass
         try:
-            writer.close()
-            await writer.wait_closed()
+            await close_stream(writer)
         except BaseException:
             pass
 
@@ -485,9 +489,4 @@ async def _bridge_tcp_reencrypt(reader, writer, remote_reader, remote_writer,
                 await t
             except BaseException:
                 pass
-        for w in (writer, remote_writer):
-            try:
-                w.close()
-                await w.wait_closed()
-            except BaseException:
-                pass
+        await close_stream(writer)

@@ -21,6 +21,7 @@ if __name__ == '__main__' and (__package__ is None or __package__ == ''):
     __package__ = 'proxy'
 
 from .utils import *
+from .utils import close_stream
 from .stats import stats
 from .config import proxy_config, parse_dc_ip_list, start_cfproxy_domain_refresh, coerce_domain_list
 from .bridge import MsgSplitter, CryptoCtx, do_fallback, bridge_ws_reencrypt, reset_tcp_backoff
@@ -42,6 +43,8 @@ log = logging.getLogger('tg-mtproto-proxy')
 
 LISTENER_CHECK_INTERVAL = 5.0
 LISTENER_RESTART_DELAY = 1.0
+LISTENER_RESTART_MAX_DELAY = 30.0
+WS_POOL_WAIT_TIMEOUT = 0.2
 BAD_HANDSHAKE_DRAIN_TIMEOUT = 10.0
 BAD_HANDSHAKE_DRAIN_LIMIT = 64 * 1024
 cf_h2_pool: Optional[CfH2Pool] = None
@@ -318,7 +321,8 @@ async def _handle_client(reader, writer, secret: bytes):
         ctx = _build_crypto_ctx(client_dec_prekey_iv, secret, relay_init)
 
         media_tag = " media" if is_media else ""
-        ws = await ws_pool.get(dc, is_media, is_test_dc=is_test_dc)
+        ws = await ws_pool.get(dc, is_media, is_test_dc=is_test_dc,
+                               wait_timeout=WS_POOL_WAIT_TIMEOUT)
         if ws is None:
             log.info("[%s] DC%d%s WS pool unavailable -> fallback",
                      label, dc, media_tag)
@@ -348,7 +352,11 @@ async def _handle_client(reader, writer, secret: bytes):
         except Exception:
             pass
 
-        await ws.send(relay_init)
+        try:
+            await ws.send(relay_init)
+        except BaseException:
+            await ws.close()
+            raise
 
         await bridge_ws_reencrypt(clt_reader, clt_writer, ws, label, ctx,
                                    dc=dc, is_media=is_media,
@@ -372,8 +380,7 @@ async def _handle_client(reader, writer, secret: bytes):
     finally:
         stats.connections_active -= 1
         try:
-            writer.close()
-            await writer.wait_closed()
+            await close_stream(writer)
         except BaseException:
             pass
 
@@ -381,6 +388,25 @@ async def _handle_client(reader, writer, secret: bytes):
 _server_instance = None
 _server_stop_event = None
 _client_tasks: Set[asyncio.Task] = set()
+
+
+async def _restart_listener(client_cb, stop_event):
+    delay = LISTENER_RESTART_DELAY
+    while True:
+        if stop_event is None:
+            await asyncio.sleep(delay)
+        else:
+            try:
+                await asyncio.wait_for(stop_event.wait(), delay)
+                return None
+            except asyncio.TimeoutError:
+                if stop_event.is_set():
+                    return None
+        try:
+            return await asyncio.start_server(client_cb, proxy_config.host, proxy_config.port)
+        except OSError as exc:
+            delay = min(delay * 2, LISTENER_RESTART_MAX_DELAY)
+            log.warning("Failed to restart server, retry in %.1fs: %r", delay, exc)
 
 
 async def _run(stop_event: Optional[asyncio.Event] = None):
@@ -543,17 +569,12 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
             log.warning(
                 "Listening socket died, restarting server")
             server.close()
-            try:
-                await server.wait_closed()
-            except Exception:
-                pass
-            await asyncio.sleep(LISTENER_RESTART_DELAY)
-            try:
-                server = await asyncio.start_server(
-                    client_cb, proxy_config.host, proxy_config.port)
-            except OSError as exc:
-                log.error("Failed to restart server: %s", repr(exc))
+            # wait_closed() can also wait for existing clients, which may
+            # keep their sessions open while the listener is replaced.
+            restored = await _restart_listener(client_cb, stop_event)
+            if restored is None:
                 break
+            server = restored
             _server_instance = server
             for sock in server.sockets:
                 try:
