@@ -25,11 +25,101 @@ _tcp_failures: Dict[Tuple[str, int], int] = {}
 _tcp_retry_after: Dict[Tuple[str, int], float] = {}
 _tcp_connecting: Set[Tuple[str, int]] = set()
 
+CF_BACKOFF_INITIAL = 30.0
+CF_BACKOFF_MAX = 3600.0
+CF_CONNECT_LIMIT = 8
+_cf_failures: Dict[Tuple[str, int], int] = {}
+_cf_retry_after: Dict[Tuple[str, int], float] = {}
+_cf_probing: Set[Tuple[str, int]] = set()
+_cf_slots: Dict[Tuple[str, int], asyncio.Semaphore] = {}
+_cf_preferred: Dict[Tuple[str, int], str] = {}
+
 
 def reset_tcp_backoff() -> None:
     _tcp_failures.clear()
     _tcp_retry_after.clear()
     _tcp_connecting.clear()
+    _cf_failures.clear()
+    _cf_retry_after.clear()
+    _cf_probing.clear()
+    _cf_slots.clear()
+    _cf_preferred.clear()
+
+
+def _cf_route_closed(key: Tuple[str, int]) -> bool:
+    return key in _cf_probing or time.monotonic() < _cf_retry_after.get(key, 0)
+
+
+async def _cf_connect(key: Tuple[str, int], candidates: list, connect,
+                      on_error):
+    """
+    Connect to the first candidate that answers. Returns (ws, candidate) or None.
+
+    Without this every client connection walked the whole candidate list by
+    itself, so a blocked Cloudflare route turned into hundreds of pending SYNs.
+    A working route still serves clients in parallel through its preferred
+    candidate. Once that fails, a single client sweeps the remaining ones and
+    a failed sweep closes the route for a growing delay.
+    """
+    if _cf_route_closed(key) or not candidates:
+        return None
+
+    def preferred():
+        candidate = _cf_preferred.get(key)
+        return candidate if candidate in candidates else candidates[0]
+
+    tried = None
+    while not _cf_failures.get(key):
+        # Must not wait here: the client that starts the sweep has to mark the
+        # route as probing before anyone queued for a slot gets to run.
+        if preferred() == tried:
+            break
+        slots = _cf_slots.get(key)
+        if slots is None:
+            slots = _cf_slots[key] = asyncio.Semaphore(CF_CONNECT_LIMIT)
+        async with slots:
+            if _cf_route_closed(key):
+                return None
+            # Picked after the wait for a slot: a sweep may have found a
+            # better candidate in the meantime.
+            first = preferred()
+            if first != tried:
+                try:
+                    ws = await connect(first)
+                except Exception as exc:
+                    on_error(first, exc)
+                else:
+                    _cf_preferred[key] = first
+                    return ws, first
+        if _cf_route_closed(key):
+            return None
+        tried = first
+
+    _cf_probing.add(key)
+    try:
+        for candidate in candidates:
+            if candidate == tried:
+                continue
+            try:
+                ws = await connect(candidate)
+            except Exception as exc:
+                on_error(candidate, exc)
+                continue
+            _cf_failures.pop(key, None)
+            _cf_retry_after.pop(key, None)
+            _cf_preferred[key] = candidate
+            return ws, candidate
+
+        failures = _cf_failures.get(key, 0) + 1
+        _cf_failures[key] = failures
+        delay = min(CF_BACKOFF_INITIAL * 2 ** min(failures - 1, 7),
+                    CF_BACKOFF_MAX)
+        _cf_retry_after[key] = time.monotonic() + delay
+        log.warning("CF %s route for DC%d is unreachable; retry in %.0fs",
+                    key[0], key[1], delay)
+        return None
+    finally:
+        _cf_probing.discard(key)
 
 
 class CryptoCtx:
@@ -206,24 +296,25 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
         })
         path = f'/apiws?{query}'
 
-        ws = None
-        for worker_domain in cf_worker_pool.available_domains(worker_domains):
+        async def connect(worker_domain):
             log.info("[%s] DC%d%s -> trying CF worker %s for %s",
                      label, dc, media_tag, worker_domain, fallback_dst)
+            return await RawWebSocket.connect(worker_domain, worker_domain,
+                                              timeout=10.0, path=path,
+                                              secure=not proxy_config.disable_secure)
 
-            try:
-                ws = await RawWebSocket.connect(worker_domain, worker_domain,
-                                                timeout=10.0, path=path, 
-                                                secure=not proxy_config.disable_secure)
-                break
-            except Exception as exc:
-                cf_worker_pool.report_failure(worker_domain, exc)
-                log.warning("[%s] DC%d%s CF worker %s failed: %s",
-                            label, dc, media_tag, worker_domain, repr(exc))
-                continue
+        def on_error(worker_domain, exc):
+            cf_worker_pool.report_failure(worker_domain, exc)
+            log.warning("[%s] DC%d%s CF worker %s failed: %s",
+                        label, dc, media_tag, worker_domain, repr(exc))
 
-        if ws is None:
+        connected = await _cf_connect(
+            ('worker', dc),
+            cf_worker_pool.available_domains(worker_domains),
+            connect, on_error)
+        if connected is None:
             return False
+        ws, worker_domain = connected
 
     stats.connections_cfproxy += 1
     await ws.send(relay_init)
@@ -238,26 +329,31 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
                             dc: int, is_media: bool,
                             splitter=None):
     media_tag = ' media' if is_media else ''
-    ws = None
-    chosen_domain = None
+    key = ('cf', dc)
+    if _cf_route_closed(key):
+        log.debug("[%s] DC%d%s CF proxy skipped (backoff or probing)",
+                  label, dc, media_tag)
+        return False
 
     log.info("[%s] DC%d%s -> trying CF proxy",
             label, dc, media_tag)
     connect_started = time.monotonic()
     secure = not proxy_config.disable_secure
 
-    for base_domain in balancer.get_domains_for_dc(dc):
+    async def connect(base_domain):
         domain = f'kws{dc}.{base_domain}'
-        try:
-            ws = await RawWebSocket.connect(domain, domain, timeout=10.0, secure=secure)
-            chosen_domain = base_domain
-            break
-        except Exception as exc:
-            log.warning("[%s] DC%d%s CF proxy failed: %r (host=%s port=%d)",
-                        label, dc, media_tag, exc, domain, 443 if secure else 80)
+        return await RawWebSocket.connect(domain, domain, timeout=10.0, secure=secure)
 
-    if ws is None:
+    def on_error(base_domain, exc):
+        log.warning("[%s] DC%d%s CF proxy failed: %r (host=%s port=%d)",
+                    label, dc, media_tag, exc, f'kws{dc}.{base_domain}',
+                    443 if secure else 80)
+
+    connected = await _cf_connect(
+        key, list(balancer.get_domains_for_dc(dc)), connect, on_error)
+    if connected is None:
         return False
+    ws, chosen_domain = connected
 
     log.debug('[%s] WS CONNECT DC%d%s route=cf setup_ms=%.0f',
               label, dc, media_tag, (time.monotonic() - connect_started) * 1000)
