@@ -390,7 +390,7 @@ class _CfWorkerPool:
         return None
 
     def available_domains(self, worker_domains: List[str]) -> List[str]:
-        now = time.time()
+        now = time.monotonic()
         domains = []
         for domain in worker_domains:
             if domain in domains:

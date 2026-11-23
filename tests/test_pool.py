@@ -421,36 +421,35 @@ class CfWorkerPoolTest(unittest.IsolatedAsyncioTestCase):
 
 
 class CfWorkerFailureReportTest(unittest.TestCase):
-    NOW = 1_700_000_000.0
+    MONOTONIC_NOW = 1000.0
 
-    def _report(self, exc, now=None):
+    def _report(self, exc):
         pool = _CfWorkerPool()
-        with mock.patch('proxy.pool.time.time', return_value=now or self.NOW):
+        with mock.patch('proxy.pool.time.monotonic', return_value=self.MONOTONIC_NOW):
             pool.report_failure('w.example', exc)
         return pool
 
     def _available(self, pool, now):
-        with mock.patch('proxy.pool.time.time', return_value=now):
+        with mock.patch('proxy.pool.time.monotonic', return_value=now):
             return pool.available_domains(['w.example'])
 
     def test_429_disables_domain_until_the_next_day(self):
-        pool = self._report(WsHandshakeError(429, '429 Too Many Requests'))
-        until = pool._exhausted_until['w.example']
-        self.assertGreater(until, self.NOW)
-        self.assertLessEqual(until, self.NOW + 86400)
-        self.assertEqual(self._available(pool, self.NOW), [])
-        self.assertEqual(self._available(pool, until + 1), ['w.example'])
+        midnight_utc = 20_000 * 86400
+        with mock.patch('proxy.pool.time.time', return_value=midnight_utc - 30):
+            pool = self._report(WsHandshakeError(429, '429 Too Many Requests'))
+        self.assertEqual(self._available(pool, self.MONOTONIC_NOW + 29), [])
+        self.assertEqual(self._available(pool, self.MONOTONIC_NOW + 30), ['w.example'])
 
     def test_5xx_pauses_domain_for_a_minute(self):
         pool = self._report(WsHandshakeError(503, '503 Service Unavailable'))
         self.assertEqual(
             pool._exhausted_until['w.example'],
-            self.NOW + _CfWorkerPool.FAILURE_COOLDOWN,
+            self.MONOTONIC_NOW + _CfWorkerPool.FAILURE_COOLDOWN,
         )
-        self.assertEqual(self._available(pool, self.NOW), [])
+        self.assertEqual(self._available(pool, self.MONOTONIC_NOW), [])
         self.assertEqual(
             self._available(
-                pool, self.NOW + _CfWorkerPool.FAILURE_COOLDOWN + 1),
+                pool, self.MONOTONIC_NOW + _CfWorkerPool.FAILURE_COOLDOWN + 1),
             ['w.example'],
         )
 
@@ -458,10 +457,10 @@ class CfWorkerFailureReportTest(unittest.TestCase):
         for exc in (OSError('connection reset'), asyncio.TimeoutError()):
             with self.subTest(exc=exc):
                 pool = self._report(exc)
-                self.assertEqual(self._available(pool, self.NOW), [])
+                self.assertEqual(self._available(pool, self.MONOTONIC_NOW), [])
                 self.assertEqual(
                     self._available(
-                        pool, self.NOW + _CfWorkerPool.FAILURE_COOLDOWN + 1),
+                        pool, self.MONOTONIC_NOW + _CfWorkerPool.FAILURE_COOLDOWN + 1),
                     ['w.example'],
                 )
 
@@ -470,16 +469,17 @@ class CfWorkerFailureReportTest(unittest.TestCase):
             with self.subTest(status=status):
                 pool = self._report(WsHandshakeError(status, '%d error' % status))
                 self.assertNotIn('w.example', pool._exhausted_until)
-                self.assertEqual(self._available(pool, self.NOW), ['w.example'])
+                self.assertEqual(self._available(pool, self.MONOTONIC_NOW), ['w.example'])
 
     def test_unknown_errors_are_ignored(self):
         pool = self._report(ValueError('unexpected'))
         self.assertNotIn('w.example', pool._exhausted_until)
 
     def test_longer_quota_pause_is_not_shortened(self):
-        pool = self._report(WsHandshakeError(429, '429 Too Many Requests'))
+        with mock.patch('proxy.pool.time.time', return_value=12 * 3600):
+            pool = self._report(WsHandshakeError(429, '429 Too Many Requests'))
         until = pool._exhausted_until['w.example']
-        with mock.patch('proxy.pool.time.time', return_value=self.NOW + 1):
+        with mock.patch('proxy.pool.time.monotonic', return_value=self.MONOTONIC_NOW + 1):
             pool.report_failure('w.example', WsHandshakeError(503, '503 error'))
         self.assertEqual(pool._exhausted_until['w.example'], until)
 
