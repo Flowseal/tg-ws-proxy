@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import math
 import random
 import struct
 import asyncio
@@ -22,9 +23,12 @@ if __name__ == '__main__' and (__package__ is None or __package__ == ''):
 
 from .utils import *
 from .stats import stats
-from .config import proxy_config, parse_dc_ip_list, start_cfproxy_domain_refresh, coerce_domain_list
+from .config import (
+    proxy_config, parse_dc_ip_list, start_cfproxy_domain_refresh, 
+    coerce_domain_list, _is_valid_domain
+)
 from .bridge import MsgSplitter, CryptoCtx, do_fallback, bridge_ws_reencrypt, reset_tcp_backoff
-from .raw_websocket import reset_cf_timeouts, set_sock_opts
+from .raw_websocket import set_sock_opts
 from .fake_tls import (
     proxy_to_masking_domain, verify_client_hello, parse_client_hello, build_server_hello,
     probe_appdata_len, set_profiled_appdata_len, FakeTlsStream, TLS_RECORD_HANDSHAKE,
@@ -34,7 +38,7 @@ from .balancer import balancer
 from .pool import ws_pool, cf_worker_pool
 from .cf_h2 import CfH2Pool
 from .network_debug import log_ws_flow
-from .event_loop import ClientStreamProtocol, install_proactor_socket_guard, install_self_pipe_guard
+from .event_loop import install_proactor_socket_guard, install_self_pipe_guard
 from ._aes import Cipher, algorithms, modes
 
 
@@ -106,9 +110,6 @@ def _generate_relay_init(proto_tag: bytes, dc_idx: int) -> bytes:
     result = bytearray(rnd_bytes)
     result[PROTO_TAG_POS:HANDSHAKE_LEN] = encrypted_tail
     return bytes(result)
-
-
-
 
 
 async def _read_client_init(reader, writer, secret, label, masking):
@@ -348,7 +349,7 @@ async def _handle_client(reader, writer, secret: bytes):
         except Exception:
             pass
 
-        await ws.send_init(relay_init)
+        await ws.send(relay_init)
 
         await bridge_ws_reencrypt(clt_reader, clt_writer, ws, label, ctx,
                                    dc=dc, is_media=is_media,
@@ -391,7 +392,6 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     _server_stop_event = stop_event
 
     reset_tcp_backoff()
-    reset_cf_timeouts()
     ws_pool.reset()
     cf_worker_pool.reset()
     _client_tasks.clear()
@@ -427,10 +427,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
         _client_tasks.add(task)
         task.add_done_callback(_client_tasks.discard)
 
-    def client_protocol():
-        return ClientStreamProtocol(client_cb)
-
-    server = await loop.create_server(client_protocol, proxy_config.host, proxy_config.port)
+    server = await asyncio.start_server(client_cb, proxy_config.host, proxy_config.port)
     _server_instance = server
 
     for sock in server.sockets:
@@ -553,8 +550,8 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
                 pass
             await asyncio.sleep(LISTENER_RESTART_DELAY)
             try:
-                server = await loop.create_server(
-                    client_protocol, proxy_config.host, proxy_config.port)
+                server = await asyncio.start_server(
+                    client_cb, proxy_config.host, proxy_config.port)
             except OSError as exc:
                 log.error("Failed to restart server: %s", repr(exc))
                 break
@@ -601,10 +598,40 @@ def run_proxy(stop_event: Optional[asyncio.Event] = None):
     asyncio.run(_run(stop_event,))
 
 
+def _port_type(value: str) -> int:
+    try:
+        ivalue = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid int value: '{value}'") from None
+    if not 1 <= ivalue <= 65535:
+        raise argparse.ArgumentTypeError(f"port must be between 1 and 65535, got {ivalue}")
+    return ivalue
+
+
+def _log_backups_type(value: str) -> int:
+    try:
+        ivalue = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid int value: '{value}'") from None
+    if ivalue < 1:
+        raise argparse.ArgumentTypeError(f"log backups must be at least 1, got {ivalue}")
+    return ivalue
+
+
+def _log_max_mb_type(value: str) -> float:
+    try:
+        fvalue = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid float value: '{value}'") from None
+    if not math.isfinite(fvalue) or fvalue <= 0 or fvalue > 100:
+        raise argparse.ArgumentTypeError(f"log max size must be finite, > 0 and <= 100 MB, got {fvalue}")
+    return fvalue
+
+
 def main():
     ap = argparse.ArgumentParser(
         description='Telegram MTProto WebSocket Bridge Proxy')
-    ap.add_argument('--port', type=int, default=1443,
+    ap.add_argument('--port', type=_port_type, default=1443,
                     help='Listen port (default 1443)')
     ap.add_argument('--host', type=str, default='127.0.0.1',
                     help='Listen host (default 127.0.0.1)')
@@ -617,9 +644,9 @@ def main():
                     help='Debug logging')
     ap.add_argument('--log-file', type=str, default=None, metavar='PATH',
                     help='Log to file with rotation (default: stderr only)')
-    ap.add_argument('--log-max-mb', type=float, default=5, metavar='MB',
+    ap.add_argument('--log-max-mb', type=_log_max_mb_type, default=5, metavar='MB',
                     help='Max log file size in MB before rotation (default 5)')
-    ap.add_argument('--log-backups', type=int, default=1, metavar='N',
+    ap.add_argument('--log-backups', type=_log_backups_type, default=1, metavar='N',
                     help='Number of rotated log files to keep (min 1; '
                          'rotation needs at least one backup to bound size)')
     ap.add_argument('--buf-kb', type=int, default=256, metavar='KB',
@@ -663,7 +690,7 @@ def main():
             '4:149.154.167.220',
         ]
     elif None in args.dc_ip:
-        args.dc_ip = []
+        args.dc_ip = [ip for ip in args.dc_ip if ip is not None]
 
     try:
         dc_redirects = parse_dc_ip_list(args.dc_ip)
@@ -676,14 +703,17 @@ def main():
         if len(secret_hex) != 32:
             log.error("Secret must be exactly 32 hex characters")
             sys.exit(1)
-        try:
-            bytes.fromhex(secret_hex)
-        except ValueError:
+        if not all(c in "0123456789abcdefABCDEF" for c in secret_hex):
             log.error("Secret must be valid hex")
             sys.exit(1)
     else:
         secret_hex = os.urandom(16).hex()
         log.info("Generated secret: %s", secret_hex)
+
+    ftls = args.fake_tls_domain.strip()
+    if ftls and not _is_valid_domain(ftls):
+        log.error("Invalid --fake-tls-domain format")
+        sys.exit(1)
 
     proxy_config.port = args.port
     proxy_config.host = args.host
@@ -696,7 +726,7 @@ def main():
     proxy_config.cfproxy_worker_domains = coerce_domain_list(args.cfproxy_worker_domain)
     proxy_config.cfproxy_h2_media = not args.no_h2
     proxy_config.disable_secure = args.no_secure
-    proxy_config.fake_tls_domain = args.fake_tls_domain.strip()
+    proxy_config.fake_tls_domain = ftls
     proxy_config.proxy_protocol = args.proxy_protocol
     proxy_config.force_test_dc = args.force_test_dc
 
@@ -729,6 +759,11 @@ def main():
         asyncio.run(_run())
     except KeyboardInterrupt:
         log.info("Shutting down. Final stats: %s", stats.summary())
+    except OSError as exc:
+        from utils.diagnostics import diagnose_listen_error
+        msg, _ = diagnose_listen_error(exc)
+        log.error("%s", msg or f"Failed to start proxy: {exc!r}")
+        sys.exit(1)
 
 
 if __name__ == '__main__':
