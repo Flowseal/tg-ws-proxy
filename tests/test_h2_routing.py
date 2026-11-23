@@ -1,4 +1,5 @@
 """H2 belongs to CF fallback, never to the direct route."""
+import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -14,7 +15,7 @@ class H2RoutingTest(unittest.IsolatedAsyncioTestCase):
         writer = Mock()
         writer.get_extra_info.return_value = None
         writer.wait_closed = AsyncMock()
-        ws = Mock(send=AsyncMock())
+        ws = Mock(send_init=AsyncMock())
         pool = SimpleNamespace(open=AsyncMock())
         with patch.object(proxy_config, 'dc_redirects', {2: '149.154.167.51'}), \
                 patch.object(proxy_config, 'force_test_dc', False), \
@@ -30,6 +31,7 @@ class H2RoutingTest(unittest.IsolatedAsyncioTestCase):
                 patch.object(tg_ws_proxy, 'do_fallback', AsyncMock()) as fallback:
             await tg_ws_proxy._handle_client(reader, writer, b'')
         direct.assert_awaited_once()
+        ws.send_init.assert_awaited_once()
         fallback.assert_not_awaited()
         pool.open.assert_not_awaited()
 
@@ -89,8 +91,10 @@ class H2RoutingTest(unittest.IsolatedAsyncioTestCase):
                         patch.object(bridge, '_cfproxy_fallback', side_effect=route('ws')), \
                         patch.object(bridge, '_cfproxy_worker_fallback', side_effect=route('worker')), \
                         patch.object(bridge, '_tcp_fallback', side_effect=route('tcp')):
+                    writer = Mock()
+                    writer.is_closing.return_value = False
                     result = await bridge.do_fallback(
-                        Mock(), Mock(), b'', 'test', 2, test_dc, media, '', Mock(),
+                        asyncio.StreamReader(), writer, b'', 'test', 2, test_dc, media, '', Mock(),
                         h2_pool=pool, proto_tag=PROTO_TAG_INTERMEDIATE)
                 self.assertTrue(result)
                 self.assertEqual(calls, expected)

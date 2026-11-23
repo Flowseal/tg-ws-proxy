@@ -24,7 +24,7 @@ from .utils import *
 from .stats import stats
 from .config import proxy_config, parse_dc_ip_list, start_cfproxy_domain_refresh, coerce_domain_list
 from .bridge import MsgSplitter, CryptoCtx, do_fallback, bridge_ws_reencrypt, reset_tcp_backoff
-from .raw_websocket import set_sock_opts
+from .raw_websocket import reset_cf_timeouts, set_sock_opts
 from .fake_tls import (
     proxy_to_masking_domain, verify_client_hello, parse_client_hello, build_server_hello,
     probe_appdata_len, set_profiled_appdata_len, FakeTlsStream, TLS_RECORD_HANDSHAKE,
@@ -34,7 +34,7 @@ from .balancer import balancer
 from .pool import ws_pool, cf_worker_pool
 from .cf_h2 import CfH2Pool
 from .network_debug import log_ws_flow
-from .event_loop import install_proactor_socket_guard, install_self_pipe_guard
+from .event_loop import ClientStreamProtocol, install_proactor_socket_guard, install_self_pipe_guard
 from ._aes import Cipher, algorithms, modes
 
 
@@ -348,7 +348,7 @@ async def _handle_client(reader, writer, secret: bytes):
         except Exception:
             pass
 
-        await ws.send(relay_init)
+        await ws.send_init(relay_init)
 
         await bridge_ws_reencrypt(clt_reader, clt_writer, ws, label, ctx,
                                    dc=dc, is_media=is_media,
@@ -391,6 +391,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     _server_stop_event = stop_event
 
     reset_tcp_backoff()
+    reset_cf_timeouts()
     ws_pool.reset()
     cf_worker_pool.reset()
     _client_tasks.clear()
@@ -426,7 +427,10 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
         _client_tasks.add(task)
         task.add_done_callback(_client_tasks.discard)
 
-    server = await asyncio.start_server(client_cb, proxy_config.host, proxy_config.port)
+    def client_protocol():
+        return ClientStreamProtocol(client_cb)
+
+    server = await loop.create_server(client_protocol, proxy_config.host, proxy_config.port)
     _server_instance = server
 
     for sock in server.sockets:
@@ -549,8 +553,8 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
                 pass
             await asyncio.sleep(LISTENER_RESTART_DELAY)
             try:
-                server = await asyncio.start_server(
-                    client_cb, proxy_config.host, proxy_config.port)
+                server = await loop.create_server(
+                    client_protocol, proxy_config.host, proxy_config.port)
             except OSError as exc:
                 log.error("Failed to restart server: %s", repr(exc))
                 break

@@ -1,15 +1,21 @@
 import os
 import logging
+import math
 import base64
 import struct
 import asyncio
 import socket as _socket
 
-from typing import List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 from .config import proxy_config
 from .utils import create_ssl_context
 
 log = logging.getLogger('tg-mtproto-proxy')
+
+
+CF_TIMEOUT_COOLDOWN = 30.0
+CF_CONNECT_TIMEOUTS = (10.0, 6.0, 4.0, 3.0, 3.0)
+_cf_timeout_until: Dict[Tuple[str, bool], float] = {}
 
 
 _st_BB = struct.Struct('>BB')
@@ -100,6 +106,8 @@ class RawWebSocket:
 
         port = 443 if secure else 80
         tls_options = {'ssl': ssl_context, 'server_hostname': sni} if secure else {}
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
         writer = None
         try:
             reader, writer = await asyncio.wait_for(
@@ -122,12 +130,11 @@ class RawWebSocket:
             )
 
             writer.write(req.encode())
-            await writer.drain()
+            await asyncio.wait_for(writer.drain(), deadline - loop.time())
 
             response_lines: list[str] = []
             while True:
-                line = await asyncio.wait_for(reader.readline(),
-                                              timeout=timeout)
+                line = await asyncio.wait_for(reader.readline(), deadline - loop.time())
                 if line in (b'\r\n', b'\n', b''):
                     break
                 response_lines.append(
@@ -156,7 +163,7 @@ class RawWebSocket:
                                     location=headers.get('location'))
         except BaseException as exc:
             if writer is not None:
-                writer.close()
+                writer.transport.abort()
             if isinstance(exc, Exception) and log.isEnabledFor(logging.DEBUG):
                 if writer is not None:
                     stage = 'ws_upgrade'
@@ -169,6 +176,14 @@ class RawWebSocket:
                     local = remote = None
                 log.debug('WS setup failed: host=%s port=%d stage=%s local=%s remote=%s error=%r',
                           host, port, stage, local, remote, exc)
+            raise
+
+    async def send_init(self, data: bytes):
+        try:
+            await asyncio.wait_for(self.send(data), timeout=10)
+        except BaseException:
+            self._closed = True
+            self.writer.transport.abort()
             raise
 
     async def send(self, data: bytes):
@@ -303,3 +318,57 @@ class RawWebSocket:
             return opcode, _xor_mask(payload, mask_key), fin
         payload = await self.reader.readexactly(length)
         return opcode, payload, fin
+
+
+def reset_cf_timeouts() -> None:
+    _cf_timeout_until.clear()
+
+
+async def connect_cf_domains(candidates: Iterable[Tuple[str, str]], *, label: str,
+                             secure: bool, path: str = '/apiws', timeout: float = 10.0
+                             ) -> Optional[Tuple[RawWebSocket, str]]:
+    loop = asyncio.get_running_loop()
+    timeouts = 0
+
+    for name, host in candidates:
+        key = (host, secure)
+        now = loop.time()
+
+        retry_at = _cf_timeout_until.get(key)
+        if retry_at is not None:
+            if now < retry_at:
+                continue
+            _cf_timeout_until[key] = math.inf
+
+        try:
+            attempt_timeout = min(timeout, CF_CONNECT_TIMEOUTS[timeouts])
+            ws = await RawWebSocket.connect(host, host, path=path, secure=secure, timeout=attempt_timeout)
+
+        except (asyncio.TimeoutError, TimeoutError):
+            now = loop.time()
+            if retry_at is not None or key not in _cf_timeout_until:
+                for old_key, until in list(_cf_timeout_until.items()):
+                    if until + CF_TIMEOUT_COOLDOWN <= now:
+                        del _cf_timeout_until[old_key]
+                _cf_timeout_until[key] = now + CF_TIMEOUT_COOLDOWN
+                log.warning('[%s] CF WebSocket timed out (host=%s port=%d); retry in %.0fs',
+                            label, host, 443 if secure else 80, CF_TIMEOUT_COOLDOWN)
+            timeouts += 1
+            if timeouts >= len(CF_CONNECT_TIMEOUTS):
+                break
+            continue
+
+        except Exception as exc:
+            log.warning('[%s] CF WebSocket failed (host=%s port=%d): %r',
+                        label, host, 443 if secure else 80, exc)
+            ws = None
+
+        finally:
+            if retry_at is not None and _cf_timeout_until.get(key) == math.inf:
+                _cf_timeout_until[key] = retry_at
+        
+        _cf_timeout_until.pop(key, None)
+        if ws is not None:
+            return ws, name
+    
+    return None

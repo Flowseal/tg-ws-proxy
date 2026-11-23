@@ -2,6 +2,7 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
+from proxy import raw_websocket
 from proxy.raw_websocket import RawWebSocket, WsHandshakeError, _xor_mask
 
 
@@ -199,6 +200,16 @@ class HandshakeErrorTest(unittest.TestCase):
 
 
 class HandshakeCleanupTest(unittest.IsolatedAsyncioTestCase):
+    async def test_init_send_failure_or_cancellation_aborts_transport(self):
+        for error in (ConnectionResetError(), asyncio.CancelledError()):
+            with self.subTest(error=type(error)):
+                writer = Mock(drain=AsyncMock(side_effect=error))
+                ws = RawWebSocket(asyncio.StreamReader(), writer)
+                with self.assertRaises(type(error)):
+                    await ws.send_init(b'init')
+                writer.transport.abort.assert_called_once()
+                self.assertTrue(ws._closed)
+
     async def test_cancelling_pending_upgrade_closes_socket(self):
         reader = asyncio.StreamReader()
         writer = Mock(drain=AsyncMock())
@@ -216,7 +227,7 @@ class HandshakeCleanupTest(unittest.IsolatedAsyncioTestCase):
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await task
-        writer.close.assert_called_once()
+        writer.transport.abort.assert_called_once()
 
     async def test_failed_upgrade_closes_socket(self):
         for error in (ConnectionResetError(), asyncio.TimeoutError()):
@@ -228,7 +239,102 @@ class HandshakeCleanupTest(unittest.IsolatedAsyncioTestCase):
                         patch('proxy.raw_websocket.set_sock_opts'):
                     with self.assertRaises(type(error)):
                         await RawWebSocket.connect('192.0.2.1', 'example.org')
-                writer.close.assert_called_once()
+                writer.transport.abort.assert_called_once()
+
+
+class CfDomainTimeoutTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        raw_websocket.reset_cf_timeouts()
+        self.addCleanup(raw_websocket.reset_cf_timeouts)
+
+    async def connect(self, *hosts):
+        return await raw_websocket.connect_cf_domains(((h, h) for h in hosts), secure=True, label='test')
+
+    async def test_clients_dial_in_parallel_and_http_responses_do_not_throttle(self):
+        statuses = iter((101, 429, 101, 503, 429))
+        started = asyncio.Queue()
+        release = asyncio.Event()
+
+        async def dial(host, *args, **kwargs):
+            if host == 'preferred':
+                status = next(statuses)
+                started.put_nowait(host)
+                await release.wait()
+                if status != 101:
+                    raise WsHandshakeError(status, 'unavailable')
+            return object()
+
+        with patch.object(RawWebSocket, 'connect', side_effect=dial):
+            clients = [asyncio.create_task(self.connect('preferred', 'other')) for _ in range(5)]
+            try:
+                for _ in clients:
+                    await asyncio.wait_for(started.get(), 1)
+                release.set()
+                results = await asyncio.gather(*clients)
+                self.assertCountEqual([name for _, name in results], ['preferred'] * 2 + ['other'] * 3)
+            finally:
+                for task in clients:
+                    task.cancel()
+                await asyncio.gather(*clients, return_exceptions=True)
+        with patch.object(RawWebSocket, 'connect', return_value=object()):
+            self.assertEqual((await self.connect('preferred'))[1], 'preferred')
+
+    async def test_five_timeouts_end_search_and_later_clients_skip_timed_out_domains(self):
+        hosts = ('a', 'http-error', 'b', 'c', 'd', 'e', 'f')
+        responses = [asyncio.TimeoutError(), WsHandshakeError(503, 'unavailable'),
+                     TimeoutError(), TimeoutError(), TimeoutError(), TimeoutError(),
+                     WsHandshakeError(429, 'busy'), object()]
+        with patch.object(RawWebSocket, 'connect', side_effect=responses) as dial:
+            self.assertIsNone(await self.connect(*hosts))
+            self.assertEqual((await self.connect(*hosts))[1], 'f')
+            self.assertEqual([(call.args[0], call.kwargs['timeout']) for call in dial.await_args_list],
+                             [('a', 10), ('http-error', 6), ('b', 6), ('c', 4),
+                              ('d', 3), ('e', 3), ('http-error', 10), ('f', 10)])
+
+    async def test_timeout_retry_skips_to_other_front_without_waiting(self):
+        with patch.object(raw_websocket, 'CF_TIMEOUT_COOLDOWN', 0), \
+                patch.object(RawWebSocket, 'connect', side_effect=asyncio.TimeoutError()):
+            self.assertIsNone(await self.connect('a'))
+
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def dial(host, *args, **kwargs):
+            if host == 'a':
+                started.set()
+                await release.wait()
+                raise WsHandshakeError(429, 'busy')
+            return object()
+
+        with patch.object(RawWebSocket, 'connect', side_effect=dial) as connect:
+            retry = asyncio.create_task(self.connect('a'))
+            try:
+                await asyncio.wait_for(started.wait(), 1)
+                self.assertEqual((await asyncio.wait_for(self.connect('a', 'b'), 1))[1], 'b')
+                self.assertEqual(connect.await_count, 2)
+            finally:
+                release.set()
+                await retry
+        with patch.object(RawWebSocket, 'connect', return_value=object()):
+            self.assertEqual((await self.connect('a'))[1], 'a')
+
+    async def test_cancelling_timeout_retry_releases_it_for_next_client(self):
+        with patch.object(raw_websocket, 'CF_TIMEOUT_COOLDOWN', 0), \
+                patch.object(RawWebSocket, 'connect', side_effect=asyncio.TimeoutError()):
+            await self.connect('a')
+        started = asyncio.Event()
+
+        async def dial(*args, **kwargs):
+            started.set()
+            await asyncio.Future()
+
+        with patch.object(RawWebSocket, 'connect', side_effect=dial):
+            retry = asyncio.create_task(self.connect('a'))
+            await asyncio.wait_for(started.wait(), 1)
+            retry.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await retry
+        with patch.object(RawWebSocket, 'connect', return_value=object()):
+            self.assertEqual((await self.connect('a'))[1], 'a')
 
 
 if __name__ == '__main__':

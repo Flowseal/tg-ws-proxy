@@ -10,10 +10,11 @@ from .utils import *
 from .stats import stats
 from .balancer import balancer
 from .config import proxy_config
-from .raw_websocket import RawWebSocket
+from .raw_websocket import RawWebSocket, connect_cf_domains
 from .pool import cf_worker_pool
 from .network_debug import WsActivity
 from .cf_h2 import bridge_h2
+from .event_loop import client_setup
 
 
 log = logging.getLogger('tg-mtproto-proxy')
@@ -162,7 +163,8 @@ async def do_fallback(reader, writer, relay_init, label,
                 return True
         elif method == 'cf':
             if is_media and h2_pool is not None and proto_tag is not None:
-                channel = await h2_pool.open(dc, label)
+                with client_setup(reader, writer):
+                    channel = await h2_pool.open(dc, label)
                 if channel is not None:
                     stats.connections_h2 += 1
                     stats.connections_cfproxy += 1
@@ -212,9 +214,10 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
                      label, dc, media_tag, worker_domain, fallback_dst)
 
             try:
-                ws = await RawWebSocket.connect(worker_domain, worker_domain,
-                                                timeout=10.0, path=path, 
-                                                secure=not proxy_config.disable_secure)
+                with client_setup(reader, writer):
+                    ws = await RawWebSocket.connect(worker_domain, worker_domain,
+                                                    timeout=10.0, path=path,
+                                                    secure=not proxy_config.disable_secure)
                 break
             except Exception as exc:
                 cf_worker_pool.report_failure(worker_domain, exc)
@@ -226,7 +229,7 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
             return False
 
     stats.connections_cfproxy += 1
-    await ws.send(relay_init)
+    await ws.send_init(relay_init)
     await bridge_ws_reencrypt(reader, writer, ws, label, ctx,
                               dc=dc, is_media=is_media,
                               splitter=None)
@@ -238,26 +241,18 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
                             dc: int, is_media: bool,
                             splitter=None):
     media_tag = ' media' if is_media else ''
-    ws = None
-    chosen_domain = None
 
     log.info("[%s] DC%d%s -> trying CF proxy",
             label, dc, media_tag)
     connect_started = time.monotonic()
     secure = not proxy_config.disable_secure
 
-    for base_domain in balancer.get_domains_for_dc(dc):
-        domain = f'kws{dc}.{base_domain}'
-        try:
-            ws = await RawWebSocket.connect(domain, domain, timeout=10.0, secure=secure)
-            chosen_domain = base_domain
-            break
-        except Exception as exc:
-            log.warning("[%s] DC%d%s CF proxy failed: %r (host=%s port=%d)",
-                        label, dc, media_tag, exc, domain, 443 if secure else 80)
-
-    if ws is None:
+    domains = ((base, f'kws{dc}.{base}') for base in balancer.get_domains_for_dc(dc))
+    with client_setup(reader, writer):
+        result = await connect_cf_domains(domains, label=label, secure=secure)
+    if result is None:
         return False
+    ws, chosen_domain = result
 
     log.debug('[%s] WS CONNECT DC%d%s route=cf setup_ms=%.0f',
               label, dc, media_tag, (time.monotonic() - connect_started) * 1000)
@@ -265,7 +260,7 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
         log.info("[%s] Switched active CF domain", label)
 
     stats.connections_cfproxy += 1
-    await ws.send(relay_init)
+    await ws.send_init(relay_init)
     await bridge_ws_reencrypt(reader, writer, ws, label, ctx,
                                dc=dc, is_media=is_media,
                                splitter=splitter)
@@ -284,10 +279,11 @@ async def _tcp_fallback(reader, writer, dst, port, relay_init, label, ctx: Crypt
     try:
         try:
             log.info("[%s] TCP fallback to %s:%d", label, dst, port)
-            rr, rw = await asyncio.wait_for(
-                asyncio.open_connection(dst, port), timeout=10)
-            rw.write(relay_init)
-            await rw.drain()
+            with client_setup(reader, writer):
+                rr, rw = await asyncio.wait_for(
+                    asyncio.open_connection(dst, port), timeout=10)
+                rw.write(relay_init)
+                await rw.drain()
         except Exception as exc:
             failures = _tcp_failures.get(key, 0) + 1
             _tcp_failures[key] = failures

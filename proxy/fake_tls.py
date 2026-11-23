@@ -451,6 +451,9 @@ class FakeTlsStream:
     def is_closing(self):
         return self._writer.is_closing()
 
+    def at_eof(self):
+        return not self._read_buf and self._reader.at_eof()
+
 
 async def proxy_to_masking_domain(reader, writer, initial_data: bytes,
                                     domain: str, label: str) -> None:
