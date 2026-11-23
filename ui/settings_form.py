@@ -474,6 +474,7 @@ def _create_updates(ctk, frame, theme, cfg, default_config, on_update_click):
     release_button = create_button(ctk, btn_row, theme, "button.open_release", "secondary", height=32)
     release_button.grid(row=0, column=0, sticky="ew")
     update_button = create_button(ctk, btn_row, theme, "button.update", height=32, command=on_update_click)
+    shown = {}
 
     def refresh():
         st = get_status()
@@ -492,10 +493,14 @@ def _create_updates(ctk, frame, theme, cfg, default_config, on_update_click):
             color, image = theme.text_secondary, None
         else:
             text, color, image = t("updates.status_latest"), theme.text_secondary, icon("check", 14, theme.ok)
-        status.configure(text=(" " if image else "") + text, text_color=color, image=image or "")
         rel_url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
-        release_button.configure(command=lambda: webbrowser.open(rel_url))
         can_update = bool(has_update and on_update_click is not None)
+        state = (text, color, image, rel_url, can_update)
+        if shown.get("state") == state:
+            return
+        shown["state"] = state
+        status.configure(text=(" " if image else "") + text, text_color=color, image=image or "")
+        release_button.configure(command=lambda: webbrowser.open(rel_url))
         btn_row.grid_columnconfigure(1, weight=int(can_update))
         release_button.grid_configure(padx=(0, 4) if can_update else 0)
         if can_update:

@@ -104,7 +104,7 @@
   "connectivity.cf_auto_fail": "Ни один из автоматических CF-доменов не отвечает.",
   "connectivity.multi_all_ok": "{domain}: все {total} серверов доступны",
   "connectivity.multi_fail": "{domain}: недоступен",
-  "connectivity.multi_partial": "~ {domain}: работают {ok_list}; недоступны {fail_list}",
+  "connectivity.multi_partial": "{domain}: работают {ok_list}; недоступны {fail_list}",
 
   "updates.status_error": "Не удалось связаться с GitHub. Проверьте сеть.",
   "updates.status_pending": "Ещё не проверялось",

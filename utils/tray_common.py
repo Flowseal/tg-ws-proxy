@@ -597,7 +597,7 @@ def ctk_run_dialog(build_fn: Callable[[threading.Event], Any], key: Optional[str
 
     def _invoke():
         window = _ctk_windows.get(key) if key else None
-        if window is not None and window.winfo_exists():
+        if window is not None and window.winfo_exists() and not getattr(window, "closing", False):
             from ui.ctk_theme import present
 
             present(window)

@@ -408,7 +408,7 @@ def _edit_config_dialog() -> None:
     cfg = dict(_config)
     cfg["autostart"] = is_autostart_enabled()
 
-    def _build(done: threading.Event) -> None:
+    def _build(done: threading.Event):
         theme = ctk_theme_for_platform()
         w, h = CONFIG_DIALOG_SIZE
         if _supports_autostart():
@@ -483,7 +483,7 @@ def _show_first_run() -> None:
             fade_destroy(root)
             done.set()
             if open_tg:
-                _on_open_in_telegram()
+                threading.Thread(target=_on_open_in_telegram, daemon=True).start()
 
         populate_first_run_window(ctk, root, theme, host=host, port=port, secret=secret, on_done=on_done)
         return root

@@ -115,6 +115,7 @@ def fade(win: Any, target: float, ms: int = 160, then: Optional[Callable[[], Non
 
 
 def fade_destroy(win: Any) -> None:
+    win.closing = True
     fade(win, 0.0, 120, win.destroy)
 
 
