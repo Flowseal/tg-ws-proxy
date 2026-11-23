@@ -405,14 +405,14 @@ class _CfWorkerPool:
         return domains
 
     def report_failure(self, worker_domain: str, exc: Exception) -> None:
-        now = time.time()
+        now = time.monotonic()
         if self._exhausted_until.get(worker_domain, 0) > now:
             return
 
         if isinstance(exc, WsHandshakeError):
             if exc.status_code == 429:
                 # Workers free plan reports the daily request limit as 429.
-                exhausted_until = now + (86400 - (now % 86400))
+                exhausted_until = now + (86400 - (time.time() % 86400))
                 reason = 'daily request limit'
             elif exc.status_code >= 500:
                 exhausted_until = now + self.FAILURE_COOLDOWN
