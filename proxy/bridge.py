@@ -10,7 +10,7 @@ from .utils import *
 from .stats import stats
 from .balancer import balancer
 from .config import proxy_config
-from .raw_websocket import RawWebSocket, connect_cf_domains
+from .raw_websocket import RawWebSocket, cf_prefers_tls, connect_cf_domains
 from .pool import cf_worker_pool
 from .network_debug import WsActivity
 from .cf_h2 import bridge_h2
@@ -162,7 +162,7 @@ async def do_fallback(reader, writer, relay_init, label,
             if ok:
                 return True
         elif method == 'cf':
-            if is_media and h2_pool is not None and proto_tag is not None:
+            if is_media and h2_pool is not None and proto_tag is not None and cf_prefers_tls():
                 with client_setup(reader, writer):
                     channel = await h2_pool.open(dc, label)
                 if channel is not None:

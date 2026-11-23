@@ -5,7 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from proxy import bridge, tg_ws_proxy
+from proxy.balancer import _Balancer
 from proxy.config import proxy_config
+from proxy.raw_websocket import RawWebSocket, reset_cf_timeouts
 from proxy.utils import PROTO_TAG_INTERMEDIATE
 
 
@@ -98,3 +100,27 @@ class H2RoutingTest(unittest.IsolatedAsyncioTestCase):
                         h2_pool=pool, proto_tag=PROTO_TAG_INTERMEDIATE)
                 self.assertTrue(result)
                 self.assertEqual(calls, expected)
+
+    async def test_media_skips_h2_when_cf_websocket_prefers_plaintext(self):
+        reset_cf_timeouts()
+        self.addCleanup(reset_cf_timeouts)
+        balancer = _Balancer()
+        balancer.update_domains_list(['example.org'])
+        pool = SimpleNamespace(open=AsyncMock(return_value=None))
+        writer = Mock()
+        writer.is_closing.return_value = False
+        ws = Mock(send_init=AsyncMock())
+
+        with patch.object(proxy_config, 'fallback_cfproxy', True), \
+                patch.object(proxy_config, 'cfproxy_worker_domains', []), \
+                patch.object(proxy_config, 'disable_secure', False), \
+                patch.object(bridge, 'balancer', balancer), \
+                patch.object(bridge, 'bridge_ws_reencrypt', new_callable=AsyncMock), \
+                patch.object(RawWebSocket, 'connect', side_effect=[TimeoutError(), ws, ws]) as dial:
+            for media in (False, True):
+                self.assertTrue(await bridge.do_fallback(
+                    asyncio.StreamReader(), writer, b'', 'test', 2, False, media, '', Mock(),
+                    h2_pool=pool, proto_tag=PROTO_TAG_INTERMEDIATE))
+
+        pool.open.assert_not_awaited()
+        self.assertEqual([call.kwargs['secure'] for call in dial.await_args_list], [True, False, False])

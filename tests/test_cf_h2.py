@@ -13,6 +13,7 @@ from proxy.cf_h2 import (
     CfH2Pool, MAX_CHANNEL_REQUESTS, MAX_PACKET, _HttpChannel, _HttpLane,
     _ReplayPacket, _encode_reply, _read_packet, bridge_h2,
 )
+from proxy.raw_websocket import RawWebSocket, connect_cf_domains, reset_cf_timeouts
 from proxy.utils import PROTO_TAG_ABRIDGED, PROTO_TAG_INTERMEDIATE, PROTO_TAG_SECURE
 
 class _IdentityCipher:
@@ -961,6 +962,25 @@ class HttpMultiplexTest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(pool.lanes)
         finally:
             await pool.close()
+
+    async def test_h2_skips_domain_with_recent_secure_websocket_timeout(self):
+        reset_cf_timeouts()
+        self.addCleanup(reset_cf_timeouts)
+        pool = CfH2Pool()
+        self.addAsyncCleanup(pool.close)
+        balancer = _Balancer()
+        balancer.update_domains_list(['slow.example', 'ready.example'])
+        balancer.update_domain_for_dc(4, 'slow.example')
+
+        with patch.object(RawWebSocket, 'connect', side_effect=[TimeoutError(), ConnectionResetError()]):
+            self.assertIsNone(await connect_cf_domains(
+                [('slow.example', 'kws4.slow.example')], label='test', secure=True))
+
+        with patch('proxy.cf_h2.balancer', balancer), patch.object(_HttpLane, '_preflight', autospec=True) as preflight:
+            channel = await pool.open(4, 'test')
+        self.assertIsNotNone(channel)
+        self.assertEqual(channel.lane.host, 'kws4.ready.example')
+        preflight.assert_awaited_once_with(channel.lane)
 
     async def test_hanging_setup_returns_to_ws_and_cleans_up_lane(self):
         pool = CfH2Pool()
