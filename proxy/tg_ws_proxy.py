@@ -11,7 +11,7 @@ import argparse
 import logging
 import socket as _socket
 
-from typing import Optional, Set, Tuple
+from typing import Dict, Optional, Tuple
 
 
 if __name__ == '__main__' and (__package__ is None or __package__ == ''):
@@ -34,7 +34,9 @@ from .balancer import balancer
 from .pool import ws_pool, cf_worker_pool
 from .cf_h2 import CfH2Pool
 from .network_debug import log_ws_flow
-from .event_loop import ClientStreamProtocol, install_proactor_socket_guard, install_self_pipe_guard
+from .event_loop import (
+    ClientStreamProtocol, abort_transport, install_proactor_socket_guard, install_self_pipe_guard,
+)
 from ._aes import Cipher, algorithms, modes
 
 
@@ -42,6 +44,7 @@ log = logging.getLogger('tg-mtproto-proxy')
 
 LISTENER_CHECK_INTERVAL = 5.0
 LISTENER_RESTART_DELAY = 1.0
+CLIENT_CLOSE_TIMEOUT = 2.0
 BAD_HANDSHAKE_DRAIN_TIMEOUT = 10.0
 BAD_HANDSHAKE_DRAIN_LIMIT = 64 * 1024
 cf_h2_pool: Optional[CfH2Pool] = None
@@ -380,11 +383,13 @@ async def _handle_client(reader, writer, secret: bytes):
 
 _server_instance = None
 _server_stop_event = None
-_client_tasks: Set[asyncio.Task] = set()
+_client_tasks: Dict[asyncio.Task, asyncio.StreamWriter] = {}
 
 
 async def _run(stop_event: Optional[asyncio.Event] = None):
     global _server_instance, _server_stop_event, cf_h2_pool
+    if stop_event is not None and stop_event.is_set():
+        return
     loop = asyncio.get_running_loop()
     install_proactor_socket_guard(loop)
     install_self_pipe_guard(loop)
@@ -424,8 +429,8 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
             w.close()
             return
         task = asyncio.create_task(_handle_client(r, w, secret_bytes))
-        _client_tasks.add(task)
-        task.add_done_callback(_client_tasks.discard)
+        _client_tasks[task] = w
+        task.add_done_callback(lambda done: _client_tasks.pop(done, None))
 
     def client_protocol():
         return ClientStreamProtocol(client_cb)
@@ -570,10 +575,16 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     finally:
         stopping = True
         server.close()
-        clients = list(_client_tasks)
-        for task in clients:
+        clients = _client_tasks.copy()
+        for task, writer in clients.items():
             task.cancel()
-        await asyncio.gather(*clients, return_exceptions=True)
+            writer.close()
+        if clients:
+            await asyncio.wait(clients, timeout=CLIENT_CLOSE_TIMEOUT)
+            for writer in clients.values():
+                if writer.transport.get_write_buffer_size():
+                    abort_transport(writer.transport)
+            await asyncio.gather(*clients, return_exceptions=True)
         for task in (serve_task, watchdog_task, stop_task):
             if task is not None:
                 await _quiet_cancel(task)

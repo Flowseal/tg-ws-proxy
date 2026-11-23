@@ -308,7 +308,7 @@ _stop_requested = threading.Event()
 _lifecycle_version = 0
 # Tray actions run start/stop/restart from worker threads; serialise them so
 # repeated clicks cannot interleave and start two proxies
-_lifecycle_lock = threading.RLock()
+_lifecycle_lock = threading.Lock()
 
 
 def _run_proxy_thread(show_error: Callable[[str], None]) -> None:
@@ -385,7 +385,7 @@ def apply_proxy_config(cfg: dict) -> bool:
 
 
 def start_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
-    global _proxy_thread, _lifecycle_version
+    global _lifecycle_version
     with _lifecycle_lock:
         previous = _proxy_thread
         if previous and previous.is_alive() and not _stop_requested.is_set():
@@ -398,22 +398,26 @@ def start_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
     # Leave the lock free so a later stop can cancel this pending start.
     if previous and previous.is_alive():
         previous.join()
+    _start_proxy_if_current(cfg, on_error, version)
 
+
+def _start_proxy_if_current(cfg: dict, on_error: Callable[[str], None], version: int) -> None:
+    global _proxy_thread
     with _lifecycle_lock:
         if version != _lifecycle_version:
             return
-        if not apply_proxy_config(cfg):
-            from ui.i18n import t
-            on_error(t("error.dc_config"))
+        if apply_proxy_config(cfg):
+            pc = proxy_config
+            log.info("Starting proxy on %s:%d ...", pc.host, pc.port)
+            _proxy_thread = threading.Thread(
+                target=_run_proxy_thread, args=(on_error,), daemon=True, name="proxy"
+            )
+            _stop_requested.clear()
+            _proxy_thread.start()
             return
 
-        pc = proxy_config
-        log.info("Starting proxy on %s:%d ...", pc.host, pc.port)
-        _proxy_thread = threading.Thread(
-            target=_run_proxy_thread, args=(on_error,), daemon=True, name="proxy"
-        )
-        _stop_requested.clear()
-        _proxy_thread.start()
+    from ui.i18n import t
+    on_error(t("error.dc_config"))
 
 
 def _request_proxy_stop():
@@ -460,9 +464,7 @@ def restart_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
     if previous and previous.is_alive():
         previous.join()
     time.sleep(1.0)
-    with _lifecycle_lock:
-        if version == _lifecycle_version:
-            start_proxy(cfg, on_error)
+    _start_proxy_if_current(cfg, on_error, version)
 
 
 def tg_proxy_url(cfg: dict) -> str:

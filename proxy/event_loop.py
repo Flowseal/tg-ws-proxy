@@ -81,6 +81,16 @@ def install_proactor_socket_guard(loop):
         _ProactorSocketTransport._call_connection_lost = _close_proactor_socket
 
 
+def abort_transport(transport):
+    transport.abort()
+    if sys.platform == 'win32':
+        from asyncio.proactor_events import _ProactorSocketTransport
+        if (isinstance(transport, _ProactorSocketTransport)
+                and getattr(transport, '_write_fut', None) is not None):
+            transport._closing = False
+            transport.abort()
+
+
 def _replace_self_pipe(loop):
     reader, writer = socket.socketpair()
     try:

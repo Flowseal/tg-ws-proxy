@@ -8,6 +8,7 @@ import socket as _socket
 
 from typing import Dict, Iterable, List, Optional, Tuple
 from .config import proxy_config
+from .event_loop import abort_transport
 from .utils import create_ssl_context
 
 log = logging.getLogger('tg-mtproto-proxy')
@@ -60,19 +61,20 @@ def _xor_mask(data: bytes, mask: bytes) -> bytes:
             int.from_bytes(mask_rep, 'big')).to_bytes(n, 'big')
 
 
-async def _wait_close(awaitable, timeout):
+async def _wait_close(awaitable, timeout, *, cancel_pending=True):
     # wait_for() can lose external cancellation when its task finishes at the
     # same time on Python < 3.12. wait() leaves cancellation with the caller.
     task = asyncio.ensure_future(awaitable)
+    completion = asyncio.gather(task, return_exceptions=True)
     try:
-        done, _ = await asyncio.wait((task,), timeout=timeout)
+        done, _ = await asyncio.wait((completion,), timeout=timeout)
         if not done:
             raise asyncio.TimeoutError()
         return task.result()
     finally:
-        if not task.done():
+        if cancel_pending and not task.done():
             task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+            await completion
 
 
 def set_sock_opts(transport, buffer_size):
@@ -275,12 +277,11 @@ class RawWebSocket:
         finally:
             try:
                 self.writer.close()
-                # A silent TLS peer would hold us here for ssl_shutdown_timeout
-                # (30s) and delay proxy shutdown past the tray's stop timeout
-                await _wait_close(self.writer.wait_closed(), self.CLOSE_TIMEOUT)
+                await _wait_close(self.writer.wait_closed(), self.CLOSE_TIMEOUT,
+                                  cancel_pending=False)
             except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
                 try:
-                    self.writer.transport.abort()
+                    abort_transport(self.writer.transport)
                 except Exception:
                     pass
                 if isinstance(exc, asyncio.CancelledError):
