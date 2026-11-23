@@ -380,6 +380,46 @@ class CfWorkerPoolTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.pool._refill_after[2], retry_at)
         self.assertFalse(self.pool._refilling)
 
+    async def test_all_paused_workers_defer_refill_until_first_expiry(self):
+        domains = ['later.example', 'first.example']
+        self.pool._exhausted_until.update({
+            'later.example': 200, 'first.example': 150, 'unrelated.example': 105,
+        })
+        self.pool._refill_after[2] = 180
+        self.pool._refill_failures[2] = 3
+        with mock.patch('proxy.pool.time') as clock, \
+                mock.patch.object(self.pool, '_schedule_rotation'), \
+                mock.patch.object(RawWebSocket, 'connect', return_value=_open_ws()) as dial:
+            for now in (100, 149):
+                clock.monotonic.return_value = now
+                await self.pool.get(2, '192.0.2.2', domains)
+                self.assertEqual(self.pool._refill_after[2], 150)
+                self.assertEqual(self.pool._refill_failures[2], 3)
+                self.assertNotIn(2, self.pool._refilling)
+                dial.assert_not_awaited()
+
+            clock.monotonic.return_value = 150
+            await self.pool.get(2, '192.0.2.2', domains)
+            await self.pool._refilling[2]
+            dial.assert_awaited_once()
+            self.assertEqual(self.pool._idle[2][0][2], 'first.example')
+            self.assertNotIn(2, self.pool._refill_failures)
+            self.assertNotIn(2, self.pool._refill_after)
+
+    async def test_failed_dial_pauses_last_available_worker(self):
+        self.pool._exhausted_until['paused.example'] = 120
+        with mock.patch('proxy.pool.time') as clock, \
+                mock.patch.object(self.pool, '_schedule_rotation'), \
+                mock.patch.object(RawWebSocket, 'connect', side_effect=OSError()) as dial:
+            clock.monotonic.return_value = 100
+            await self.pool.get(2, '192.0.2.2', ['paused.example', 'ready.example'])
+            await self.pool._refilling[2]
+            dial.assert_awaited_once()
+            self.assertEqual(self.pool._exhausted_until['ready.example'],
+                             100 + self.pool.FAILURE_COOLDOWN)
+            self.assertEqual(self.pool._refill_after[2], 120)
+            self.assertNotIn(2, self.pool._refill_failures)
+
     async def test_zero_size_and_missing_worker_domains_do_not_start_refills(self):
         with mock.patch.object(self.pool, '_connect_one') as dial:
             with mock.patch.object(proxy_config, 'pool_size', 0):

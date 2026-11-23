@@ -280,12 +280,22 @@ class _CfWorkerPool:
                 or ws.writer.transport.is_closing() or ws.reader.at_eof()
                 or ws.reader.exception() is not None)
 
+    def _defer_if_all_workers_paused(self, dc, worker_domains, now):
+        first_available = min(self._exhausted_until.get(domain, now)
+                              for domain in worker_domains)
+        if first_available <= now:
+            return False
+        self._refill_after[dc] = first_available
+        return True
+
     def _schedule_refill(self, dc, fallback_dst, worker_domains):
         if proxy_config.pool_size <= 0 or not worker_domains:
             return
         self._schedule_rotation(dc, fallback_dst, worker_domains)
+        now = time.monotonic()
         if (dc in self._refilling
-                or time.monotonic() < self._refill_after.get(dc, 0)):
+                or self._defer_if_all_workers_paused(dc, worker_domains, now)
+                or now < self._refill_after.get(dc, 0)):
             return
         self._refilling[dc] = asyncio.create_task(self._refill(
             dc, fallback_dst, list(worker_domains)))
@@ -314,6 +324,9 @@ class _CfWorkerPool:
                 self._refill_failures.pop(dc, None)
                 self._refill_after.pop(dc, None)
             else:
+                now = time.monotonic()
+                if self._defer_if_all_workers_paused(dc, worker_domains, now):
+                    return
                 failures = self._refill_failures.get(dc, 0) + 1
                 self._refill_failures[dc] = failures
                 delay = min(
@@ -321,7 +334,7 @@ class _CfWorkerPool:
                     * (2 ** min(failures - 1, 12)),
                     self.REFILL_BACKOFF_MAX,
                 )
-                self._refill_after[dc] = time.monotonic() + delay
+                self._refill_after[dc] = now + delay
                 log.info("CF worker pool refill failed for DC%d, retry in %.0fs",
                          dc, delay)
             log.debug("CF worker pool refilled DC%d: %d ready",
