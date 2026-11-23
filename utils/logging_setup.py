@@ -1,4 +1,4 @@
-"""Shared construction of the rotating log file handler.
+"""Shared logging setup for the tray and CLI.
 
 Centralizes the rotation invariant so both the tray and the CLI log paths
 behave identically and the file can never grow without bound (issue #885).
@@ -18,6 +18,10 @@ _MIN_BYTES = 32 * 1024
 _MIN_BACKUPS = 1
 
 
+def set_verbose_logging(verbose: bool) -> None:
+    logging.getLogger().setLevel(logging.DEBUG if verbose else logging.INFO)
+
+
 def build_log_handler(
     path: str,
     log_max_mb: float = 5,
@@ -31,9 +35,14 @@ def build_log_handler(
     """
     max_bytes = max(_MIN_BYTES, int(log_max_mb * 1024 * 1024))
     backup_count = max(_MIN_BACKUPS, int(backups))
-    return logging.handlers.RotatingFileHandler(
+    handler = logging.handlers.RotatingFileHandler(
         path,
         maxBytes=max_bytes,
         backupCount=backup_count,
         encoding="utf-8",
     )
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s  %(levelname)-5s  %(name)s  %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    return handler

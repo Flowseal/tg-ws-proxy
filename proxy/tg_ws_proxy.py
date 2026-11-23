@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import random
 import struct
 import asyncio
 import hashlib
@@ -10,7 +11,7 @@ import argparse
 import logging
 import socket as _socket
 
-from typing import Optional, Set, Tuple
+from typing import Dict, Optional, Tuple
 
 
 if __name__ == '__main__' and (__package__ is None or __package__ == ''):
@@ -23,13 +24,20 @@ from .utils import *
 from .stats import stats
 from .config import proxy_config, parse_dc_ip_list, start_cfproxy_domain_refresh, coerce_domain_list
 from .bridge import MsgSplitter, CryptoCtx, do_fallback, bridge_ws_reencrypt, reset_tcp_backoff
+from .cf_websocket import reset_cf_timeouts
 from .raw_websocket import set_sock_opts
-from .fake_tls import proxy_to_masking_domain, verify_client_hello, build_server_hello, FakeTlsStream, TLS_RECORD_HANDSHAKE
+from .fake_tls import (
+    proxy_to_masking_domain, verify_client_hello, parse_client_hello, build_server_hello,
+    probe_appdata_len, set_profiled_appdata_len, FakeTlsStream, TLS_RECORD_HANDSHAKE,
+    SERVER_HELLO_DELAY, replay_cache,
+)
 from .balancer import balancer
 from .pool import ws_pool, cf_worker_pool
 from .cf_h2 import CfH2Pool
 from .network_debug import log_ws_flow
-from .event_loop import install_self_pipe_guard
+from .event_loop import (
+    ClientStreamProtocol, abort_transport, install_proactor_socket_guard, install_self_pipe_guard,
+)
 from ._aes import Cipher, algorithms, modes
 
 
@@ -37,6 +45,9 @@ log = logging.getLogger('tg-mtproto-proxy')
 
 LISTENER_CHECK_INTERVAL = 5.0
 LISTENER_RESTART_DELAY = 1.0
+CLIENT_CLOSE_TIMEOUT = 2.0
+BAD_HANDSHAKE_DRAIN_TIMEOUT = 10.0
+BAD_HANDSHAKE_DRAIN_LIMIT = 64 * 1024
 cf_h2_pool: Optional[CfH2Pool] = None
 
 
@@ -150,11 +161,16 @@ async def _read_client_init(reader, writer, secret, label, masking):
         client_hello = tls_header + record_body
 
         tls_result = verify_client_hello(client_hello, secret)
+        # A recorded hello stays valid for minutes; answering it again would
+        # tell an active prober that this is a proxy, not the masking site
+        replayed = (tls_result is not None
+                    and not replay_cache.first_seen(tls_result[0]))
 
-        if tls_result is None:
-            log.debug("[%s] Fake TLS verify failed (size=%d rec=%d) "
+        if tls_result is None or replayed:
+            log.debug("[%s] Fake TLS %s (size=%d rec=%d) "
                       "-> masking",
-                      label, len(client_hello), record_len)
+                      label, "hello replayed" if replayed else "verify failed",
+                      len(client_hello), record_len)
             await proxy_to_masking_domain(
                 reader, writer, client_hello, masking, label)
             return None
@@ -162,7 +178,9 @@ async def _read_client_init(reader, writer, secret, label, masking):
         client_random, session_id, ts = tls_result
         log.debug("[%s] Fake TLS handshake ok (ts=%d)", label, ts)
 
-        server_hello = build_server_hello(secret, client_random, session_id)
+        server_hello = build_server_hello(
+            secret, client_random, session_id, parse_client_hello(client_hello))
+        await asyncio.sleep(random.uniform(*SERVER_HELLO_DELAY))
         writer.write(server_hello)
         await writer.drain()
 
@@ -244,6 +262,15 @@ def _build_crypto_ctx(client_dec_prekey_iv, secret, relay_init):
     return CryptoCtx(clt_decryptor, clt_encryptor, tg_encryptor, tg_decryptor)
 
 
+async def _drain_bad_handshake(reader):
+    remaining = BAD_HANDSHAKE_DRAIN_LIMIT
+    while remaining > 0:
+        chunk = await reader.read(min(4096, remaining))
+        if not chunk:
+            break
+        remaining -= len(chunk)
+
+
 async def _handle_client(reader, writer, secret: bytes):
     stats.connections_total += 1
     stats.connections_active += 1
@@ -265,8 +292,9 @@ async def _handle_client(reader, writer, secret: bytes):
             stats.connections_bad += 1
             log.warning("[%s] bad handshake (wrong secret or proto)", label)
             try:
-                while await clt_reader.read(4096):
-                    pass
+                await asyncio.wait_for(
+                    _drain_bad_handshake(clt_reader),
+                    timeout=BAD_HANDSHAKE_DRAIN_TIMEOUT)
             except Exception:
                 pass
             return
@@ -324,7 +352,7 @@ async def _handle_client(reader, writer, secret: bytes):
         except Exception:
             pass
 
-        await ws.send(relay_init)
+        await ws.send_init(relay_init)
 
         await bridge_ws_reencrypt(clt_reader, clt_writer, ws, label, ctx,
                                    dc=dc, is_media=is_media,
@@ -356,15 +384,20 @@ async def _handle_client(reader, writer, secret: bytes):
 
 _server_instance = None
 _server_stop_event = None
-_client_tasks: Set[asyncio.Task] = set()
+_client_tasks: Dict[asyncio.Task, asyncio.StreamWriter] = {}
 
 
 async def _run(stop_event: Optional[asyncio.Event] = None):
     global _server_instance, _server_stop_event, cf_h2_pool
-    install_self_pipe_guard(asyncio.get_running_loop())
+    if stop_event is not None and stop_event.is_set():
+        return
+    loop = asyncio.get_running_loop()
+    install_proactor_socket_guard(loop)
+    install_self_pipe_guard(loop)
     _server_stop_event = stop_event
 
     reset_tcp_backoff()
+    reset_cf_timeouts()
     ws_pool.reset()
     cf_worker_pool.reset()
     _client_tasks.clear()
@@ -379,15 +412,31 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     secret_bytes = bytes.fromhex(proxy_config.secret)
     stopping = False
 
+    # Probe before listening so a domain that resolves to this proxy fails
+    # fast instead of answering itself
+    set_profiled_appdata_len(None)
+    if proxy_config.fake_tls_domain:
+        appdata_len = await probe_appdata_len(proxy_config.fake_tls_domain)
+        set_profiled_appdata_len(appdata_len)
+        if appdata_len is None:
+            log.warning("Fake TLS profile unavailable, ServerHello uses "
+                        "random record sizes")
+        else:
+            log.info("Fake TLS profile: first encrypted record %d bytes",
+                     appdata_len)
+
     def client_cb(r, w):
         if stopping:
             w.close()
             return
         task = asyncio.create_task(_handle_client(r, w, secret_bytes))
-        _client_tasks.add(task)
-        task.add_done_callback(_client_tasks.discard)
+        _client_tasks[task] = w
+        task.add_done_callback(lambda done: _client_tasks.pop(done, None))
 
-    server = await asyncio.start_server(client_cb, proxy_config.host, proxy_config.port)
+    def client_protocol():
+        return ClientStreamProtocol(client_cb)
+
+    server = await loop.create_server(client_protocol, proxy_config.host, proxy_config.port)
     _server_instance = server
 
     for sock in server.sockets:
@@ -510,8 +559,8 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
                 pass
             await asyncio.sleep(LISTENER_RESTART_DELAY)
             try:
-                server = await asyncio.start_server(
-                    client_cb, proxy_config.host, proxy_config.port)
+                server = await loop.create_server(
+                    client_protocol, proxy_config.host, proxy_config.port)
             except OSError as exc:
                 log.error("Failed to restart server: %s", repr(exc))
                 break
@@ -527,10 +576,16 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     finally:
         stopping = True
         server.close()
-        clients = list(_client_tasks)
-        for task in clients:
+        clients = _client_tasks.copy()
+        for task, writer in clients.items():
             task.cancel()
-        await asyncio.gather(*clients, return_exceptions=True)
+            writer.close()
+        if clients:
+            await asyncio.wait(clients, timeout=CLIENT_CLOSE_TIMEOUT)
+            for writer in clients.values():
+                if writer.transport.get_write_buffer_size():
+                    abort_transport(writer.transport)
+            await asyncio.gather(*clients, return_exceptions=True)
         for task in (serve_task, watchdog_task, stop_task):
             if task is not None:
                 await _quiet_cancel(task)
@@ -675,7 +730,6 @@ def main():
             log_max_mb=args.log_max_mb,
             backups=args.log_backups,
         )
-        fh.setFormatter(log_fmt)
         fh.addFilter(DomainCensorFilter())
         root.addHandler(fh)
 

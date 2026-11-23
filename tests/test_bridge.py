@@ -3,12 +3,15 @@ import asyncio
 import time
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
+from proxy import bridge
 from proxy._aes import Cipher, algorithms, modes
 from proxy.bridge import MsgSplitter, bridge_ws_reencrypt
+from proxy.config import proxy_config
 from proxy.network_debug import WsActivity, log_ws_flow
 from proxy.utils import (
+    DC_DEFAULT_IPS,
     PROTO_ABRIDGED_INT,
     PROTO_INTERMEDIATE_INT,
     PROTO_PADDED_INTERMEDIATE_INT,
@@ -36,6 +39,28 @@ def _abridged(payload: bytes) -> bytes:
 
 def _intermediate(payload: bytes) -> bytes:
     return len(payload).to_bytes(4, 'little') + payload
+
+
+class CfWorkerFallbackTest(unittest.IsolatedAsyncioTestCase):
+    async def test_pool_miss_connects_through_the_worker_pool(self):
+        reader = asyncio.StreamReader()
+        writer = Mock()
+        writer.is_closing.return_value = False
+        ws = Mock(send_init=AsyncMock())
+        domains = ['worker.example']
+        pool = SimpleNamespace(get=AsyncMock(return_value=None),
+                               connect_one=AsyncMock(return_value=(ws, domains[0])))
+        ctx = Mock()
+        with patch.object(proxy_config, 'cfproxy_worker_domains', domains), \
+                patch.object(bridge, 'cf_worker_pool', pool), \
+                patch.object(bridge, 'bridge_ws_reencrypt', new_callable=AsyncMock) as relay:
+            self.assertTrue(await bridge.do_fallback(
+                reader, writer, b'init', 'test', 2, False, True, ' media', ctx))
+
+        pool.get.assert_awaited_once_with(2, DC_DEFAULT_IPS[2], domains)
+        pool.connect_one.assert_awaited_once_with(domains, DC_DEFAULT_IPS[2], 2, timeout=10.0)
+        ws.send_init.assert_awaited_once_with(b'init')
+        relay.assert_awaited_once_with(reader, writer, ws, 'test', ctx, dc=2, is_media=True, splitter=None)
 
 
 class MsgSplitterTest(unittest.TestCase):

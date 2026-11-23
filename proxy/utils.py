@@ -143,12 +143,25 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
             return super().https_open(req)
 
 
+def set_x25519(context: ssl.SSLContext) -> None:
+    try:
+        context.set_ecdh_curve('X25519')
+    except Exception:
+        pass
+
+
 def create_ssl_context(*, check_hostname: bool = True) -> ssl.SSLContext:
+    context = ssl.create_default_context()
+
     bundle_dir = getattr(sys, '_MEIPASS', None)
-    cafile = (os.path.join(bundle_dir, 'certifi', 'cacert.pem')
-              if bundle_dir else certifi.where())
-    context = ssl.create_default_context(cafile=cafile)
-    context.load_default_certs()
+    try:
+        cafile = (os.path.join(bundle_dir, 'certifi', 'cacert.pem')
+                  if bundle_dir else certifi.where())
+        context.load_verify_locations(cafile=cafile)
+    except Exception:
+        pass
+
+    set_x25519(context)
     context.check_hostname = check_hostname
     return context
 

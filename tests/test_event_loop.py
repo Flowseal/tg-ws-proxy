@@ -26,6 +26,35 @@ def _wake_later(loop, callback):
     return thread
 
 
+class ClientSetupTest(unittest.IsolatedAsyncioTestCase):
+    async def test_fin_cancels_pending_setup_and_closes_accepted_socket(self):
+        started, cancelled = asyncio.Event(), asyncio.Event()
+
+        async def handle(reader, writer):
+            try:
+                with event_loop.client_setup(reader, writer):
+                    started.set()
+                    await asyncio.Future()
+            except asyncio.CancelledError:
+                cancelled.set()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        loop = asyncio.get_running_loop()
+        server = await loop.create_server(lambda: event_loop.ClientStreamProtocol(handle), '127.0.0.1', 0)
+        async with server:
+            peer, writer = await asyncio.open_connection('127.0.0.1', server.sockets[0].getsockname()[1])
+            try:
+                await asyncio.wait_for(started.wait(), 1)
+                writer.write_eof()
+                await asyncio.wait_for(cancelled.wait(), 1)
+                self.assertEqual(await asyncio.wait_for(peer.read(1), 1), b'')
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+
 @unittest.skipUnless(sys.platform == 'win32', 'Windows proactor self-pipe')
 class WindowsSelfPipeTest(unittest.TestCase):
     def setUp(self):
@@ -272,6 +301,44 @@ class ProxySelfPipeTest(unittest.IsolatedAsyncioTestCase):
                     thread.join(timeout=1)
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
+
+
+@unittest.skipUnless(sys.platform == 'win32', 'Windows proactor TCP transports')
+class WindowsSocketCloseTest(unittest.IsolatedAsyncioTestCase):
+    async def test_shutdown_reset_still_closes_client_and_accepted_socket(self):
+        from asyncio.proactor_events import _ProactorSocketTransport
+
+        self.addCleanup(setattr, _ProactorSocketTransport, '_call_connection_lost',
+                        _ProactorSocketTransport._call_connection_lost)
+        loop = asyncio.get_running_loop()
+        event_loop.install_proactor_socket_guard(loop)
+        accepted = loop.create_future()
+        server = await asyncio.start_server(
+            lambda _, writer: accepted.set_result(writer), '127.0.0.1', 0)
+        self.addCleanup(server.close)
+        port = server.sockets[0].getsockname()[1]
+        _, client = await asyncio.open_connection('127.0.0.1', port)
+        peer = await asyncio.wait_for(accepted, 1)
+        sockets = (client.transport._sock, peer.transport._sock)
+        shutdown = socket.socket.shutdown
+
+        def reset_on_shutdown(sock, how):
+            if sock in sockets:
+                raise ConnectionResetError(0, 'connection reset', None, 10054)
+            shutdown(sock, how)
+
+        for sock in sockets:
+            self.addCleanup(sock.close)
+        with patch.object(socket.socket, 'shutdown', reset_on_shutdown), \
+                patch.object(loop, 'call_exception_handler') as report:
+            client.close()
+            peer.close()
+            await asyncio.wait_for(asyncio.gather(client.wait_closed(), peer.wait_closed()), 1)
+            self.assertEqual([sock.fileno() for sock in sockets], [-1, -1])
+            report.assert_not_called()
+
+        server.close()
+        await asyncio.wait_for(server.wait_closed(), 1)
 
 
 if __name__ == '__main__':

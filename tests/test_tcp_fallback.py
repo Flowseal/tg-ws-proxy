@@ -14,8 +14,10 @@ class TcpFallbackTest(unittest.IsolatedAsyncioTestCase):
         self.remote = Mock(drain=AsyncMock(), wait_closed=AsyncMock())
 
     async def fallback(self, dst='192.0.2.1', port=443):
+        writer = Mock()
+        writer.is_closing.return_value = False
         return await bridge._tcp_fallback(
-            Mock(), Mock(), dst, port, b'init', 'test', Mock())
+            asyncio.StreamReader(), writer, dst, port, b'init', 'test', Mock())
 
     async def test_failure_backoff_doubles_caps_and_skips_new_connections(self):
         with patch.object(bridge.asyncio, 'open_connection',

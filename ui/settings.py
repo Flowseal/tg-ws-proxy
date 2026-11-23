@@ -9,8 +9,8 @@ from typing import Union
 from proxy import coerce_domain_list, parse_dc_ip_list
 from ui.i18n import t
 
-UI_ONLY_KEYS = frozenset({
-    "appearance", "autostart", "check_updates", "language"
+LIVE_SETTINGS_KEYS = frozenset({
+    "appearance", "autostart", "check_updates", "language", "verbose"
 })
 
 
@@ -21,7 +21,7 @@ class SettingsChange:
 
     @property
     def requires_restart(self) -> bool:
-        return bool(self.changed_keys - UI_ONLY_KEYS)
+        return bool(self.changed_keys - LIVE_SETTINGS_KEYS)
 
 
 def prepare_settings(current: dict, values: dict, defaults: dict) -> SettingsChange:

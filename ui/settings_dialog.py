@@ -8,6 +8,7 @@ from ui.ctk_dialogs import show_message
 from ui.settings_form import validate_config_form
 from ui.i18n import set_language, t
 from ui.settings import prepare_settings
+from utils.logging_setup import set_verbose_logging
 
 log = logging.getLogger("tg-ws-tray")
 LINK_KEYS = frozenset({"host", "port", "secret"})
@@ -72,6 +73,8 @@ class SettingsDialog:
             show_message(str(exc), title=t("app.error_title"), kind="error")
             return
         self.config.update(deepcopy(change.config))
+        if "verbose" in change.changed_keys:
+            set_verbose_logging(change.config["verbose"])
         set_language(change.config["language"])
         changed_keys = change.changed_keys | ({"autostart"} if autostart_changed else set())
         log.info("Settings saved: %s", ", ".join(sorted(changed_keys)))

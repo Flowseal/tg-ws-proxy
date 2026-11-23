@@ -664,7 +664,7 @@ jobs:
 
             > [!TIP]
             > Не можете скачать?
-            > Добавьте `185.199.109.133 release-assets.githubusercontent.com` в hosts или воспользуйтесь зеркалом: https://sourceforge.net/projects/tg-ws-proxy.mirror/files/
+            > Воспользуйтесь зеркалом: https://sourceforge.net/projects/tg-ws-proxy.mirror/files/
           files: |
             dist/TgWsProxy_windows.exe
             dist/TgWsProxy_windows_arm64.exe

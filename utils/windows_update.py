@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import ctypes
+import os
 import subprocess
 import sys
 import sysconfig
+import uuid
 from contextlib import suppress
 from pathlib import Path
 from typing import Callable, Optional
@@ -24,10 +26,29 @@ def asset_name() -> Optional[str]:
     return None
 
 
+def can_self_update() -> bool:
+    """Whether the executable's folder is writable.
+
+    Neither os.access nor tempfile.mkstemp can be used here: on Windows the
+    former ignores ACLs and the latter keeps retrying on PermissionError, so
+    in a folder without write access it hangs instead of failing.
+    """
+    probe = Path(sys.executable).parent / f"TgWsProxy_probe_{uuid.uuid4().hex}"
+    try:
+        os.close(os.open(probe, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except OSError:
+        return False
+    with suppress(OSError):
+        probe.unlink()
+    return True
+
+
 def apply_update(asset: dict, before_restart: Callable[[], None]) -> None:
     """Verify, replace and launch; keep the old executable if any step fails."""
     exe = Path(sys.executable)
     backup = exe.with_name(exe.stem + "_oldtgws.exe")
+    if not can_self_update():
+        raise PermissionError(f"No write access to {exe.parent}")
     downloaded = download_asset(asset["url"], exe.parent, digest=asset["digest"])
     try:
         backup.unlink(missing_ok=True)
