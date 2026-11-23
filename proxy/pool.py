@@ -246,6 +246,7 @@ class _CfWorkerPool:
         self._refill_failures: Dict[int, int] = {}
         self._refill_after: Dict[int, float] = {}
         self._exhausted_until: Dict[str, float] = {}
+        self.try_secure_first = True
 
     async def get(self, dc: int, fallback_dst: str,
                   worker_domains: List[str]
@@ -309,7 +310,7 @@ class _CfWorkerPool:
                 return
             connected = 0
             for _ in range(needed):
-                result = await self._connect_one(
+                result = await self.connect_one(
                     worker_domains, fallback_dst, dc)
                 if self._refilling.get(dc) is not asyncio.current_task():
                     if result is not None:
@@ -384,22 +385,28 @@ class _CfWorkerPool:
             if self._rotating.get(dc) is asyncio.current_task():
                 self._rotating.pop(dc, None)
 
-    async def _connect_one(self, worker_domains, fallback_dst, dc):
+    async def connect_one(self, worker_domains: List[str], fallback_dst: str, dc: int, *,
+                          timeout: float = 8.0) -> Optional[Tuple[RawWebSocket, str]]:
         query = urlencode({
             'dst': fallback_dst,
             'dc': str(dc),
         })
         path = f'/apiws?{query}'
+        modes = (False,) if proxy_config.disable_secure else (self.try_secure_first, not self.try_secure_first)
         for worker_domain in self.available_domains(worker_domains):
-            try:
-                ws = await RawWebSocket.connect(
-                    worker_domain, worker_domain, timeout=8, path=path,
-                    secure=not proxy_config.disable_secure)
+            for attempt, secure in enumerate(modes, 1):
+                try:
+                    ws = await RawWebSocket.connect(
+                        worker_domain, worker_domain, timeout=timeout, path=path, secure=secure)
+                except Exception as exc:
+                    log.debug("CF worker connect DC%d via %s for %s failed (tls=%s): %r",
+                              dc, worker_domain, fallback_dst, secure, exc)
+                    if attempt < len(modes) and isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+                        continue
+                    self.report_failure(worker_domain, exc)
+                    break
+                self.try_secure_first = secure
                 return ws, worker_domain
-            except Exception as exc:
-                log.debug("CF worker pool connect DC%d via %s for %s failed: %r",
-                          dc, worker_domain, fallback_dst, exc)
-                self.report_failure(worker_domain, exc)
         return None
 
     def available_domains(self, worker_domains: List[str]) -> List[str]:
@@ -484,6 +491,7 @@ class _CfWorkerPool:
         self._refill_failures.clear()
         self._refill_after.clear()
         self._exhausted_until.clear()
+        self.try_secure_first = True
 
     async def close(self):
         tasks = list(self._rotating.values()) + list(self._refilling.values())

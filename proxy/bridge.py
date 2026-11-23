@@ -4,7 +4,6 @@ import struct
 import time
 
 from typing import Dict, List, Optional, Set, Tuple
-from urllib.parse import urlencode
 
 from .utils import *
 from .stats import stats
@@ -203,31 +202,12 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
         log.info("[%s] DC%d%s -> CF worker pool hit via %s for %s",
                  label, dc, media_tag, worker_domain, fallback_dst)
     else:
-        query = urlencode({
-            'dst': fallback_dst,
-            'dc': str(dc),
-        })
-        path = f'/apiws?{query}'
-
-        ws = None
-        for worker_domain in cf_worker_pool.available_domains(worker_domains):
-            log.info("[%s] DC%d%s -> trying CF worker %s for %s",
-                     label, dc, media_tag, worker_domain, fallback_dst)
-
-            try:
-                with client_setup(reader, writer):
-                    ws = await RawWebSocket.connect(worker_domain, worker_domain,
-                                                    timeout=10.0, path=path,
-                                                    secure=not proxy_config.disable_secure)
-                break
-            except Exception as exc:
-                cf_worker_pool.report_failure(worker_domain, exc)
-                log.warning("[%s] DC%d%s CF worker %s failed: %s",
-                            label, dc, media_tag, worker_domain, repr(exc))
-                continue
-
-        if ws is None:
+        with client_setup(reader, writer):
+            connected = await cf_worker_pool.connect_one(worker_domains, fallback_dst, dc, timeout=10.0)
+        if connected is None:
             return False
+        ws, worker_domain = connected
+        log.info("[%s] DC%d%s -> CF worker %s for %s", label, dc, media_tag, worker_domain, fallback_dst)
 
     stats.connections_cfproxy += 1
     await ws.send_init(relay_init)
