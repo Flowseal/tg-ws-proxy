@@ -392,9 +392,6 @@ async def connect_cf_domains(candidates: Iterable[Tuple[str, str]], *, label: st
                 continue
             _cf_timeout_until[key] = math.inf
 
-        port = 443 if use_tls else 80
-        log.warning('[%s] Use TLS: %s', label, use_tls)
-
         try:
             attempt_timeout = min(timeout, CF_CONNECT_TIMEOUTS[timeouts])
             ws = await RawWebSocket.connect(host, host, path=path,
@@ -407,15 +404,15 @@ async def connect_cf_domains(candidates: Iterable[Tuple[str, str]], *, label: st
                     if until + CF_TIMEOUT_COOLDOWN <= now:
                         del _cf_timeout_until[old_key]
                 _cf_timeout_until[key] = now + CF_TIMEOUT_COOLDOWN
-                log.warning('[%s] CF WebSocket timed out (host=%s port=%d); retry in %.0fs',
-                            label, host, port, CF_TIMEOUT_COOLDOWN)
+                log.warning('[%s] CF WebSocket timed out (host=%s tls=%s); retry in %.0fs',
+                            label, host, use_tls, CF_TIMEOUT_COOLDOWN)
             timeouts += 1
             if timeouts >= len(CF_CONNECT_TIMEOUTS):
                 break
             continue
 
         except Exception as exc:
-            log.warning('[%s] CF WebSocket failed (host=%s port=%d): %r', label, host, port, exc)
+            log.warning('[%s] CF WebSocket failed (host=%s tls=%s): %r', label, host, use_tls, exc)
             ws = None
 
         finally:
