@@ -18,18 +18,7 @@ def apply_windows_dark_theme() -> None:
     try:
         import ctypes
         uxtheme = ctypes.windll.uxtheme
-        
-        try:
-            set_preferred = uxtheme[135]
-            result = set_preferred(2)
-            if result == 0:
-                flush = uxtheme[136]
-                flush()
-        except Exception:
-            try:
-                allow_dark = uxtheme[135]
-                allow_dark(True)
-            except Exception:
-                pass
+        uxtheme[135](1)
+        uxtheme[136]()
     except Exception:
         pass

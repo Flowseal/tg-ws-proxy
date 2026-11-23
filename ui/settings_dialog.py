@@ -4,21 +4,21 @@ import logging
 import threading
 from copy import deepcopy
 
-from tkinter import messagebox
-
+from ui.ctk_dialogs import show_message
 from ui.settings_form import validate_config_form
 from ui.i18n import set_language, t
 from ui.settings import prepare_settings
 from utils.logging_setup import set_verbose_logging
 
 log = logging.getLogger("tg-ws-tray")
+LINK_KEYS = frozenset({"host", "port", "secret"})
 
 
 class SettingsDialog:
     def __init__(
         self, *, ctk, root, widgets, config, defaults, persist,
         refresh_menu, finish, restart, include_autostart=False,
-        apply_autostart=None, read_autostart=None,
+        apply_autostart=None, read_autostart=None, on_link_changed=None,
     ):
         self.ctk = ctk
         self.root = root
@@ -31,6 +31,7 @@ class SettingsDialog:
         self.restart = restart
         self.include_autostart = include_autostart
         self.apply_autostart = apply_autostart
+        self.on_link_changed = on_link_changed
         self.read_autostart = read_autostart
         self.closed = False
 
@@ -54,7 +55,7 @@ class SettingsDialog:
             self.widgets, self.defaults, include_autostart=self.include_autostart,
         )
         if isinstance(values, str):
-            messagebox.showerror(t("app.error_title"), values, parent=self.root)
+            show_message(values, title=t("app.error_title"), kind="error")
             return
         change = prepare_settings(self.config, values, self.defaults)
         autostart_changed = (
@@ -69,7 +70,7 @@ class SettingsDialog:
             self.persist(change.config)
         except (OSError, ValueError, TypeError) as exc:
             log.exception("Failed to save settings")
-            messagebox.showerror(t("app.error_title"), str(exc), parent=self.root)
+            show_message(str(exc), title=t("app.error_title"), kind="error")
             return
         self.config.update(deepcopy(change.config))
         if "verbose" in change.changed_keys:
@@ -80,12 +81,11 @@ class SettingsDialog:
         if self.apply_autostart is not None:
             self.apply_autostart(bool(change.config.get("autostart", False)))
         self.refresh_menu()
-        do_restart = change.requires_restart and messagebox.askyesno(
-            t("dialog.restart_title"), t("dialog.restart_body"), parent=self.root,
-        )
         self._finish()
-        if do_restart:
+        if change.requires_restart:
             threading.Thread(
                 target=self.restart, args=(deepcopy(change.config),),
                 daemon=True, name="proxy-restart",
             ).start()
+        if self.on_link_changed is not None and change.changed_keys & LINK_KEYS:
+            self.on_link_changed(deepcopy(change.config))

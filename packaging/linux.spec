@@ -56,7 +56,6 @@ a = Analysis(
     excludes=[
         'PIL._avif',
         'PIL._webp',
-        'PIL._imagingtk',
     ],
     noarchive=False,
     cipher=block_cipher,
@@ -86,7 +85,7 @@ if _missing:
     raise RuntimeError('Incomplete Linux GI bundle: ' + ', '.join(sorted(_missing)))
 
 _PIL_EXCLUDE_PYDS = {
-    '_avif', '_webp', '_imagingtk',
+    '_avif', '_webp',
     'FpxImagePlugin', 'MicImagePlugin',
 }
 a.binaries = [
