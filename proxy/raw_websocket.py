@@ -357,7 +357,7 @@ async def connect_cf_domains(candidates: Iterable[Tuple[str, str]], *, label: st
     timeouts = 0
 
     for name, host in candidates:
-        key = (host, secure)
+        key = (name, secure)
         now = loop.time()
 
         retry_at = _cf_timeout_until.get(key)
