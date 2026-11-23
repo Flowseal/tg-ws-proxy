@@ -10,10 +10,11 @@ from .utils import *
 from .stats import stats
 from .balancer import balancer
 from .config import proxy_config
-from .raw_websocket import RawWebSocket, cf_prefers_tls, connect_cf_domains
+from .raw_websocket import RawWebSocket
 from .pool import cf_worker_pool
 from .network_debug import WsActivity
 from .cf_h2 import bridge_h2
+from .cf_websocket import cf_prefers_tls, connect_cf_domains
 from .event_loop import client_setup
 
 

@@ -2,7 +2,7 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from proxy import raw_websocket
+from proxy import cf_websocket
 from proxy.raw_websocket import RawWebSocket, WsHandshakeError, _xor_mask
 
 
@@ -314,11 +314,11 @@ class HandshakeCleanupTest(unittest.IsolatedAsyncioTestCase):
 
 class CfDomainTimeoutTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        raw_websocket.reset_cf_timeouts()
-        self.addCleanup(raw_websocket.reset_cf_timeouts)
+        cf_websocket.reset_cf_timeouts()
+        self.addCleanup(cf_websocket.reset_cf_timeouts)
 
     async def connect(self, *hosts, secure=True):
-        return await raw_websocket.connect_cf_domains(((h, h) for h in hosts), secure=secure, label='test')
+        return await cf_websocket.connect_cf_domains(((h, h) for h in hosts), secure=secure, label='test')
 
     async def test_clients_dial_in_parallel_and_http_responses_do_not_throttle(self):
         statuses = iter((101, 429, 101, 503, 429))
@@ -389,7 +389,7 @@ class CfDomainTimeoutTest(unittest.IsolatedAsyncioTestCase):
                              [True, True, False, False])
 
     async def test_timeout_retry_skips_to_other_front_without_waiting(self):
-        with patch.object(raw_websocket, 'CF_TIMEOUT_COOLDOWN', 0), \
+        with patch.object(cf_websocket, 'CF_TIMEOUT_COOLDOWN', 0), \
                 patch.object(RawWebSocket, 'connect', side_effect=asyncio.TimeoutError()):
             self.assertIsNone(await self.connect('a', secure=False))
 
@@ -419,7 +419,7 @@ class CfDomainTimeoutTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await self.connect('a', secure=False))[1], 'a')
 
     async def test_cancelling_timeout_retry_releases_it_for_next_client(self):
-        with patch.object(raw_websocket, 'CF_TIMEOUT_COOLDOWN', 0), \
+        with patch.object(cf_websocket, 'CF_TIMEOUT_COOLDOWN', 0), \
                 patch.object(RawWebSocket, 'connect', side_effect=asyncio.TimeoutError()):
             await self.connect('a')
         started = asyncio.Event()

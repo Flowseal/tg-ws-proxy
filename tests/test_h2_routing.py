@@ -6,8 +6,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from proxy import bridge, tg_ws_proxy
 from proxy.balancer import _Balancer
+from proxy.cf_websocket import reset_cf_timeouts
 from proxy.config import proxy_config
-from proxy.raw_websocket import RawWebSocket, reset_cf_timeouts
+from proxy.raw_websocket import RawWebSocket
 from proxy.utils import PROTO_TAG_INTERMEDIATE
 
 

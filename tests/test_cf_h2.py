@@ -13,7 +13,8 @@ from proxy.cf_h2 import (
     CfH2Pool, MAX_CHANNEL_REQUESTS, MAX_PACKET, _HttpChannel, _HttpLane,
     _ReplayPacket, _encode_reply, _read_packet, bridge_h2,
 )
-from proxy.raw_websocket import RawWebSocket, connect_cf_domains, reset_cf_timeouts
+from proxy.cf_websocket import connect_cf_domains, reset_cf_timeouts
+from proxy.raw_websocket import RawWebSocket
 from proxy.utils import PROTO_TAG_ABRIDGED, PROTO_TAG_INTERMEDIATE, PROTO_TAG_SECURE
 
 class _IdentityCipher:

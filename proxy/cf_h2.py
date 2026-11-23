@@ -12,8 +12,8 @@ from typing import Dict, List, Optional, Set, Tuple
 import httpx
 
 from .balancer import balancer
+from .cf_websocket import cf_tls_in_cooldown
 from .h2_transport import H2Transport
-from .raw_websocket import cf_tls_in_cooldown
 from .stats import stats
 from .utils import (
     DC_DEFAULT_IPS, PROTO_TAG_ABRIDGED,
