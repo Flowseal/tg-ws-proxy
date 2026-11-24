@@ -38,10 +38,10 @@ RUN apt-get update \
     && useradd --system --gid app --create-home --home-dir /home/app app
 
 WORKDIR /app
-COPY --from=builder /opt/venv /opt/venv
-COPY proxy ./proxy
-COPY utils ./utils
-COPY docs/README.md LICENSE ./
+COPY --from=builder --chown=app:app /opt/venv /opt/venv
+COPY --chown=app:app proxy ./proxy
+COPY --chown=app:app utils ./utils
+COPY --chown=app:app docs/README.md LICENSE ./
 
 USER app
 
